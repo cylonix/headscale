@@ -200,7 +200,7 @@ func (api headscaleV1APIServer) RegisterNode(
 		return nil, err
 	}
 
-	ipv4, ipv6, err := api.h.ipAlloc.Next()
+	ipv4, ipv6, err := api.h.ipAlloc.NextWithMachinPublicKey(&mkey) // __CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +214,7 @@ func (api headscaleV1APIServer) RegisterNode(
 			nil,
 			util.RegisterMethodCLI,
 			ipv4, ipv6,
+			api.h.cfg.NodeHandler, // __CYLONIX_MOD__
 		)
 	})
 	if err != nil {
@@ -306,6 +307,7 @@ func (api headscaleV1APIServer) DeleteNode(
 	changedNodes, err := api.h.db.DeleteNode(
 		node,
 		api.h.nodeNotifier.LikelyConnectedMap(),
+		api.h.cfg.NodeHandler, // __CYLONIX_MOD__
 	)
 	if err != nil {
 		return nil, err

@@ -66,3 +66,16 @@ func (n *User) Proto() *v1.User {
 		CreatedAt: timestamppb.New(n.CreatedAt),
 	}
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (n *User) FromProto(v1User *v1.User) error {
+	id, err := strconv.ParseUint(v1User.Id, util.Base10, util.BitSize64)
+	if err != nil {
+		return err
+	}
+	n.ID = uint(id)
+	n.Name = v1User.Name
+	n.CreatedAt = v1User.CreatedAt.AsTime()
+	return nil
+}
+// __END_CYLONIX_MOD__

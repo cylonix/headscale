@@ -83,7 +83,7 @@ const (
 type Headscale struct {
 	cfg             *types.Config
 	db              *db.HSDatabase
-	ipAlloc         *db.IPAllocator
+	ipAlloc         types.IPAllocator // __CYLONIX_MOD__
 	noisePrivateKey *key.MachinePrivate
 	ephemeralGC     *db.EphemeralGarbageCollector
 
@@ -143,10 +143,16 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		return nil, err
 	}
 
-	app.ipAlloc, err = db.NewIPAllocator(app.db, cfg.PrefixV4, cfg.PrefixV6, cfg.IPAllocation)
-	if err != nil {
-		return nil, err
+	// __BEGIN_CYLONIX_MOD__
+	if cfg.IPAllocator != nil {
+		app.ipAlloc = cfg.IPAllocator
+	} else {
+		app.ipAlloc, err = db.NewIPAllocator(app.db, cfg.PrefixV4, cfg.PrefixV6, cfg.IPAllocation)
+		if err != nil {
+			return nil, err
+		}
 	}
+	// __END_CYLONIX_MOD__
 
 	app.ephemeralGC = db.NewEphemeralGarbageCollector(func(ni types.NodeID) {
 		if err := app.db.DeleteEphemeralNode(ni); err != nil {

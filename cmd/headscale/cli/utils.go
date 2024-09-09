@@ -49,7 +49,10 @@ func getHeadscaleCLIClient() (context.Context, v1.HeadscaleServiceClient, *grpc.
 			Msgf("Failed to load configuration")
 		os.Exit(-1) // we get here if logging is suppressed (i.e., json output)
 	}
+	return GetHeadscaleCLIClientWithConfig(cfg)
+}
 
+func GetHeadscaleCLIClientWithConfig(cfg *types.Config) (context.Context, v1.HeadscaleServiceClient, *grpc.ClientConn, context.CancelFunc) {
 	log.Debug().
 		Dur("timeout", cfg.CLI.Timeout).
 		Msgf("Setting timeout")

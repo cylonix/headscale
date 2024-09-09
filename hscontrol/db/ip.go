@@ -14,6 +14,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"gorm.io/gorm"
+
+	"tailscale.com/types/key"
 )
 
 // IPAllocator is a singleton responsible for allocating
@@ -127,6 +129,27 @@ func NewIPAllocator(
 
 	return &ret, nil
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (i *IPAllocator) NextWithMachinPublicKey(*key.MachinePublic) (*netip.Addr, *netip.Addr, error) {
+	return i.Next()
+}
+func (i *IPAllocator) NextV4() (*netip.Addr, error) {
+	return i.nextLocked(i.prev4, i.prefix4)
+}
+func (i *IPAllocator) NextV6() (*netip.Addr, error) {
+	return i.nextLocked(i.prev6, i.prefix6)
+}
+func (i *IPAllocator) PrefixV4() *netip.Prefix {
+	return i.prefix4
+}
+func (i *IPAllocator) PrefixV6() *netip.Prefix {
+	return i.prefix6
+}
+func (i *IPAllocator) FreeWithMachinPublicKey(*netip.Addr, *key.MachinePublic) error {
+	return nil
+}
+// __END_CYLONIX_MOD__
 
 func (i *IPAllocator) Next() (*netip.Addr, *netip.Addr, error) {
 	i.mu.Lock()
@@ -257,7 +280,7 @@ func randomNext(pfx netip.Prefix) (netip.Addr, error) {
 // it will be added.
 // If a prefix type has been removed (IPv4 or IPv6), it
 // will remove the IPs in that family from the node.
-func (db *HSDatabase) BackfillNodeIPs(i *IPAllocator) ([]string, error) {
+func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { // __CYLONIX_MOD__
 	var err error
 	var ret []string
 	err = db.Write(func(tx *gorm.DB) error {
@@ -277,8 +300,8 @@ func (db *HSDatabase) BackfillNodeIPs(i *IPAllocator) ([]string, error) {
 
 			changed := false
 			// IPv4 prefix is set, but node ip is missing, alloc
-			if i.prefix4 != nil && node.IPv4 == nil {
-				ret4, err := i.nextLocked(i.prev4, i.prefix4)
+			if i.PrefixV4() != nil && node.IPv4 == nil { // __CYLONIX_MOD__
+				ret4, err := i.NextV4() // __CYLONIX_MOD__
 				if err != nil {
 					return fmt.Errorf("failed to allocate ipv4 for node(%d): %w", node.ID, err)
 				}
@@ -289,8 +312,8 @@ func (db *HSDatabase) BackfillNodeIPs(i *IPAllocator) ([]string, error) {
 			}
 
 			// IPv6 prefix is set, but node ip is missing, alloc
-			if i.prefix6 != nil && node.IPv6 == nil {
-				ret6, err := i.nextLocked(i.prev6, i.prefix6)
+			if i.PrefixV6() != nil && node.IPv6 == nil { // __CYLONIX_MOD__
+				ret6, err := i.NextV6() // __CYLONIX_MOD__
 				if err != nil {
 					return fmt.Errorf("failed to allocate ipv6 for node(%d): %w", node.ID, err)
 				}
@@ -301,14 +324,14 @@ func (db *HSDatabase) BackfillNodeIPs(i *IPAllocator) ([]string, error) {
 			}
 
 			// IPv4 prefix is not set, but node has IP, remove
-			if i.prefix4 == nil && node.IPv4 != nil {
+			if i.PrefixV4() == nil && node.IPv4 != nil { // __CYLONIX_MOD__
 				ret = append(ret, fmt.Sprintf("removing IPv4 %q from Node(%d) %q", node.IPv4.String(), node.ID, node.Hostname))
 				node.IPv4 = nil
 				changed = true
 			}
 
 			// IPv6 prefix is not set, but node has IP, remove
-			if i.prefix6 == nil && node.IPv6 != nil {
+			if i.PrefixV6() == nil && node.IPv6 != nil { // __CYLONIX_MOD__
 				ret = append(ret, fmt.Sprintf("removing IPv6 %q from Node(%d) %q", node.IPv6.String(), node.ID, node.Hostname))
 				node.IPv6 = nil
 				changed = true

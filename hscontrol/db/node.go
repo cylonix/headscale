@@ -273,9 +273,9 @@ func NodeSetExpiry(tx *gorm.DB,
 	return tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("expiry", expiry).Error
 }
 
-func (hsdb *HSDatabase) DeleteNode(node *types.Node, isLikelyConnected *xsync.MapOf[types.NodeID, bool]) ([]types.NodeID, error) {
+func (hsdb *HSDatabase) DeleteNode(node *types.Node, isLikelyConnected *xsync.MapOf[types.NodeID, bool], nodeHandler types.NodeHandler) ([]types.NodeID, error) { // __CYLONIX_MOD__
 	return Write(hsdb.DB, func(tx *gorm.DB) ([]types.NodeID, error) {
-		return DeleteNode(tx, node, isLikelyConnected)
+		return DeleteNode(tx, node, isLikelyConnected, nodeHandler) // __CYLONIX_MOD__
 	})
 }
 
@@ -284,11 +284,20 @@ func (hsdb *HSDatabase) DeleteNode(node *types.Node, isLikelyConnected *xsync.Ma
 func DeleteNode(tx *gorm.DB,
 	node *types.Node,
 	isLikelyConnected *xsync.MapOf[types.NodeID, bool],
+	nodeHandler types.NodeHandler, // __CYLONIX_MOD__
 ) ([]types.NodeID, error) {
 	changed, err := deleteNodeRoutes(tx, node, isLikelyConnected)
 	if err != nil {
 		return changed, err
 	}
+
+	// __BEING_CYLONIX_MOD__
+	if nodeHandler != nil {
+		if err := nodeHandler.Delete(node); err != nil {
+			return changed, err
+		}
+	}
+	// __END_CYLONIX_MOD__
 
 	// Unscoped causes the node to be fully removed from the database.
 	if err := tx.Unscoped().Delete(&types.Node{}, node.ID).Error; err != nil {
@@ -327,6 +336,7 @@ func RegisterNodeFromAuthCallback(
 	registrationMethod string,
 	ipv4 *netip.Addr,
 	ipv6 *netip.Addr,
+	nodeHandler types.NodeHandler,
 ) (*types.Node, error) {
 	log.Debug().
 		Str("machine_key", mkey.ShortString()).
@@ -363,6 +373,7 @@ func RegisterNodeFromAuthCallback(
 				tx,
 				registrationNode,
 				ipv4, ipv6,
+				nodeHandler, // __CYLONIX_MOD__
 			)
 
 			if err == nil {
@@ -378,14 +389,14 @@ func RegisterNodeFromAuthCallback(
 	return nil, ErrNodeNotFoundRegistrationCache
 }
 
-func (hsdb *HSDatabase) RegisterNode(node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr) (*types.Node, error) {
+func (hsdb *HSDatabase) RegisterNode(node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr, nodeHandler types.NodeHandler) (*types.Node, error) { // __CYLONIX_MOD__
 	return Write(hsdb.DB, func(tx *gorm.DB) (*types.Node, error) {
-		return RegisterNode(tx, node, ipv4, ipv6)
+		return RegisterNode(tx, node, ipv4, ipv6, nodeHandler) // __CYLONIX_MOD__
 	})
 }
 
 // RegisterNode is executed from the CLI to register a new Node using its MachineKey.
-func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr) (*types.Node, error) {
+func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr, nodeHandler types.NodeHandler) (*types.Node, error) { // __CYLONIX_MOD__
 	log.Debug().
 		Str("node", node.Hostname).
 		Str("machine_key", node.MachineKey.ShortString()).
@@ -397,6 +408,13 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	// so we store the node.Expire and node.Nodekey that has been set when
 	// adding it to the registrationCache
 	if node.IPv4 != nil || node.IPv6 != nil {
+		// __BEGIN_CYLONIX_MOD__
+		if nodeHandler != nil {
+			if _, err := nodeHandler.Add(&node); err != nil {
+				return nil, fmt.Errorf("failed register existing node in the database: %w", err)
+			}
+		}
+		// __END_CYLONIX_MOD__
 		if err := tx.Save(&node).Error; err != nil {
 			return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 		}
@@ -414,6 +432,14 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 
 	node.IPv4 = ipv4
 	node.IPv6 = ipv6
+
+	// __BEGIN_CYLONIX_MOD__
+	if nodeHandler != nil {
+		if _, err := nodeHandler.Add(&node); err != nil {
+			return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
+		}
+	}
+	// __END_CYLONIX_MOD__
 
 	if err := tx.Save(&node).Error; err != nil {
 		return nil, fmt.Errorf("failed register(save) node in the database: %w", err)

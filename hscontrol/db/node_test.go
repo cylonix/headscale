@@ -130,7 +130,7 @@ func (s *Suite) TestHardDeleteNode(c *check.C) {
 	trx := db.DB.Save(&node)
 	c.Assert(trx.Error, check.IsNil)
 
-	_, err = db.DeleteNode(&node, xsync.NewMapOf[types.NodeID, bool]())
+	_, err = db.DeleteNode(&node, xsync.NewMapOf[types.NodeID, bool](), nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode(user.Name, "testnode3")

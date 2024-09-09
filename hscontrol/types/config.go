@@ -87,6 +87,11 @@ type Config struct {
 	Policy PolicyConfig
 
 	Tuning Tuning
+
+	// __BEGIN_CYLONIX_MOD__
+	IPAllocator IPAllocator
+	NodeHandler NodeHandler
+	// __END_CYLONIX_MOD__
 }
 
 type DNSConfig struct {

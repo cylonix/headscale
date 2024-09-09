@@ -607,7 +607,7 @@ func (h *Headscale) registerNodeForOIDCCallback(
 	machineKey *key.MachinePublic,
 	expiry time.Time,
 ) error {
-	ipv4, ipv6, err := h.ipAlloc.Next()
+	ipv4, ipv6, err := h.ipAlloc.NextWithMachinPublicKey(machineKey) // __CYLONIX_MOD__
 	if err != nil {
 		return err
 	}
@@ -622,6 +622,7 @@ func (h *Headscale) registerNodeForOIDCCallback(
 			&expiry,
 			util.RegisterMethodOIDC,
 			ipv4, ipv6,
+			h.cfg.NodeHandler, // __CYLONIX_MOD__
 		); err != nil {
 			return err
 		}
