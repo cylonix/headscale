@@ -410,7 +410,7 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	if node.IPv4 != nil || node.IPv6 != nil {
 		// __BEGIN_CYLONIX_MOD__
 		if nodeHandler != nil {
-			if _, err := nodeHandler.Add(&node); err != nil {
+			if _, err := nodeHandler.PreAdd(&node); err != nil {
 				return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 			}
 		}
@@ -427,6 +427,12 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 			Str("user", node.User.Name).
 			Msg("Node authorized again")
 
+		// __BEGIN_CYLONIX_MOD__
+		if nodeHandler != nil {
+			nodeHandler.PostAdd(&node)
+		}
+		// __END_CYLONIX_MOD__
+
 		return &node, nil
 	}
 
@@ -435,7 +441,7 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 
 	// __BEGIN_CYLONIX_MOD__
 	if nodeHandler != nil {
-		if _, err := nodeHandler.Add(&node); err != nil {
+		if _, err := nodeHandler.PreAdd(&node); err != nil {
 			return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
 		}
 	}
@@ -444,6 +450,14 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	if err := tx.Save(&node).Error; err != nil {
 		return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
 	}
+
+	// __BEGIN_CYLONIX_MOD__
+	if nodeHandler != nil {
+		if err := nodeHandler.PostAdd(&node); err != nil {
+			return nil, err
+		}
+	}
+	// __END_CYLONIX_MOD__
 
 	log.Trace().
 		Caller().
