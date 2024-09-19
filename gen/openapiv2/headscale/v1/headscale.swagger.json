@@ -187,6 +187,18 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "nodeIdList",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uint64"
+            },
+            "collectionFormat": "multi"
           }
         ],
         "tags": [

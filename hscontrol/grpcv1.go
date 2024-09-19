@@ -200,7 +200,14 @@ func (api headscaleV1APIServer) RegisterNode(
 		return nil, err
 	}
 
-	ipv4, ipv6, err := api.h.ipAlloc.NextWithMachinPublicKey(&mkey) // __CYLONIX_MOD__
+	// __BEGIN_CYLONIX_MOD__
+	user, err := api.h.db.GetUser(request.GetUser())
+	if err != nil {
+		return nil, err
+	}
+
+	ipv4, ipv6, err := api.h.ipAlloc.NextFor(user, &mkey)
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +225,8 @@ func (api headscaleV1APIServer) RegisterNode(
 		)
 	})
 	if err != nil {
+		api.h.ipAlloc.FreeFor(ipv4, user, &mkey) // __CYLONIX_MOD__
+		api.h.ipAlloc.FreeFor(ipv6, user, &mkey) // __CYLONIX_MOD__
 		return nil, err
 	}
 

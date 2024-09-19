@@ -101,6 +101,7 @@ message RenameNodeResponse {
 
 message ListNodesRequest {
     string user = 1;
+    repeated uint64 node_id_list = 2;  // __CYLONIX_MOD__
 }
 
 message ListNodesResponse {

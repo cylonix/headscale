@@ -131,22 +131,22 @@ func NewIPAllocator(
 }
 
 // __BEGIN_CYLONIX_MOD__
-func (i *IPAllocator) NextWithMachinPublicKey(*key.MachinePublic) (*netip.Addr, *netip.Addr, error) {
+func (i *IPAllocator) NextFor(*types.User, *key.MachinePublic) (*netip.Addr, *netip.Addr, error) {
 	return i.Next()
 }
-func (i *IPAllocator) NextV4() (*netip.Addr, error) {
+func (i *IPAllocator) NextV4(*types.User) (*netip.Addr, error) {
 	return i.nextLocked(i.prev4, i.prefix4)
 }
-func (i *IPAllocator) NextV6() (*netip.Addr, error) {
+func (i *IPAllocator) NextV6(*types.User) (*netip.Addr, error) {
 	return i.nextLocked(i.prev6, i.prefix6)
 }
-func (i *IPAllocator) PrefixV4() *netip.Prefix {
+func (i *IPAllocator) PrefixV4(*types.User) *netip.Prefix {
 	return i.prefix4
 }
-func (i *IPAllocator) PrefixV6() *netip.Prefix {
+func (i *IPAllocator) PrefixV6(*types.User) *netip.Prefix {
 	return i.prefix6
 }
-func (i *IPAllocator) FreeWithMachinPublicKey(*netip.Addr, *key.MachinePublic) error {
+func (i *IPAllocator) FreeFor(*netip.Addr, *types.User, *key.MachinePublic) error {
 	return nil
 }
 // __END_CYLONIX_MOD__
@@ -300,8 +300,8 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 
 			changed := false
 			// IPv4 prefix is set, but node ip is missing, alloc
-			if i.PrefixV4() != nil && node.IPv4 == nil { // __CYLONIX_MOD__
-				ret4, err := i.NextV4() // __CYLONIX_MOD__
+			if i.PrefixV4(&node.User) != nil && node.IPv4 == nil { // __CYLONIX_MOD__
+				ret4, err := i.NextV4(&node.User) // __CYLONIX_MOD__
 				if err != nil {
 					return fmt.Errorf("failed to allocate ipv4 for node(%d): %w", node.ID, err)
 				}
@@ -312,8 +312,8 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 			}
 
 			// IPv6 prefix is set, but node ip is missing, alloc
-			if i.PrefixV6() != nil && node.IPv6 == nil { // __CYLONIX_MOD__
-				ret6, err := i.NextV6() // __CYLONIX_MOD__
+			if i.PrefixV6(&node.User) != nil && node.IPv6 == nil { // __CYLONIX_MOD__
+				ret6, err := i.NextV6(&node.User) // __CYLONIX_MOD__
 				if err != nil {
 					return fmt.Errorf("failed to allocate ipv6 for node(%d): %w", node.ID, err)
 				}
@@ -324,14 +324,14 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 			}
 
 			// IPv4 prefix is not set, but node has IP, remove
-			if i.PrefixV4() == nil && node.IPv4 != nil { // __CYLONIX_MOD__
+			if i.PrefixV4(&node.User) == nil && node.IPv4 != nil { // __CYLONIX_MOD__
 				ret = append(ret, fmt.Sprintf("removing IPv4 %q from Node(%d) %q", node.IPv4.String(), node.ID, node.Hostname))
 				node.IPv4 = nil
 				changed = true
 			}
 
 			// IPv6 prefix is not set, but node has IP, remove
-			if i.PrefixV6() == nil && node.IPv6 != nil { // __CYLONIX_MOD__
+			if i.PrefixV6(&node.User) == nil && node.IPv6 != nil { // __CYLONIX_MOD__
 				ret = append(ret, fmt.Sprintf("removing IPv6 %q from Node(%d) %q", node.IPv6.String(), node.ID, node.Hostname))
 				node.IPv6 = nil
 				changed = true

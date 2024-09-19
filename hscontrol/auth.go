@@ -379,7 +379,7 @@ func (h *Headscale) handleAuthKey(
 			ForcedTags:     pak.Proto().GetAclTags(),
 		}
 
-		ipv4, ipv6, err := h.ipAlloc.NextWithMachinPublicKey(&machineKey) // __CYLONIX_MOD__
+		ipv4, ipv6, err := h.ipAlloc.NextFor(&pak.User, &machineKey) // __CYLONIX_MOD__
 		if err != nil {
 			log.Error().
 				Caller().
@@ -407,8 +407,8 @@ func (h *Headscale) handleAuthKey(
 				Msg("could not register node")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
 
-			h.ipAlloc.FreeWithMachinPublicKey(ipv4, &machineKey) // __CYLONIX_MOD__
-			h.ipAlloc.FreeWithMachinPublicKey(ipv6, &machineKey) // __CYLONIX_MOD__
+			h.ipAlloc.FreeFor(ipv4, &pak.User, &machineKey) // __CYLONIX_MOD__
+			h.ipAlloc.FreeFor(ipv6, &pak.User, &machineKey) // __CYLONIX_MOD__
 			return
 		}
 	}

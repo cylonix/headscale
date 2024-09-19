@@ -56,3 +56,38 @@ func (key *PreAuthKey) Proto() *v1.PreAuthKey {
 
 	return &protoKey
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (key *PreAuthKey) FromProto(p *v1.PreAuthKey) error {
+	id, err := strconv.ParseUint(p.Id, util.Base10, util.BitSize64)
+	if err != nil {
+		return err
+	}
+	*key = PreAuthKey{
+		User:      User{Name: p.User},
+		ID:        id,
+		Key:       p.Key,
+		Ephemeral: p.Ephemeral,
+		Reusable:  p.Reusable,
+		Used:      p.Used,
+	}
+
+	if p.Expiration.IsValid() {
+		t := p.Expiration.AsTime()
+		key.Expiration = &t
+	}
+
+	if p.CreatedAt.IsValid() {
+		t := p.CreatedAt.AsTime()
+		key.CreatedAt = &t
+	}
+
+	var aclTags []PreAuthKeyACLTag
+	for _, v := range p.AclTags {
+		aclTags = append(aclTags, PreAuthKeyACLTag{PreAuthKeyID: id, Tag: v})
+	}
+	key.ACLTags = aclTags
+
+	return nil
+}
+// __END_CYLONIX_MOD__

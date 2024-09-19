@@ -558,3 +558,89 @@ func (nodes Nodes) IDMap() map[NodeID]*Node {
 
 	return ret
 }
+
+// __BEGIN_CYLONIX_MOD__
+func ParseProtoNode(p *v1.Node) (*Node, error) {
+	var (
+		machineKey key.MachinePublic
+		nodeKey    key.NodePublic
+		discoKey   key.DiscoPublic
+		ipv4       *netip.Addr
+		ipv6       *netip.Addr
+		user       User
+	)
+	if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
+		return nil, err
+	}
+	if err := nodeKey.UnmarshalText([]byte(p.NodeKey)); err != nil {
+		return nil, err
+	}
+	if err := discoKey.UnmarshalText([]byte(p.DiscoKey)); err != nil {
+		return nil, err
+	}
+	if err := user.FromProto(p.User); err != nil {
+		return nil, err
+	}
+
+	for _, addr := range p.IpAddresses {
+		ip, err := netip.ParseAddr(addr)
+		if err != nil {
+			return nil, err
+		}
+		if ip.Is4() {
+			ipv4 = &ip
+		} else if ip.Is6() {
+			ipv6 = &ip
+		}
+	}
+
+	n := &Node{
+		ID:             NodeID(p.Id),
+		MachineKey:     machineKey,
+		NodeKey:        nodeKey,
+		DiscoKey:       discoKey,
+		IPv4:           ipv4,
+		IPv6:           ipv6,
+		Hostname:       p.Name,
+		GivenName:      p.GivenName,
+		User:           user,
+		ForcedTags:     p.ForcedTags,
+		RegisterMethod: nodeRegisterMethodFromV1Enum(p.RegisterMethod),
+		CreatedAt:      p.CreatedAt.AsTime(),
+	}
+
+	if p.PreAuthKey != nil {
+		authKey := &PreAuthKey{}
+		if err := authKey.FromProto(p.PreAuthKey); err != nil {
+			return nil, err
+		}
+		n.AuthKey = authKey
+	}
+
+	if p.LastSeen.IsValid() {
+		t := p.LastSeen.AsTime()
+		n.LastSeen = &t
+	}
+
+	if p.Expiry.IsValid() {
+		t := p.Expiry.AsTime()
+		n.Expiry = &t
+	}
+
+	return n, nil
+}
+
+func nodeRegisterMethodFromV1Enum(m v1.RegisterMethod) string {
+	switch m {
+	case v1.RegisterMethod_REGISTER_METHOD_AUTH_KEY:
+		return "authkey"
+	case v1.RegisterMethod_REGISTER_METHOD_OIDC:
+		return "oidc"
+	case v1.RegisterMethod_REGISTER_METHOD_CLI:
+		return "cli"
+	default:
+		return ""
+	}
+}
+
+// __END_CYLONIX_MOD__
