@@ -127,6 +127,7 @@ func GetHeadscaleCLIClientWithConfig(cfg *types.Config) (context.Context, v1.Hea
 		log.Fatal().Caller().Err(err).Msgf("Could not connect: %v", err)
 		os.Exit(-1) // we get here if logging is suppressed (i.e., json output)
 	}
+	log.Info().Caller().Str("address", address).Msg("Connected via gRPC") // __CYLONIX_MOD__
 
 	client := v1.NewHeadscaleServiceClient(conn)
 

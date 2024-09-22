@@ -368,6 +368,7 @@ func (h *Headscale) handleAuthKey(
 
 		nodeToRegister := types.Node{
 			Hostname:       registerRequest.Hostinfo.Hostname,
+			Hostinfo:       registerRequest.Hostinfo, // __CYLONIX_MOD__
 			GivenName:      givenName,
 			UserID:         pak.User.ID,
 			User:           pak.User,

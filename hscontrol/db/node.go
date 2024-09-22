@@ -336,7 +336,7 @@ func RegisterNodeFromAuthCallback(
 	registrationMethod string,
 	ipv4 *netip.Addr,
 	ipv6 *netip.Addr,
-	nodeHandler types.NodeHandler,
+	nodeHandler types.NodeHandler, // __CYLONIX_MOD__
 ) (*types.Node, error) {
 	log.Debug().
 		Str("machine_key", mkey.ShortString()).

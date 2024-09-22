@@ -37,6 +37,7 @@ func initConfig() {
 	if cfgFile == "" {
 		cfgFile = os.Getenv("HEADSCALE_CONFIG")
 	}
+	log.Info().Msgf("Initializing with config file '%v'", cfgFile) // __CYLONIX_MOD__
 	if cfgFile != "" {
 		err := types.LoadConfig(cfgFile, true)
 		if err != nil {
