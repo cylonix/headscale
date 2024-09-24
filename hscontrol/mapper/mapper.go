@@ -103,8 +103,7 @@ func generateUserProfiles(
 
 	var profiles []tailcfg.UserProfile
 	for _, user := range userMap {
-		profiles = append(profiles,
-			user.TailscaleUserProfile())
+		profiles = append(profiles, user.TailscaleUserProfile(nil)) // __CYLONIX_MOD__
 	}
 
 	return profiles
@@ -190,7 +189,7 @@ func (m *Mapper) fullMapResponse(
 		return nil, err
 	}
 
-	err = appendPeerChanges(
+	err = m.appendPeerChanges( // __CYLONIX_MOD__
 		resp,
 		true, // full change
 		pol,
@@ -299,7 +298,7 @@ func (m *Mapper) PeerChangedResponse(
 		}
 	}
 
-	err = appendPeerChanges(
+	err = m.appendPeerChanges( // __CYLONI_MOD__
 		&resp,
 		false, // partial change
 		pol,
@@ -530,7 +529,7 @@ func nodeMapToList(nodes map[uint64]*types.Node) types.Nodes {
 
 // appendPeerChanges mutates a tailcfg.MapResponse with all the
 // necessary changes when peers have changed.
-func appendPeerChanges(
+func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	resp *tailcfg.MapResponse,
 
 	fullChange bool,
@@ -558,6 +557,17 @@ func appendPeerChanges(
 	}
 
 	profiles := generateUserProfiles(node, changed)
+
+	// __BEGIN_CYLONIX_MOD__
+	if m.cfg != nil && m.cfg.NodeHandler != nil {
+		nodes := []*types.Node{node}
+		nodes = append(nodes, changed...)
+		profiles, err = m.cfg.NodeHandler.Profiles(nodes)
+		if err != nil {
+			return nil
+		}
+	}
+	// __END_CYLONIX_MOD__
 
 	dnsConfig := generateDNSConfig(
 		cfg,

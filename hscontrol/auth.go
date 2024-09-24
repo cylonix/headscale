@@ -14,6 +14,7 @@ import (
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
+	"tailscale.com/control/controlclient"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/ptr"
@@ -396,25 +397,46 @@ func (h *Headscale) handleAuthKey(
 		if pakID != 0 {
 			nodeToRegister.AuthKeyID = ptr.To(pak.ID)
 		}
-		node, err = h.db.RegisterNode(
+		_, err = h.db.RegisterNode( // __CYLONIX_MOD__ golint
 			nodeToRegister,
 			ipv4, ipv6,
 			h.cfg.NodeHandler, // __CYLONIX_MOD__
 		)
 		if err != nil {
+			// __BEGIN_CYLONIX_MOD__
+			h.ipAlloc.FreeFor(ipv4, &pak.User, &machineKey)
+			h.ipAlloc.FreeFor(ipv6, &pak.User, &machineKey)
+			var uerr controlclient.UserVisibleError
+			if errors.As(err, &uerr) {
+				resp.Error = uerr.Error()
+				var respBody []byte
+				respBody, err = json.Marshal(resp)
+				if err == nil {
+					writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+					writer.WriteHeader(http.StatusOK)
+					_, err = writer.Write(respBody)
+					if err != nil {
+						log.Error().
+							Caller().
+							Err(err).
+							Msg("Failed to write response")
+					}
+					return
+				}
+				// Fall through for error.
+			}
+			// __END_CYLONIX_MOD__
+
 			log.Error().
 				Caller().
 				Err(err).
 				Msg("could not register node")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-			h.ipAlloc.FreeFor(ipv4, &pak.User, &machineKey) // __CYLONIX_MOD__
-			h.ipAlloc.FreeFor(ipv6, &pak.User, &machineKey) // __CYLONIX_MOD__
 			return
 		}
 	}
 
-	h.db.Write(func(tx *gorm.DB) error {
+	err = h.db.Write(func(tx *gorm.DB) error { // __CYLONIX_MOD__ golint
 		return db.UsePreAuthKey(tx, pak)
 	})
 	if err != nil {
@@ -428,10 +450,10 @@ func (h *Headscale) handleAuthKey(
 	}
 
 	resp.MachineAuthorized = true
-	resp.User = *pak.User.TailscaleUser()
+	resp.User = *pak.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
 	// Provide LoginName when registering with pre-auth key
 	// Otherwise it will need to exec `tailscale up` twice to fetch the *LoginName*
-	resp.Login = *pak.User.TailscaleLogin()
+	resp.Login = *pak.User.TailscaleLogin(h.cfg) // __CYLONIX_MOD__
 
 	respBody, err := json.Marshal(resp)
 	if err != nil {
@@ -534,7 +556,7 @@ func (h *Headscale) handleNodeLogOut(
 	resp.AuthURL = ""
 	resp.MachineAuthorized = false
 	resp.NodeKeyExpired = true
-	resp.User = *node.User.TailscaleUser()
+	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
 	respBody, err := json.Marshal(resp)
 	if err != nil {
 		log.Error().
@@ -603,8 +625,8 @@ func (h *Headscale) handleNodeWithValidRegistration(
 
 	resp.AuthURL = ""
 	resp.MachineAuthorized = true
-	resp.User = *node.User.TailscaleUser()
-	resp.Login = *node.User.TailscaleLogin()
+	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
+	resp.Login = *node.User.TailscaleLogin(h.cfg) // __CYLONIX_MOD__
 
 	respBody, err := json.Marshal(resp)
 	if err != nil {
@@ -660,7 +682,7 @@ func (h *Headscale) handleNodeKeyRefresh(
 	}
 
 	resp.AuthURL = ""
-	resp.User = *node.User.TailscaleUser()
+	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
 	respBody, err := json.Marshal(resp)
 	if err != nil {
 		log.Error().

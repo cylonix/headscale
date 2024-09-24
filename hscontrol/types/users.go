@@ -24,7 +24,15 @@ func (u *User) profilePicURL() string {
 	return ""
 }
 
-func (u *User) TailscaleUser() *tailcfg.User {
+func (u *User) TailscaleUser(cfg *Config) *tailcfg.User {
+	// __BEGIN_CYLONIX_MOD__
+	if cfg != nil && cfg.NodeHandler != nil {
+		user := cfg.NodeHandler.User(u)
+		if user != nil {
+			return user
+		}
+	}
+	// __END_CYLONIX_MOD__
 	user := tailcfg.User{
 		ID:            tailcfg.UserID(u.ID),
 		LoginName:     u.Name,
@@ -37,7 +45,15 @@ func (u *User) TailscaleUser() *tailcfg.User {
 	return &user
 }
 
-func (u *User) TailscaleLogin() *tailcfg.Login {
+func (u *User) TailscaleLogin(cfg *Config) *tailcfg.Login {
+	// __BEGIN_CYLONIX_MOD__
+	if cfg != nil && cfg.NodeHandler != nil {
+		login := cfg.NodeHandler.UserLogin(u)
+		if login != nil {
+			return login
+		}
+	}
+	// __END_CYLONIX_MOD__
 	login := tailcfg.Login{
 		ID: tailcfg.LoginID(u.ID),
 		// TODO(kradalby): this should reflect registration method.
@@ -50,7 +66,15 @@ func (u *User) TailscaleLogin() *tailcfg.Login {
 	return &login
 }
 
-func (u *User) TailscaleUserProfile() tailcfg.UserProfile {
+func (u *User) TailscaleUserProfile(cfg *Config) tailcfg.UserProfile {
+	// __BEGIN_CYLONIX_MOD__
+	if cfg != nil && cfg.NodeHandler != nil {
+		p := cfg.NodeHandler.UserProfile(u)
+		if p != nil {
+			return *p
+		}
+	}
+	// __END_CYLONIX_MOD__
 	return tailcfg.UserProfile{
 		ID:            tailcfg.UserID(u.ID),
 		LoginName:     u.Name,
