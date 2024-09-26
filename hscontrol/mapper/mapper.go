@@ -213,7 +213,7 @@ func (m *Mapper) FullMapResponse(
 	pol *policy.ACLPolicy,
 	messages ...string,
 ) ([]byte, error) {
-	peers, err := m.ListPeers(node.ID)
+	peers, err := m.ListPeers(node) // __CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (m *Mapper) PeerChangedResponse(
 ) ([]byte, error) {
 	resp := m.baseMapResponse()
 
-	peers, err := m.ListPeers(node.ID)
+	peers, err := m.ListPeers(node) // __CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -503,8 +503,31 @@ func (m *Mapper) baseWithConfigMapResponse(
 	return &resp, nil
 }
 
-func (m *Mapper) ListPeers(nodeID types.NodeID) (types.Nodes, error) {
-	peers, err := m.db.ListPeers(nodeID)
+func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { // __CYLONIX_MOD__
+	// __BEGIN_CYLONIX_MOD__
+	if m.cfg.NodeHandler != nil {
+		var nodeIDs []types.NodeID
+		peers, nodeIDs, err = m.cfg.NodeHandler.Peers(node)
+		if err != nil {
+			return nil, err
+		}
+		if len(nodeIDs) > 0 {
+			list, err := m.db.ListNodesByIDList(nodeIDs)
+			if err != nil {
+				return nil, err
+			}
+			log.Debug().Int("peers", len(list)).
+				Msg("Peers-by-id listed by node handler")
+			peers = append(peers, list...)
+		}
+		log.Debug().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
+			Msg("Peers listed by node handler")
+	} else {
+		peers, err = m.db.ListPeers(node.ID)
+		log.Debug().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
+			Msg("Peers listed directly from db")
+	}
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}

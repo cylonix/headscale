@@ -16,7 +16,7 @@ type NodeHandler interface {
 	Update(*Node) (*Node, error)
 
 	// Peers lists any peers additionly for the peers to be sent the requester.
-	Peers(*Node) ([]*Node, error)
+	Peers(*Node) (Nodes, []NodeID, error)
 
 	// Profiles gets the user profiles base on the node slice.
 	Profiles([]*Node)([]tailcfg.UserProfile, error)

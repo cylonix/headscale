@@ -65,6 +65,13 @@ func (hsdb *HSDatabase) ListNodes() (types.Nodes, error) {
 	})
 }
 
+func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, error) {
+	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
+		rx = rx.Model(&types.Node{}).Where("id in ?", idList)
+		return ListNodes(rx)
+	})
+}
+
 func ListNodes(tx *gorm.DB) (types.Nodes, error) {
 	nodes := types.Nodes{}
 	if err := tx.
