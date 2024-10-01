@@ -132,6 +132,8 @@ type Node struct {
 	DeletedAt *time.Time
 
 	IsOnline *bool `gorm:"-"`
+
+	Namespace string // __CYLONIX_MOD__
 }
 
 type (
@@ -376,6 +378,7 @@ func (node *Node) Proto() *v1.Node {
 		RegisterMethod: node.RegisterMethodToV1Enum(),
 
 		CreatedAt: timestamppb.New(node.CreatedAt),
+		Namespace: node.Namespace, // __CYLONIX_MOD__
 	}
 
 	if node.AuthKey != nil {
@@ -607,6 +610,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		ForcedTags:     p.ForcedTags,
 		RegisterMethod: nodeRegisterMethodFromV1Enum(p.RegisterMethod),
 		CreatedAt:      p.CreatedAt.AsTime(),
+		Namespace:      p.Namespace,
 	}
 
 	if p.PreAuthKey != nil {

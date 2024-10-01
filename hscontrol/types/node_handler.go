@@ -1,6 +1,10 @@
 package types
 
-import "tailscale.com/tailcfg"
+import (
+	"net/http"
+
+	"tailscale.com/tailcfg"
+)
 
 type NodeHandler interface {
 	// PreAdd may alter the content in the Node before saving to the node DB.
@@ -25,4 +29,7 @@ type NodeHandler interface {
 	User(*User) *tailcfg.User
 	UserLogin(*User) *tailcfg.Login
 	UserProfile(*User) *tailcfg.UserProfile
+
+	// Http API auth.
+	ApiAuth(*http.Request) (bool, error)
 }

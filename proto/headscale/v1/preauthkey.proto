@@ -14,6 +14,7 @@ message PreAuthKey {
     google.protobuf.Timestamp expiration = 7;
     google.protobuf.Timestamp created_at = 8;
     repeated string           acl_tags   = 9;
+    string                    namespace  = 10; // _CYLONIX_MOD__
 }
 
 message CreatePreAuthKeyRequest {
@@ -22,6 +23,7 @@ message CreatePreAuthKeyRequest {
     bool                      ephemeral  = 3;
     google.protobuf.Timestamp expiration = 4;
     repeated string           acl_tags   = 5;
+    optional string           namespace  = 6; // __CYLONIX_MOD__
 }
 
 message CreatePreAuthKeyResponse {
@@ -38,8 +40,19 @@ message ExpirePreAuthKeyResponse {
 
 message ListPreAuthKeysRequest {
     string user = 1;
+    // __BEGIN_CYLONIX_MOD__
+    repeated uint64 id_list = 2;
+    optional string namespace = 3;
+    optional string filter_by = 4;
+    optional string filter_value = 5;
+    optional string sort_by = 6;
+    optional bool sort_desc = 7;
+    optional uint32 page = 8;
+    optional uint32 pageSize = 9;
+    // __END_CYLONIX_MOD__
 }
 
 message ListPreAuthKeysResponse {
     repeated PreAuthKey pre_auth_keys = 1;
+    uint32 total = 2; // __CYLONIX_MOD__
 }

@@ -8,6 +8,7 @@ message User {
     string                    id         = 1;
     string                    name       = 2;
     google.protobuf.Timestamp created_at = 3;
+    string                    namespace  = 4; // __CYLONIX_MOD__
 }
 
 message GetUserRequest {
@@ -20,6 +21,7 @@ message GetUserResponse {
 
 message CreateUserRequest {
     string name = 1;
+    optional string namespace = 2; // __CYLONIX_MOD__
 }
 
 message CreateUserResponse {

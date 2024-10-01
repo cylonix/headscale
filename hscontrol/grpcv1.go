@@ -168,7 +168,19 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 	ctx context.Context,
 	request *v1.ListPreAuthKeysRequest,
 ) (*v1.ListPreAuthKeysResponse, error) {
-	preAuthKeys, err := api.h.db.ListPreAuthKeys(request.GetUser())
+	// __BEGIN_CYLONIX_MOD__
+	total, preAuthKeys, err := api.h.db.ListPreAuthKeysWithOptions(
+		request.GetIdList(),
+		request.Namespace,
+		request.GetUser(),
+		request.GetFilterBy(),
+		request.GetFilterValue(),
+		request.GetSortBy(),
+		request.GetSortDesc(),
+		int(request.GetPage()),
+		int(request.GetPageSize()),
+	)
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +194,7 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 		return response[i].Id < response[j].Id
 	})
 
-	return &v1.ListPreAuthKeysResponse{PreAuthKeys: response}, nil
+	return &v1.ListPreAuthKeysResponse{Total: uint32(total), PreAuthKeys: response}, nil // __CYLONIX_MOD__
 }
 
 func (api headscaleV1APIServer) RegisterNode(
@@ -417,31 +429,19 @@ func (api headscaleV1APIServer) ListNodes(
 	request *v1.ListNodesRequest,
 ) (*v1.ListNodesResponse, error) {
 	isLikelyConnected := api.h.nodeNotifier.LikelyConnectedMap()
-	if request.GetUser() != "" {
-		nodes, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (types.Nodes, error) {
-			return db.ListNodesByUser(rx, request.GetUser())
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		response := make([]*v1.Node, len(nodes))
-		for index, node := range nodes {
-			resp := node.Proto()
-
-			// Populate the online field based on
-			// currently connected nodes.
-			if val, ok := isLikelyConnected.Load(node.ID); ok && val {
-				resp.Online = true
-			}
-
-			response[index] = resp
-		}
-
-		return &v1.ListNodesResponse{Nodes: response}, nil
-	}
-
-	nodes, err := api.h.db.ListNodes()
+	// __BEGIN_CYLONIX_MOD__
+	total, nodes, err := api.h.db.ListNodesWithOptions(
+		request.GetNodeIdList(),
+		request.Namespace,
+		request.GetUser(),
+		request.GetFilterBy(),
+		request.GetFilterValue(),
+		request.GetSortBy(),
+		request.GetSortDesc(),
+		int(request.GetPage()),
+		int(request.GetPageSize()),
+	)
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (api headscaleV1APIServer) ListNodes(
 		response[index] = resp
 	}
 
-	return &v1.ListNodesResponse{Nodes: response}, nil
+	return &v1.ListNodesResponse{Total: uint32(total), Nodes: response}, nil // __CYLONIX_MOD__
 }
 
 func (api headscaleV1APIServer) MoveNode(

@@ -356,26 +356,36 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 			Str("client_address", req.RemoteAddr).
 			Msg("HTTP authentication invoked")
 
-		authHeader := req.Header.Get("authorization")
+		// __BEGIN_CYLONIX_MOD__
+		var (
+			valid bool
+			err   error
+		)
+		if h.cfg.NodeHandler != nil {
+			valid, err = h.cfg.NodeHandler.ApiAuth(req)
+		} else {
+			authHeader := req.Header.Get("authorization")
 
-		if !strings.HasPrefix(authHeader, AuthPrefix) {
-			log.Error().
-				Caller().
-				Str("client_address", req.RemoteAddr).
-				Msg(`missing "Bearer " prefix in "Authorization" header`)
-			writer.WriteHeader(http.StatusUnauthorized)
-			_, err := writer.Write([]byte("Unauthorized"))
-			if err != nil {
+			if !strings.HasPrefix(authHeader, AuthPrefix) {
 				log.Error().
 					Caller().
-					Err(err).
-					Msg("Failed to write response")
+					Str("client_address", req.RemoteAddr).
+					Msg(`missing "Bearer " prefix in "Authorization" header`)
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, err := writer.Write([]byte("Unauthorized"))
+				if err != nil {
+					log.Error().
+						Caller().
+						Err(err).
+						Msg("Failed to write response")
+				}
+
+				return
 			}
 
-			return
+			valid, err = h.db.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
 		}
-
-		valid, err := h.db.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
+		// __END_CYLONIX_MOD__
 		if err != nil {
 			log.Error().
 				Caller().

@@ -22,6 +22,8 @@ type PreAuthKey struct {
 
 	CreatedAt  *time.Time
 	Expiration *time.Time
+
+	Namespace string // __CYLONIX_MOD__
 }
 
 // PreAuthKeyACLTag describes an autmatic tag applied to a node when registered with the associated PreAuthKey.

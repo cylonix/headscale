@@ -102,6 +102,34 @@ func (hsdb *HSDatabase) ListPreAuthKeys(userName string) ([]types.PreAuthKey, er
 	})
 }
 
+// __BEGIN_CYLONIX_MOD__
+func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
+	idList []uint64, namespace *string, username string,
+	filterBy, filterValue, sortBy string, sortDesc bool,
+	page, pageSize int,
+) (int, []types.PreAuthKey, error) {
+	var total int64
+	keys, err := Read(hsdb.DB, func(rx *gorm.DB) ([]types.PreAuthKey, error) {
+		var err error
+		rx, total, err = ListOptions(
+			rx, idList, namespace, username,
+			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
+		)
+		if err != nil {
+			return nil, err
+		}
+		keys := []types.PreAuthKey{}
+		rx = rx.Preload("User").Preload("ACLTags")
+		if err := rx.Find(&keys).Error; err != nil {
+			return nil, err
+		}
+		return keys, nil
+
+	})
+	return int(total), keys, err
+}
+// __END_CYLONIX_MOD__
+
 // ListPreAuthKeys returns the list of PreAuthKeys for a user.
 func ListPreAuthKeys(tx *gorm.DB, userName string) ([]types.PreAuthKey, error) {
 	user, err := GetUser(tx, userName)

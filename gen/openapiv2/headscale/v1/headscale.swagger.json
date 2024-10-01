@@ -201,6 +201,12 @@
             "collectionFormat": "multi"
           },
           {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "filterBy",
             "in": "query",
             "required": false,
@@ -622,6 +628,63 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "idList",
+            "description": "__BEGIN_CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uint64"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "filterBy",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "filterValue",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "sortDesc",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "__END_CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -1069,6 +1132,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1085,6 +1152,10 @@
       "properties": {
         "name": {
           "type": "string"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1248,6 +1319,11 @@
             "type": "object",
             "$ref": "#/definitions/v1Node"
           }
+        },
+        "total": {
+          "type": "integer",
+          "format": "int64",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1260,6 +1336,11 @@
             "type": "object",
             "$ref": "#/definitions/v1PreAuthKey"
           }
+        },
+        "total": {
+          "type": "integer",
+          "format": "int64",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1352,6 +1433,10 @@
         },
         "online": {
           "type": "boolean"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1389,6 +1474,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "namespace": {
+          "type": "string",
+          "title": "_CYLONIX_MOD__"
         }
       }
     },
@@ -1502,6 +1591,10 @@
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     }

@@ -413,6 +413,21 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			// __BEGIN_CYLONIX_MOD__
+			{
+				ID: "202410010000",
+				// Migrate tables with additional namespace column.
+				Migrate: func(tx *gorm.DB) error {
+					err := tx.AutoMigrate(&types.PreAuthKey{}, &types.User{}, &types.Node{})
+					if err != nil {
+						return err
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			// __END_CYLONIX_MOD__
 		},
 	)
 
@@ -661,3 +676,50 @@ func Write[T any](db *gorm.DB, fn func(tx *gorm.DB) (T, error)) (T, error) {
 	}
 	return ret, tx.Commit().Error
 }
+
+// __BEGIN_CYLONIX_MOD__
+func Sort(db *gorm.DB, sortBy string, sortDesc bool) *gorm.DB {
+	if sortBy != "" {
+		order := sortBy
+		if sortDesc {
+			order += " desc"
+		}
+		return db.Order(order)
+	}
+	return db
+}
+func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
+	if page >= 0 && pageSize > 0 {
+		return db.Limit(int(total)).Offset(page * pageSize)
+	}
+	return db
+}
+func ListOptions(rx *gorm.DB,
+	idList []uint64, namespace *string, username string,
+	filterBy, filterValue, sortBy string, sortDesc bool, page, pageSize int,
+) (*gorm.DB, int64, error) {
+	var total int64
+	if namespace != nil {
+		rx = rx.Where("namespace = ?", *namespace)
+	}
+	if username != "" {
+		user, err := GetUser(rx, username)
+		if err != nil {
+			return nil, 0, err
+		}
+		rx = rx.Where("user_id = ?", user.ID)
+	}
+	if len(idList) > 0 {
+		rx = rx.Where("id in ?", idList)
+	}
+	if filterBy != "" && filterValue != "" {
+		rx = rx.Where(filterBy + " like ?", "%"+filterValue+"%")
+	}
+	if err := rx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	rx = Sort(rx, sortBy, sortDesc)
+	rx = Page(rx, total, int(page), int(pageSize))
+	return rx, total, nil
+}
+// __END_CYLONIX_MOD__

@@ -65,12 +65,32 @@ func (hsdb *HSDatabase) ListNodes() (types.Nodes, error) {
 	})
 }
 
+// __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
 		rx = rx.Model(&types.Node{}).Where("id in ?", idList)
 		return ListNodes(rx)
 	})
 }
+func (hsdb *HSDatabase) ListNodesWithOptions(
+	idList []uint64, namespace *string, username string,
+	filterBy, filterValue, sortBy string, sortDesc bool,
+	page, pageSize int,
+) (int, types.Nodes, error) {
+	var total int64
+	nodes, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
+		rx = rx.Model(&types.Node{})
+		var err error
+		rx, total, err = ListOptions(rx, idList, namespace, username, filterBy, filterValue, sortBy, sortDesc, page, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		nodes, err := ListNodes(rx)
+		return nodes, err
+	})
+	return int(total), nodes, err
+}
+// __END_CYLONIX_MOD__
 
 func ListNodes(tx *gorm.DB) (types.Nodes, error) {
 	nodes := types.Nodes{}

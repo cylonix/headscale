@@ -17,6 +17,8 @@ import (
 type User struct {
 	gorm.Model
 	Name string `gorm:"unique"`
+
+	Namespace string // __CYLONIX_MOD__
 }
 
 // TODO(kradalby): See if we can fill in Gravatar here
@@ -88,6 +90,7 @@ func (n *User) Proto() *v1.User {
 		Id:        strconv.FormatUint(uint64(n.ID), util.Base10),
 		Name:      n.Name,
 		CreatedAt: timestamppb.New(n.CreatedAt),
+		Namespace: n.Namespace,
 	}
 }
 
@@ -100,6 +103,7 @@ func (n *User) FromProto(v1User *v1.User) error {
 	n.ID = uint(id)
 	n.Name = v1User.Name
 	n.CreatedAt = v1User.CreatedAt.AsTime()
+	n.Namespace = v1User.Namespace
 	return nil
 }
 // __END_CYLONIX_MOD__
