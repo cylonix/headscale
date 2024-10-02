@@ -1,8 +1,6 @@
 package types
 
 import (
-	"net/http"
-
 	"tailscale.com/tailcfg"
 )
 
@@ -29,7 +27,4 @@ type NodeHandler interface {
 	User(*User) *tailcfg.User
 	UserLogin(*User) *tailcfg.Login
 	UserProfile(*User) *tailcfg.UserProfile
-
-	// Http API auth.
-	ApiAuth(*http.Request) (bool, error)
 }

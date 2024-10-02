@@ -21,6 +21,9 @@ var ErrAPIKeyFailedToParse = errors.New("failed to parse ApiKey")
 // CreateAPIKey creates a new ApiKey in a user, and returns it.
 func (hsdb *HSDatabase) CreateAPIKey(
 	expiration *time.Time,
+	namespace string, // __CYLONIX_MOD__
+	scopeType string, // __CYLONIX_MOD__
+	scopeValue string, // __CYLONIX_MOD__
 ) (string, *types.APIKey, error) {
 	prefix, err := util.GenerateRandomStringURLSafe(apiPrefixLength)
 	if err != nil {
@@ -44,6 +47,9 @@ func (hsdb *HSDatabase) CreateAPIKey(
 		Prefix:     prefix,
 		Hash:       hash,
 		Expiration: expiration,
+		Namespace:  namespace,                      // __CYLONIX_MOD__
+		ScopeType:  types.AuthScopeType(scopeType), // __CYLONIX_MOD__
+		ScopeValue: scopeValue,                     // __CYLONIX_MOD__
 	}
 
 	if err := hsdb.DB.Save(&key).Error; err != nil {
@@ -102,24 +108,31 @@ func (hsdb *HSDatabase) ExpireAPIKey(key *types.APIKey) error {
 	return nil
 }
 
+ // __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ValidateAPIKey(keyStr string) (bool, error) {
+	_, valid, err := hsdb.GetAndValidateAPIKey(keyStr)
+	return valid, err
+}
+
+func (hsdb *HSDatabase) GetAndValidateAPIKey(keyStr string) (*types.APIKey, bool, error) {
 	prefix, hash, found := strings.Cut(keyStr, ".")
 	if !found {
-		return false, ErrAPIKeyFailedToParse
+		return nil, false, ErrAPIKeyFailedToParse
 	}
 
 	key, err := hsdb.GetAPIKey(prefix)
 	if err != nil {
-		return false, fmt.Errorf("failed to validate api key: %w", err)
+		return nil, false, fmt.Errorf("failed to validate api key: %w", err)
 	}
 
 	if key.Expiration.Before(time.Now()) {
-		return false, nil
+		return nil, false, nil
 	}
 
 	if err := bcrypt.CompareHashAndPassword(key.Hash, []byte(hash)); err != nil {
-		return false, err
+		return nil, false, err
 	}
 
-	return true, nil
+	return key, true, nil
 }
+// __END_CYLONIX_MOD__

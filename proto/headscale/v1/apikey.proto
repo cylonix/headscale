@@ -10,10 +10,15 @@ message ApiKey {
     google.protobuf.Timestamp expiration = 3;
     google.protobuf.Timestamp created_at = 4;
     google.protobuf.Timestamp last_seen  = 5;
+    string                    namespace  = 6; // __CYLONIX_MOD__
 }
 
 message CreateApiKeyRequest {
     google.protobuf.Timestamp expiration = 1;
+
+    optional string namespace   = 2; // __CYLONIX_MOD__
+    optional string scope_type  = 3; // __CYLONIX_MOD__
+    optional string scope_value = 4; // __CYLONIX_MOD__
 }
 
 message CreateApiKeyResponse {
@@ -28,6 +33,7 @@ message ExpireApiKeyResponse {
 }
 
 message ListApiKeysRequest {
+    optional string namespace = 1; // __CYLONIX_MOD__
 }
 
 message ListApiKeysResponse {

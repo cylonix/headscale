@@ -13,6 +13,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -41,6 +42,12 @@ func (api headscaleV1APIServer) GetUser(
 	ctx context.Context,
 	request *v1.GetUserRequest,
 ) (*v1.GetUserResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
+
 	user, err := api.h.db.GetUser(request.GetName())
 	if err != nil {
 		return nil, err
@@ -53,6 +60,11 @@ func (api headscaleV1APIServer) CreateUser(
 	ctx context.Context,
 	request *v1.CreateUserRequest,
 ) (*v1.CreateUserResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	user, err := api.h.db.CreateUser(request.GetName())
 	if err != nil {
 		return nil, err
@@ -65,6 +77,11 @@ func (api headscaleV1APIServer) RenameUser(
 	ctx context.Context,
 	request *v1.RenameUserRequest,
 ) (*v1.RenameUserResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetOldName())); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	err := api.h.db.RenameUser(request.GetOldName(), request.GetNewName())
 	if err != nil {
 		return nil, err
@@ -82,6 +99,11 @@ func (api headscaleV1APIServer) DeleteUser(
 	ctx context.Context,
 	request *v1.DeleteUserRequest,
 ) (*v1.DeleteUserResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	err := api.h.db.DestroyUser(request.GetName())
 	if err != nil {
 		return nil, err
@@ -94,6 +116,11 @@ func (api headscaleV1APIServer) ListUsers(
 	ctx context.Context,
 	request *v1.ListUsersRequest,
 ) (*v1.ListUsersResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	users, err := api.h.db.ListUsers()
 	if err != nil {
 		return nil, err
@@ -117,6 +144,11 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 	ctx context.Context,
 	request *v1.CreatePreAuthKeyRequest,
 ) (*v1.CreatePreAuthKeyResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	var expiration time.Time
 	if request.GetExpiration() != nil {
 		expiration = request.GetExpiration().AsTime()
@@ -155,6 +187,12 @@ func (api headscaleV1APIServer) ExpirePreAuthKey(
 			return err
 		}
 
+		// __BEGIN_CYLONIX_MOD__
+		if err := api.auth(ctx, types.NewAuthScope(preAuthKey.Namespace, preAuthKey.User.Name)); err != nil {
+			return err
+		}
+		// __END_CYLONIX_MOD__
+
 		return db.ExpirePreAuthKey(tx, preAuthKey)
 	})
 	if err != nil {
@@ -169,6 +207,9 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 	request *v1.ListPreAuthKeysRequest,
 ) (*v1.ListPreAuthKeysResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
 	total, preAuthKeys, err := api.h.db.ListPreAuthKeysWithOptions(
 		request.GetIdList(),
 		request.Namespace,
@@ -213,6 +254,9 @@ func (api headscaleV1APIServer) RegisterNode(
 	}
 
 	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
 	user, err := api.h.db.GetUser(request.GetUser())
 	if err != nil {
 		return nil, err
@@ -253,6 +297,11 @@ func (api headscaleV1APIServer) GetNode(
 	if err != nil {
 		return nil, err
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	resp := node.Proto()
 
@@ -287,6 +336,11 @@ func (api headscaleV1APIServer) SetTags(
 			Node: nil,
 		}, status.Error(codes.InvalidArgument, err.Error())
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	ctx = types.NotifyCtx(ctx, "cli-settags", node.Hostname)
 	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
@@ -324,6 +378,11 @@ func (api headscaleV1APIServer) DeleteNode(
 	if err != nil {
 		return nil, err
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	changedNodes, err := api.h.db.DeleteNode(
 		node,
@@ -354,6 +413,18 @@ func (api headscaleV1APIServer) ExpireNode(
 	ctx context.Context,
 	request *v1.ExpireNodeRequest,
 ) (*v1.ExpireNodeResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	{
+		node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
+		if err != nil {
+			return nil, err
+		}
+		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+			return nil, err
+		}
+	}
+	// __END_CYLONIX_MOD__
+
 	now := time.Now()
 
 	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
@@ -393,6 +464,17 @@ func (api headscaleV1APIServer) RenameNode(
 	ctx context.Context,
 	request *v1.RenameNodeRequest,
 ) (*v1.RenameNodeResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	{
+		node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
+		if err != nil {
+			return nil, err
+		}
+		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+			return nil, err
+		}
+	}
+	// __END_CYLONIX_MOD__
 	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
 		err := db.RenameNode(
 			tx,
@@ -430,6 +512,9 @@ func (api headscaleV1APIServer) ListNodes(
 ) (*v1.ListNodesResponse, error) {
 	isLikelyConnected := api.h.nodeNotifier.LikelyConnectedMap()
 	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
 	total, nodes, err := api.h.db.ListNodesWithOptions(
 		request.GetNodeIdList(),
 		request.Namespace,
@@ -479,6 +564,11 @@ func (api headscaleV1APIServer) MoveNode(
 	if err != nil {
 		return nil, err
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	err = api.h.db.AssignNodeToUser(node, request.GetUser())
 	if err != nil {
@@ -493,6 +583,11 @@ func (api headscaleV1APIServer) BackfillNodeIPs(
 	request *v1.BackfillNodeIPsRequest,
 ) (*v1.BackfillNodeIPsResponse, error) {
 	log.Trace().Msg("Backfill called")
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	if !request.Confirmed {
 		return nil, errors.New("not confirmed, aborting")
@@ -510,6 +605,11 @@ func (api headscaleV1APIServer) GetRoutes(
 	ctx context.Context,
 	request *v1.GetRoutesRequest,
 ) (*v1.GetRoutesResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	routes, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (types.Routes, error) {
 		return db.GetRoutes(rx)
 	})
@@ -526,6 +626,17 @@ func (api headscaleV1APIServer) EnableRoute(
 	ctx context.Context,
 	request *v1.EnableRouteRequest,
 ) (*v1.EnableRouteResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	route, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (*types.Route, error) {
+		return db.GetRoute(rx, request.GetRouteId())
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := api.auth(ctx, types.NewAuthScope(route.Namespace, route.Node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	update, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.StateUpdate, error) {
 		return db.EnableRoute(tx, request.GetRouteId())
 	})
@@ -546,6 +657,17 @@ func (api headscaleV1APIServer) DisableRoute(
 	ctx context.Context,
 	request *v1.DisableRouteRequest,
 ) (*v1.DisableRouteResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	route, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (*types.Route, error) {
+		return db.GetRoute(rx, request.GetRouteId())
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := api.auth(ctx, types.NewAuthScope(route.Namespace, route.Node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	update, err := db.Write(api.h.db.DB, func(tx *gorm.DB) ([]types.NodeID, error) {
 		return db.DisableRoute(tx, request.GetRouteId(), api.h.nodeNotifier.LikelyConnectedMap())
 	})
@@ -572,6 +694,11 @@ func (api headscaleV1APIServer) GetNodeRoutes(
 	if err != nil {
 		return nil, err
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	routes, err := api.h.db.GetNodeRoutes(node)
 	if err != nil {
@@ -587,6 +714,17 @@ func (api headscaleV1APIServer) DeleteRoute(
 	ctx context.Context,
 	request *v1.DeleteRouteRequest,
 ) (*v1.DeleteRouteResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	route, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (*types.Route, error) {
+		return db.GetRoute(rx, request.GetRouteId())
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := api.auth(ctx, types.NewAuthScope(route.Namespace, "")); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	isConnected := api.h.nodeNotifier.LikelyConnectedMap()
 	update, err := db.Write(api.h.db.DB, func(tx *gorm.DB) ([]types.NodeID, error) {
 		return db.DeleteRoute(tx, request.GetRouteId(), isConnected)
@@ -610,6 +748,11 @@ func (api headscaleV1APIServer) CreateApiKey(
 	ctx context.Context,
 	request *v1.CreateApiKeyRequest,
 ) (*v1.CreateApiKeyResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	var expiration time.Time
 	if request.GetExpiration() != nil {
 		expiration = request.GetExpiration().AsTime()
@@ -617,6 +760,9 @@ func (api headscaleV1APIServer) CreateApiKey(
 
 	apiKey, _, err := api.h.db.CreateAPIKey(
 		&expiration,
+		request.GetNamespace(),  // __CYLONIX_MOD__
+		request.GetScopeType(),  // __CYLONIX_MOD__
+		request.GetScopeValue(), // __CYLONIX_MOD__
 	)
 	if err != nil {
 		return nil, err
@@ -636,6 +782,11 @@ func (api headscaleV1APIServer) ExpireApiKey(
 	if err != nil {
 		return nil, err
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, "")); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	err = api.h.db.ExpireAPIKey(apiKey)
 	if err != nil {
@@ -649,6 +800,11 @@ func (api headscaleV1APIServer) ListApiKeys(
 	ctx context.Context,
 	request *v1.ListApiKeysRequest,
 ) (*v1.ListApiKeysResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	apiKeys, err := api.h.db.ListAPIKeys()
 	if err != nil {
 		return nil, err
@@ -679,6 +835,11 @@ func (api headscaleV1APIServer) DeleteApiKey(
 	if err != nil {
 		return nil, err
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, "")); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 
 	if err := api.h.db.DestroyAPIKey(*apiKey); err != nil {
 		return nil, err
@@ -688,9 +849,15 @@ func (api headscaleV1APIServer) DeleteApiKey(
 }
 
 func (api headscaleV1APIServer) GetPolicy(
-	_ context.Context,
-	_ *v1.GetPolicyRequest,
+	ctx context.Context, // __CYLONIX_MOD__
+	request *v1.GetPolicyRequest, // __CYLONIX_MOD__
 ) (*v1.GetPolicyResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
+
 	switch api.h.cfg.Policy.Mode {
 	case types.PolicyModeDB:
 		p, err := api.h.db.GetPolicy()
@@ -724,9 +891,14 @@ func (api headscaleV1APIServer) GetPolicy(
 }
 
 func (api headscaleV1APIServer) SetPolicy(
-	_ context.Context,
+	ctx context.Context, // __CYLONIX_MOD__
 	request *v1.SetPolicyRequest,
 ) (*v1.SetPolicyResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	if api.h.cfg.Policy.Mode != types.PolicyModeDB {
 		return nil, types.ErrPolicyUpdateIsDisabled
 	}
@@ -767,7 +939,7 @@ func (api headscaleV1APIServer) SetPolicy(
 
 	api.h.ACLPolicy = pol
 
-	ctx := types.NotifyCtx(context.Background(), "acl-update", "na")
+	ctx = types.NotifyCtx(context.Background(), "acl-update", "na") // __CYLONIX_MOD_-
 	api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
 		Type: types.StateFullUpdate,
 	})
@@ -785,6 +957,11 @@ func (api headscaleV1APIServer) DebugCreateNode(
 	ctx context.Context,
 	request *v1.DebugCreateNodeRequest,
 ) (*v1.DebugCreateNodeResponse, error) {
+	// __BEGIN_CYLONIX_MOD__
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_MOD__
 	user, err := api.h.db.GetUser(request.GetUser())
 	if err != nil {
 		return nil, err
@@ -847,3 +1024,54 @@ func (api headscaleV1APIServer) DebugCreateNode(
 }
 
 func (api headscaleV1APIServer) mustEmbedUnimplementedHeadscaleServiceServer() {}
+
+// __BEGIN_CYLONIX_MOD__
+func (api headscaleV1APIServer) authNoLog(ctx context.Context, request interface{}) error {
+	// Local native GRPC access will set the ctx with full scope. Skip auth
+	// check if it has been set with full access scope.
+	if types.IsWithFullAuthScope(ctx) {
+		return nil
+	}
+	meta, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "no meta data from incoming context")
+	}
+	authHeader, ok := meta["authorization"]
+	if !ok {
+		return status.Error(codes.Unauthenticated, "no authorization token")
+	}
+	token := authHeader[0]
+	if !strings.HasPrefix(token, AuthPrefix) {
+		return status.Error(codes.Unauthenticated, fmt.Sprintf("missing '%v' prefix in token", AuthPrefix))
+	}
+
+	key, valid, err := api.h.db.GetAndValidateAPIKey(strings.TrimPrefix(token, AuthPrefix))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", token))
+		}
+		return err
+	}
+	if !valid {
+		return status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", token))
+	}
+	if !key.Auth(request) {
+		return status.Error(codes.PermissionDenied, "unauthorized scope")
+	}
+	return nil
+}
+
+func (api headscaleV1APIServer) auth(ctx context.Context, request interface{}) error {
+	err := api.authNoLog(ctx, request)
+	if err != nil {
+		path := ""
+		if meta, ok := metadata.FromIncomingContext(ctx); ok {
+			if s, ok := meta["path"]; ok {
+				path = s[0]
+			}
+		}
+		log.Debug().Err(err).Str("path", path).Msg("request authorization failed")
+	}
+	return err
+}
+// __END_CYLONIX_MOD__

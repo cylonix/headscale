@@ -16,9 +16,12 @@ message Route {
     google.protobuf.Timestamp created_at = 7;
     google.protobuf.Timestamp updated_at = 8;
     google.protobuf.Timestamp deleted_at = 9;
+
+    string namespace = 10; // __CYLONIX_MOD__
 }
 
 message GetRoutesRequest {
+    optional string namespace = 1; // __CYLONIX_MOD__
 }
 
 message GetRoutesResponse {

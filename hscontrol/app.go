@@ -70,6 +70,7 @@ var (
 )
 
 const (
+	AuthFieldName      = "authorization" // __CYLONIX_MOD__
 	AuthPrefix         = "Bearer "
 	updateInterval     = 5 * time.Second
 	privateKeyFileMode = 0o600
@@ -288,6 +289,25 @@ func (h *Headscale) scheduledDERPMapUpdateWorker(cancelChan <-chan struct{}) {
 	}
 }
 
+// __BEGIN_CYLONIX_MOD__
+func (h *Headscale) grpcLocalInterceptor(ctx context.Context,
+	req interface{},
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (interface{}, error) {
+	// If authorization api key is not present in the meta data, it must be
+	// from a local native client. In which case, we will skip scope based
+	// authorization check by adding full-scope authorization.
+	meta, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		_, ok = meta["authorization"]
+	}
+	if !ok {
+		ctx = types.WithFullAuthScope(ctx)
+	}
+	return handler(ctx, req)
+}
+// __END_CYLONIX_MOD__
 func (h *Headscale) grpcAuthenticationInterceptor(ctx context.Context,
 	req interface{},
 	info *grpc.UnaryServerInfo,
@@ -356,36 +376,39 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 			Str("client_address", req.RemoteAddr).
 			Msg("HTTP authentication invoked")
 
+		authHeader := req.Header.Get("authorization")
 		// __BEGIN_CYLONIX_MOD__
-		var (
-			valid bool
-			err   error
-		)
-		if h.cfg.NodeHandler != nil {
-			valid, err = h.cfg.NodeHandler.ApiAuth(req)
-		} else {
-			authHeader := req.Header.Get("authorization")
+		// Http-only cookie may be used instead.
+		if authHeader == "" {
+			c, err := req.Cookie(AuthFieldName)
+			if err == nil && c != nil {
+				authHeader = c.Value
+				req.Header.Set("authorization", authHeader)
+			}
+		}
+		// Save Path for debug logging down the grpc handler chain.
+		req.Header.Set(grpcRuntime.MetadataHeaderPrefix + "path", req.URL.Path)
+		// __END_CYLONIX_MOD__
 
-			if !strings.HasPrefix(authHeader, AuthPrefix) {
+		if !strings.HasPrefix(authHeader, AuthPrefix) {
+			log.Error().
+				Caller().
+				Str("client_address", req.RemoteAddr).
+				Msg(`missing "Bearer " prefix in "Authorization" header`)
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, err := writer.Write([]byte("Unauthorized"))
+			if err != nil {
 				log.Error().
 					Caller().
-					Str("client_address", req.RemoteAddr).
-					Msg(`missing "Bearer " prefix in "Authorization" header`)
-				writer.WriteHeader(http.StatusUnauthorized)
-				_, err := writer.Write([]byte("Unauthorized"))
-				if err != nil {
-					log.Error().
-						Caller().
-						Err(err).
-						Msg("Failed to write response")
-				}
-
-				return
+					Err(err).
+					Msg("Failed to write response")
 			}
 
-			valid, err = h.db.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
+			return
 		}
-		// __END_CYLONIX_MOD__
+
+		valid, err := h.db.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
+
 		if err != nil {
 			log.Error().
 				Caller().
@@ -612,8 +635,15 @@ func (h *Headscale) Serve() error {
 
 	// Start the local gRPC server without TLS and without authentication
 	grpcSocket := grpc.NewServer(
-	// Uncomment to debug grpc communication.
-	// zerolog.UnaryInterceptor(),
+		// __BEGIN_CYLONIX_MOD__
+		grpc.UnaryInterceptor(
+			grpcMiddleware.ChainUnaryServer(
+				h.grpcLocalInterceptor,
+				// Uncomment to debug grpc communication.
+				// zerolog.NewUnaryServerInterceptor(),
+			),
+		),
+		// __END_CYLONIX_MOD__
 	)
 
 	v1.RegisterHeadscaleServiceServer(grpcSocket, newHeadscaleV1APIServer(h))

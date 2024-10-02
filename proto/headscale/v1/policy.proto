@@ -6,6 +6,7 @@ import "google/protobuf/timestamp.proto";
 
 message SetPolicyRequest {
     string policy = 1;
+    optional string namespace = 2; // __CYLONIX_MOD__
 }
 
 message SetPolicyResponse {
@@ -13,7 +14,9 @@ message SetPolicyResponse {
     google.protobuf.Timestamp updated_at = 2;
 }
 
-message GetPolicyRequest {}
+message GetPolicyRequest {
+    optional string namespace = 1; // __CYLONIX_MOD__
+}
 
 message GetPolicyResponse {
     string                    policy     = 1;

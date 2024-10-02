@@ -55,6 +55,7 @@ message Node {
 message RegisterNodeRequest {
     string user = 1;
     string key  = 2;
+    optional string namespace = 3; // __CYLONIX_MOD__
 }
 
 message RegisterNodeResponse {
@@ -134,6 +135,7 @@ message DebugCreateNodeRequest {
     string          key    = 2;
     string          name   = 3;
     repeated string routes = 4;
+    optional string namespace = 5; // __CYLONIX_MOD__
 }
 
 message DebugCreateNodeResponse {
@@ -142,6 +144,7 @@ message DebugCreateNodeResponse {
 
 message BackfillNodeIPsRequest {
     bool confirmed = 1;
+    optional string namespace = 2; // __CYLONIX_MOD__
 }
 
 message BackfillNodeIPsResponse {

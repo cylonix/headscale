@@ -33,6 +33,15 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
         "tags": [
           "HeadscaleService"
         ]
@@ -274,6 +283,13 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          },
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -307,6 +323,13 @@
           },
           {
             "name": "key",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -570,6 +593,15 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
         "tags": [
           "HeadscaleService"
         ]
@@ -773,6 +805,15 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
         "tags": [
           "HeadscaleService"
         ]
@@ -888,6 +929,15 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
         "tags": [
           "HeadscaleService"
         ]
@@ -947,6 +997,13 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -974,6 +1031,13 @@
             "name": "name",
             "in": "path",
             "required": true,
+            "type": "string"
+          },
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
             "type": "string"
           }
         ],
@@ -1010,6 +1074,13 @@
             "name": "newName",
             "in": "path",
             "required": true,
+            "type": "string"
+          },
+          {
+            "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
             "type": "string"
           }
         ],
@@ -1080,6 +1151,10 @@
         "lastSeen": {
           "type": "string",
           "format": "date-time"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1100,6 +1175,18 @@
         "expiration": {
           "type": "string",
           "format": "date-time"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "scopeType": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "scopeValue": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1184,6 +1271,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1548,6 +1639,10 @@
         "deletedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -1556,6 +1651,10 @@
       "properties": {
         "policy": {
           "type": "string"
+        },
+        "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },

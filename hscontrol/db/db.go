@@ -415,15 +415,17 @@ func NewHeadscaleDatabase(
 			},
 			// __BEGIN_CYLONIX_MOD__
 			{
-				ID: "202410010000",
-				// Migrate tables with additional namespace column.
+				ID: "202410011600",
+				// Migrate tables with additional columns.
 				Migrate: func(tx *gorm.DB) error {
-					err := tx.AutoMigrate(&types.PreAuthKey{}, &types.User{}, &types.Node{})
-					if err != nil {
-						return err
-					}
-
-					return nil
+					return tx.AutoMigrate(
+						&types.APIKey{},
+						&types.Node{},
+						&types.Policy{},
+						&types.PreAuthKey{},
+						&types.Route{},
+						&types.User{},
+					)
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},

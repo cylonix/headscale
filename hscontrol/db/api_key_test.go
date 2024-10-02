@@ -7,7 +7,7 @@ import (
 )
 
 func (*Suite) TestCreateAPIKey(c *check.C) {
-	apiKeyStr, apiKey, err := db.CreateAPIKey(nil)
+	apiKeyStr, apiKey, err := db.CreateAPIKey(nil, "", "", "") // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 	c.Assert(apiKey, check.NotNil)
 
@@ -32,7 +32,7 @@ func (*Suite) TestAPIKeyDoesNotExist(c *check.C) {
 
 func (*Suite) TestValidateAPIKeyOk(c *check.C) {
 	nowPlus2 := time.Now().Add(2 * time.Hour)
-	apiKeyStr, apiKey, err := db.CreateAPIKey(&nowPlus2)
+	apiKeyStr, apiKey, err := db.CreateAPIKey(&nowPlus2, "", "", "") // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 	c.Assert(apiKey, check.NotNil)
 
@@ -43,7 +43,7 @@ func (*Suite) TestValidateAPIKeyOk(c *check.C) {
 
 func (*Suite) TestValidateAPIKeyNotOk(c *check.C) {
 	nowMinus2 := time.Now().Add(time.Duration(-2) * time.Hour)
-	apiKeyStr, apiKey, err := db.CreateAPIKey(&nowMinus2)
+	apiKeyStr, apiKey, err := db.CreateAPIKey(&nowMinus2, "", "", "") // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 	c.Assert(apiKey, check.NotNil)
 
@@ -52,7 +52,7 @@ func (*Suite) TestValidateAPIKeyNotOk(c *check.C) {
 	c.Assert(valid, check.Equals, false)
 
 	now := time.Now()
-	apiKeyStrNow, apiKey, err := db.CreateAPIKey(&now)
+	apiKeyStrNow, apiKey, err := db.CreateAPIKey(&now, "", "", "") // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 	c.Assert(apiKey, check.NotNil)
 
@@ -71,7 +71,7 @@ func (*Suite) TestValidateAPIKeyNotOk(c *check.C) {
 
 func (*Suite) TestExpireAPIKey(c *check.C) {
 	nowPlus2 := time.Now().Add(2 * time.Hour)
-	apiKeyStr, apiKey, err := db.CreateAPIKey(&nowPlus2)
+	apiKeyStr, apiKey, err := db.CreateAPIKey(&nowPlus2, "", "", "") // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 	c.Assert(apiKey, check.NotNil)
 

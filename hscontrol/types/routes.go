@@ -26,6 +26,8 @@ type Route struct {
 	Advertised bool
 	Enabled    bool
 	IsPrimary  bool
+
+	Namespace string // __CYLONIX_MOD__
 }
 
 type Routes []Route
