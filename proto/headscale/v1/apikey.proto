@@ -3,6 +3,7 @@ package headscale.v1;
 option  go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 import "google/protobuf/timestamp.proto";
+import "headscale/v1/user.proto"; // __CYLONIX_MOD__
 
 message ApiKey {
     uint64                    id         = 1;
@@ -10,15 +11,17 @@ message ApiKey {
     google.protobuf.Timestamp expiration = 3;
     google.protobuf.Timestamp created_at = 4;
     google.protobuf.Timestamp last_seen  = 5;
-    string                    namespace  = 6; // __CYLONIX_MOD__
+    User                      user       = 6; // __CYLONIX_MOD__
+    string                    namespace  = 7; // __CYLONIX_MOD__
 }
 
 message CreateApiKeyRequest {
     google.protobuf.Timestamp expiration = 1;
 
     optional string namespace   = 2; // __CYLONIX_MOD__
-    optional string scope_type  = 3; // __CYLONIX_MOD__
-    optional string scope_value = 4; // __CYLONIX_MOD__
+    optional string user        = 3; // __CYLONIX_MOD__
+    optional string scope_type  = 4; // __CYLONIX_MOD__
+    optional string scope_value = 5; // __CYLONIX_MOD__
 }
 
 message CreateApiKeyResponse {
@@ -33,11 +36,22 @@ message ExpireApiKeyResponse {
 }
 
 message ListApiKeysRequest {
-    optional string namespace = 1; // __CYLONIX_MOD__
+   // __BEGIN_CYLONIX_MOD__
+    optional string user         = 1;
+    repeated uint64 node_id_list = 2;
+    optional string namespace    = 3;
+    optional string filter_by    = 4;
+    optional string filter_value = 5;
+    optional string sort_by      = 6;
+    optional bool   sort_desc    = 7;
+    optional uint32 page         = 8;
+    optional uint32 pageSize     = 9;
+    // __END_CYLONIX_MOD__
 }
 
 message ListApiKeysResponse {
     repeated ApiKey api_keys = 1;
+    uint32             total = 2; // __CYLONIX_MOD__
 }
 
 message DeleteApiKeyRequest {

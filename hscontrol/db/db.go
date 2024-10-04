@@ -415,7 +415,7 @@ func NewHeadscaleDatabase(
 			},
 			// __BEGIN_CYLONIX_MOD__
 			{
-				ID: "202410011600",
+				ID: "202410031400",
 				// Migrate tables with additional columns.
 				Migrate: func(tx *gorm.DB) error {
 					return tx.AutoMigrate(
@@ -696,20 +696,25 @@ func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
 	}
 	return db
 }
-func ListOptions(rx *gorm.DB,
+func ListWithOptions[T any](model T, rx *gorm.DB,
+	listFunc func(*gorm.DB) ([]T, error),
 	idList []uint64, namespace *string, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool, page, pageSize int,
-) (*gorm.DB, int64, error) {
+) ([]T, int64, error) {
 	var total int64
-	if namespace != nil {
-		rx = rx.Where("namespace = ?", *namespace)
-	}
 	if username != "" {
-		user, err := GetUser(rx, username)
+		user := &types.User{}
+		err := rx.Model(&types.User{}).First(user, "name = ?", username).Error
 		if err != nil {
 			return nil, 0, err
 		}
+		rx = rx.Model(model)
 		rx = rx.Where("user_id = ?", user.ID)
+	} else {
+		rx = rx.Model(model)
+	}
+	if namespace != nil {
+		rx = rx.Where("namespace = ?", *namespace)
 	}
 	if len(idList) > 0 {
 		rx = rx.Where("id in ?", idList)
@@ -722,6 +727,8 @@ func ListOptions(rx *gorm.DB,
 	}
 	rx = Sort(rx, sortBy, sortDesc)
 	rx = Page(rx, total, int(page), int(pageSize))
-	return rx, total, nil
+	ret, err := listFunc(rx)
+
+	return ret, total, err
 }
 // __END_CYLONIX_MOD__

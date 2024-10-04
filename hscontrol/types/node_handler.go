@@ -2,6 +2,7 @@ package types
 
 import (
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/key"
 )
 
 type NodeHandler interface {
@@ -16,6 +17,12 @@ type NodeHandler interface {
 
 	// Update is invoked when a node is updated.
 	Update(*Node) (*Node, error)
+
+	// Recover is to recover a node that's already in polling but no matching
+	// node found. A handler may simply add it to the approval queue again
+	// or change it to pending if it is in approved state so that admin can
+	// decide if to recover the node by re-approving it.
+	Recover(key.MachinePublic, key.NodePublic) error
 
 	// Peers lists any peers additionly for the peers to be sent the requester.
 	Peers(*Node) (Nodes, []NodeID, error)

@@ -107,23 +107,24 @@ func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
 	idList []uint64, namespace *string, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool,
 	page, pageSize int,
-) (int, []types.PreAuthKey, error) {
+) (int, []*types.PreAuthKey, error) {
 	var total int64
-	keys, err := Read(hsdb.DB, func(rx *gorm.DB) ([]types.PreAuthKey, error) {
-		var err error
-		rx, total, err = ListOptions(
-			rx, idList, namespace, username,
+	keys, err := Read(hsdb.DB, func(rx *gorm.DB) ([]*types.PreAuthKey, error) {
+		keys, count, err := ListWithOptions(
+			&types.PreAuthKey{}, rx,
+			func(rx *gorm.DB) ([]*types.PreAuthKey, error) {
+				keys := []*types.PreAuthKey{}
+				rx = rx.Preload("User").Preload("ACLTags")
+				if err := rx.Find(&keys).Error; err != nil {
+					return nil, err
+				}
+				return keys, nil
+			},
+			idList, namespace, username,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
-		if err != nil {
-			return nil, err
-		}
-		keys := []types.PreAuthKey{}
-		rx = rx.Preload("User").Preload("ACLTags")
-		if err := rx.Find(&keys).Error; err != nil {
-			return nil, err
-		}
-		return keys, nil
+		total = count
+		return keys, err
 
 	})
 	return int(total), keys, err

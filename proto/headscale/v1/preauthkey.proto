@@ -3,6 +3,7 @@ package headscale.v1;
 option  go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 import "google/protobuf/timestamp.proto";
+import "headscale/v1/user.proto"; // __CYLONIX_MOD__
 
 message PreAuthKey {
     string                    user       = 1;
@@ -14,7 +15,8 @@ message PreAuthKey {
     google.protobuf.Timestamp expiration = 7;
     google.protobuf.Timestamp created_at = 8;
     repeated string           acl_tags   = 9;
-    string                    namespace  = 10; // _CYLONIX_MOD__
+    User                      userDetail = 10; // __CYLONIX_MOD_
+    string                    namespace  = 11; // __CYLONIX_MOD__
 }
 
 message CreatePreAuthKeyRequest {

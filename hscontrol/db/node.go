@@ -79,21 +79,23 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 ) (int, types.Nodes, error) {
 	var total int64
 	nodes, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
-		rx = rx.Model(&types.Node{})
-		var err error
-		rx, total, err = ListOptions(rx, idList, namespace, username, filterBy, filterValue, sortBy, sortDesc, page, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		nodes, err := ListNodes(rx)
-		return nodes, err
+		nodes, count, err := ListWithOptions(
+			&types.Node{}, rx, listNodes,
+			idList, namespace, username,
+			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
+		)
+		total = count
+		return types.Nodes(nodes), err
 	})
 	return int(total), nodes, err
 }
-// __END_CYLONIX_MOD__
 
 func ListNodes(tx *gorm.DB) (types.Nodes, error) {
-	nodes := types.Nodes{}
+	nodes, err := listNodes(tx)
+	return types.Nodes(nodes), err
+}
+func listNodes(tx *gorm.DB) ([]*types.Node, error) {
+	nodes := []*types.Node{}
 	if err := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
@@ -105,6 +107,7 @@ func ListNodes(tx *gorm.DB) (types.Nodes, error) {
 
 	return nodes, nil
 }
+// __END_CYLONIX_MOD__
 
 func (hsdb *HSDatabase) ListEphemeralNodes() (types.Nodes, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
@@ -287,8 +290,44 @@ func RenameNode(tx *gorm.DB,
 	return nil
 }
 
+// __BEGIN_CYLONIX_MOD__
+// Remove pre-auth key if node is expired.
+// TODO: add background process to glean and remove auth keys for nodes that
+// TODO: are expiring in the future.
+func DeleteExpiredNodeAuthKey(tx *gorm.DB,
+	nodeID types.NodeID, expiry time.Time,
+) error {
+	if expiry.UnixNano() > time.Now().UnixNano() {
+		return nil
+	}
+	node := &types.Node{}
+	if err := tx.
+		Model(&types.Node{}).
+		Where("id = ?", nodeID).
+		Select("AuthKeyID").
+		First(node).
+		Error; err != nil {
+		return err
+	}
+	return DeleteNodePreAuthKey(tx, node)
+}
+func DeleteNodePreAuthKey(tx *gorm.DB, node *types.Node) error {
+	if node.AuthKeyID == nil {
+		return nil
+	}
+	return tx.Delete(&types.PreAuthKey{}, "id = ?", *node.AuthKeyID).Error
+}
+
+// __END_CYLONIX_MOD__
+
 func (hsdb *HSDatabase) NodeSetExpiry(nodeID types.NodeID, expiry time.Time) error {
 	return hsdb.Write(func(tx *gorm.DB) error {
+		// __BEGIN_CYLONIX_MOD__
+		if err := DeleteExpiredNodeAuthKey(tx, nodeID, expiry); err != nil {
+			return err
+		}
+		// __END_CYLONIX_MOD__
+
 		return NodeSetExpiry(tx, nodeID, expiry)
 	})
 }
@@ -323,6 +362,9 @@ func DeleteNode(tx *gorm.DB,
 		if err := nodeHandler.Delete(node); err != nil {
 			return changed, err
 		}
+	}
+	if err := DeleteNodePreAuthKey(tx, node); err != nil {
+		return changed, err
 	}
 	// __END_CYLONIX_MOD__
 

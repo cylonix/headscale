@@ -42,6 +42,9 @@ func (key *PreAuthKey) Proto() *v1.PreAuthKey {
 		Reusable:  key.Reusable,
 		Used:      key.Used,
 		AclTags:   make([]string, len(key.ACLTags)),
+
+		UserDetail: key.User.Proto(), // __CYLONIX_MOD__
+		Namespace:  key.Namespace,    // __CYLONIX_MOD__
 	}
 
 	if key.Expiration != nil {
@@ -72,6 +75,7 @@ func (key *PreAuthKey) FromProto(p *v1.PreAuthKey) error {
 		Ephemeral: p.Ephemeral,
 		Reusable:  p.Reusable,
 		Used:      p.Used,
+		Namespace: p.Namespace,
 	}
 
 	if p.Expiration.IsValid() {

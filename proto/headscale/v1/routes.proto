@@ -21,7 +21,17 @@ message Route {
 }
 
 message GetRoutesRequest {
-    optional string namespace = 1; // __CYLONIX_MOD__
+    // __BEGIN_CYLONIX_MOD__
+    optional string user         = 1;
+    repeated uint64 node_id_list = 2;
+    optional string namespace    = 3;
+    optional string filter_by    = 4;
+    optional string filter_value = 5;
+    optional string sort_by      = 6;
+    optional bool   sort_desc    = 7;
+    optional uint32 page         = 8;
+    optional uint32 pageSize     = 9;
+    // __END_CYLONIX_MOD__
 }
 
 message GetRoutesResponse {

@@ -9,6 +9,7 @@ import (
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 const (
@@ -21,6 +22,7 @@ var ErrAPIKeyFailedToParse = errors.New("failed to parse ApiKey")
 // CreateAPIKey creates a new ApiKey in a user, and returns it.
 func (hsdb *HSDatabase) CreateAPIKey(
 	expiration *time.Time,
+	username string,  // __CYLONIX_MOD__
 	namespace string, // __CYLONIX_MOD__
 	scopeType string, // __CYLONIX_MOD__
 	scopeValue string, // __CYLONIX_MOD__
@@ -43,10 +45,22 @@ func (hsdb *HSDatabase) CreateAPIKey(
 		return "", nil, err
 	}
 
+	// __BEGIN_CYLONIX_MOD__
+	var userID *uint
+	if username != "" {
+		user, err := hsdb.GetUser(username)
+		if err != nil {
+			return "", nil, err
+		}
+		userID = &user.ID
+	}
+	// __END_CYLONIX_MOD__
+
 	key := types.APIKey{
 		Prefix:     prefix,
 		Hash:       hash,
 		Expiration: expiration,
+		UserID:     userID,                         // __CYLONIX_MOD__
 		Namespace:  namespace,                      // __CYLONIX_MOD__
 		ScopeType:  types.AuthScopeType(scopeType), // __CYLONIX_MOD__
 		ScopeValue: scopeValue,                     // __CYLONIX_MOD__
@@ -108,7 +122,7 @@ func (hsdb *HSDatabase) ExpireAPIKey(key *types.APIKey) error {
 	return nil
 }
 
- // __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ValidateAPIKey(keyStr string) (bool, error) {
 	_, valid, err := hsdb.GetAndValidateAPIKey(keyStr)
 	return valid, err
@@ -117,11 +131,14 @@ func (hsdb *HSDatabase) ValidateAPIKey(keyStr string) (bool, error) {
 func (hsdb *HSDatabase) GetAndValidateAPIKey(keyStr string) (*types.APIKey, bool, error) {
 	prefix, hash, found := strings.Cut(keyStr, ".")
 	if !found {
-		return nil, false, ErrAPIKeyFailedToParse
+		return nil, false, nil
 	}
 
 	key, err := hsdb.GetAPIKey(prefix)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, nil
+		}
 		return nil, false, fmt.Errorf("failed to validate api key: %w", err)
 	}
 
@@ -130,9 +147,35 @@ func (hsdb *HSDatabase) GetAndValidateAPIKey(keyStr string) (*types.APIKey, bool
 	}
 
 	if err := bcrypt.CompareHashAndPassword(key.Hash, []byte(hash)); err != nil {
-		return nil, false, err
+		return nil, false, nil
 	}
 
 	return key, true, nil
+}
+func (hsdb *HSDatabase) ListAPIKeysWithOptions(
+	idList []uint64, namespace *string, username string,
+	filterBy, filterValue, sortBy string, sortDesc bool,
+	page, pageSize int,
+) (int, []*types.APIKey, error) {
+	var total int64
+	keys, err := Read(hsdb.DB, func(rx *gorm.DB) ([]*types.APIKey, error) {
+		keys, count, err := ListWithOptions(
+			&types.APIKey{}, rx, 
+			func(rx *gorm.DB) ([]*types.APIKey, error) {
+				var keys []*types.APIKey
+				err := rx.Preload("User").Find(&keys).Error
+				return keys, err
+			},
+			idList, namespace, username,
+			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
+		)
+		total = count
+		return keys, err
+	})
+	return int(total), keys, err
+}
+
+func DeleteAPIKeysByUser(tx *gorm.DB, userID uint) error {
+	return tx.Delete(&types.APIKey{}, "user_id = ?", userID).Error
 }
 // __END_CYLONIX_MOD__

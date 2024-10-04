@@ -27,6 +27,8 @@ type Route struct {
 	Enabled    bool
 	IsPrimary  bool
 
+	UserID    *uint  // __CYLONIX_MOD__
+	User      *User  // __CYLONIX_MOD__
 	Namespace string // __CYLONIX_MOD__
 }
 

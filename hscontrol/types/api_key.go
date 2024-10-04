@@ -106,6 +106,8 @@ type APIKey struct {
 	// __BEGIN_CYLONIX_MOD__
 	ScopeType  AuthScopeType
 	ScopeValue string
+	UserID     *uint
+	User       *User
 	Namespace  string
 	// __END_CYLONIX_MOD__
 
@@ -131,6 +133,13 @@ func (key *APIKey) Proto() *v1.ApiKey {
 	if key.LastSeen != nil {
 		protoKey.LastSeen = timestamppb.New(*key.LastSeen)
 	}
+
+	// __BEGIN_CYLONIX_MOD__
+	if key.User != nil {
+		protoKey.User = key.User.Proto()
+	}
+	protoKey.Namespace = key.Namespace
+	// __END_CYLONIX_MOD__
 
 	return &protoKey
 }

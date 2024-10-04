@@ -64,8 +64,8 @@ func (api headscaleV1APIServer) CreateUser(
 	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
 		return nil, err
 	}
+	user, err := api.h.db.CreateNamespaceUser(request.GetName(), request.Namespace, request.LoginName)
 	// __END_CYLONIX_MOD__
-	user, err := api.h.db.CreateUser(request.GetName())
 	if err != nil {
 		return nil, err
 	}
@@ -120,8 +120,18 @@ func (api headscaleV1APIServer) ListUsers(
 	if err := api.auth(ctx, request); err != nil {
 		return nil, err
 	}
+	total, users, err := api.h.db.ListUsersWithOptions(
+		request.GetIdList(),
+		request.Namespace,
+		request.GetUser(),
+		request.GetFilterBy(),
+		request.GetFilterValue(),
+		request.GetSortBy(),
+		request.GetSortDesc(),
+		int(request.GetPage()),
+		int(request.GetPageSize()),
+	)
 	// __END_CYLONIX_MOD__
-	users, err := api.h.db.ListUsers()
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +147,7 @@ func (api headscaleV1APIServer) ListUsers(
 
 	log.Trace().Caller().Interface("users", response).Msg("")
 
-	return &v1.ListUsersResponse{Users: response}, nil
+	return &v1.ListUsersResponse{Users: response, Total: uint32(total)}, nil // __CYLONIX_MOD__
 }
 
 func (api headscaleV1APIServer) CreatePreAuthKey(
@@ -760,6 +770,7 @@ func (api headscaleV1APIServer) CreateApiKey(
 
 	apiKey, _, err := api.h.db.CreateAPIKey(
 		&expiration,
+		request.GetUser(),       // __CYLONIX_MOD__
 		request.GetNamespace(),  // __CYLONIX_MOD__
 		request.GetScopeType(),  // __CYLONIX_MOD__
 		request.GetScopeValue(), // __CYLONIX_MOD__
@@ -778,7 +789,15 @@ func (api headscaleV1APIServer) ExpireApiKey(
 	var apiKey *types.APIKey
 	var err error
 
-	apiKey, err = api.h.db.GetAPIKey(request.Prefix)
+	// __BEGIN_CYLONIX_MOD__
+	if request.Prefix == "" {
+		// Expiring the api key used to invoke this API.
+		apiKey, err = api.getAPIKeyFromIncomingContext(ctx)
+	} else {
+		apiKey, err = api.h.db.GetAPIKey(request.Prefix)
+	}
+	// __END_CYLONIX_MOD__
+
 	if err != nil {
 		return nil, err
 	}
@@ -804,8 +823,18 @@ func (api headscaleV1APIServer) ListApiKeys(
 	if err := api.auth(ctx, request); err != nil {
 		return nil, err
 	}
+	total, apiKeys, err := api.h.db.ListAPIKeysWithOptions(
+		request.GetNodeIdList(),
+		request.Namespace,
+		request.GetUser(),
+		request.GetFilterBy(),
+		request.GetFilterValue(),
+		request.GetSortBy(),
+		request.GetSortDesc(),
+		int(request.GetPage()),
+		int(request.GetPageSize()),
+	)
 	// __END_CYLONIX_MOD__
-	apiKeys, err := api.h.db.ListAPIKeys()
 	if err != nil {
 		return nil, err
 	}
@@ -819,7 +848,7 @@ func (api headscaleV1APIServer) ListApiKeys(
 		return response[i].Id < response[j].Id
 	})
 
-	return &v1.ListApiKeysResponse{ApiKeys: response}, nil
+	return &v1.ListApiKeysResponse{ApiKeys: response, Total: uint32(total)}, nil // __CYLONIX_MOD__
 }
 
 func (api headscaleV1APIServer) DeleteApiKey(
@@ -1026,34 +1055,41 @@ func (api headscaleV1APIServer) DebugCreateNode(
 func (api headscaleV1APIServer) mustEmbedUnimplementedHeadscaleServiceServer() {}
 
 // __BEGIN_CYLONIX_MOD__
+func (api headscaleV1APIServer) getAPIKeyFromIncomingContext(ctx context.Context) (*types.APIKey, error) {
+	meta, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "no meta data from incoming context")
+	}
+	authHeader, ok := meta["authorization"]
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "no authorization token")
+	}
+	token := authHeader[0]
+	if !strings.HasPrefix(token, AuthPrefix) {
+		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("missing '%v' prefix in token", AuthPrefix))
+	}
+
+	key, valid, err := api.h.db.GetAndValidateAPIKey(strings.TrimPrefix(token, AuthPrefix))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", token))
+		}
+		return nil, err
+	}
+	if !valid {
+		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", token))
+	}
+	return key, err
+}
 func (api headscaleV1APIServer) authNoLog(ctx context.Context, request interface{}) error {
 	// Local native GRPC access will set the ctx with full scope. Skip auth
 	// check if it has been set with full access scope.
 	if types.IsWithFullAuthScope(ctx) {
 		return nil
 	}
-	meta, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return status.Error(codes.Unauthenticated, "no meta data from incoming context")
-	}
-	authHeader, ok := meta["authorization"]
-	if !ok {
-		return status.Error(codes.Unauthenticated, "no authorization token")
-	}
-	token := authHeader[0]
-	if !strings.HasPrefix(token, AuthPrefix) {
-		return status.Error(codes.Unauthenticated, fmt.Sprintf("missing '%v' prefix in token", AuthPrefix))
-	}
-
-	key, valid, err := api.h.db.GetAndValidateAPIKey(strings.TrimPrefix(token, AuthPrefix))
+	key, err := api.getAPIKeyFromIncomingContext(ctx)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", token))
-		}
 		return err
-	}
-	if !valid {
-		return status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", token))
 	}
 	if !key.Auth(request) {
 		return status.Error(codes.PermissionDenied, "unauthorized scope")

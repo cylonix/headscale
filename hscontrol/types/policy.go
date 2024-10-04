@@ -15,6 +15,8 @@ var (
 type Policy struct {
 	gorm.Model
 
+	UserID    *uint  // __CYLINIX_MOD__
+	User      *User  // __CYLINIX_MOD__
 	Namespace string // __CYLONIX_MOD__
 
 	// Data contains the policy in HuJSON format.

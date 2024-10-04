@@ -227,8 +227,22 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		log.Error().
 			Str("handler", "NoisePollNetMap").
 			Msgf("Failed to fetch node from the database with node key: %s", mapRequest.NodeKey.String())
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
 
+		// __BEGIN_CYLONIX_MOD__
+		msg := "Internal error"
+		if ns.headscale.cfg.NodeHandler != nil {
+			if err := ns.headscale.cfg.NodeHandler.Recover(ns.conn.Peer(), mapRequest.NodeKey); err != nil {
+				log.Error().
+					Str("error", err.Error()).
+					Str("machine-key", ns.conn.Peer().ShortString()).
+					Str("node-key", mapRequest.NodeKey.ShortString()).
+					Msg("Failed to recover.")
+			} else {
+				msg = "Machine needs approval"
+			}
+		}
+		http.Error(writer, msg, http.StatusInternalServerError)
+		// __END_CYLONIX_MOD__
 		return
 	}
 
