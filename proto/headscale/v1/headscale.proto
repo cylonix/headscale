@@ -192,6 +192,12 @@ service HeadscaleService {
             delete: "/api/v1/apikey/{prefix}"
         };
     }
+
+    rpc RefreshApiKey(RefreshApiKeyRequest) returns (RefreshApiKeyResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/apikey/refresh/{prefix}"
+        };
+    }
     // --- ApiKeys end ---
 
     // --- Policy start ---

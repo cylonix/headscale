@@ -46,6 +46,7 @@ const (
 	HeadscaleService_ExpireApiKey_FullMethodName     = "/headscale.v1.HeadscaleService/ExpireApiKey"
 	HeadscaleService_ListApiKeys_FullMethodName      = "/headscale.v1.HeadscaleService/ListApiKeys"
 	HeadscaleService_DeleteApiKey_FullMethodName     = "/headscale.v1.HeadscaleService/DeleteApiKey"
+	HeadscaleService_RefreshApiKey_FullMethodName    = "/headscale.v1.HeadscaleService/RefreshApiKey"
 	HeadscaleService_GetPolicy_FullMethodName        = "/headscale.v1.HeadscaleService/GetPolicy"
 	HeadscaleService_SetPolicy_FullMethodName        = "/headscale.v1.HeadscaleService/SetPolicy"
 )
@@ -86,6 +87,7 @@ type HeadscaleServiceClient interface {
 	ExpireApiKey(ctx context.Context, in *ExpireApiKeyRequest, opts ...grpc.CallOption) (*ExpireApiKeyResponse, error)
 	ListApiKeys(ctx context.Context, in *ListApiKeysRequest, opts ...grpc.CallOption) (*ListApiKeysResponse, error)
 	DeleteApiKey(ctx context.Context, in *DeleteApiKeyRequest, opts ...grpc.CallOption) (*DeleteApiKeyResponse, error)
+	RefreshApiKey(ctx context.Context, in *RefreshApiKeyRequest, opts ...grpc.CallOption) (*RefreshApiKeyResponse, error)
 	// --- Policy start ---
 	GetPolicy(ctx context.Context, in *GetPolicyRequest, opts ...grpc.CallOption) (*GetPolicyResponse, error)
 	SetPolicy(ctx context.Context, in *SetPolicyRequest, opts ...grpc.CallOption) (*SetPolicyResponse, error)
@@ -342,6 +344,15 @@ func (c *headscaleServiceClient) DeleteApiKey(ctx context.Context, in *DeleteApi
 	return out, nil
 }
 
+func (c *headscaleServiceClient) RefreshApiKey(ctx context.Context, in *RefreshApiKeyRequest, opts ...grpc.CallOption) (*RefreshApiKeyResponse, error) {
+	out := new(RefreshApiKeyResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_RefreshApiKey_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *headscaleServiceClient) GetPolicy(ctx context.Context, in *GetPolicyRequest, opts ...grpc.CallOption) (*GetPolicyResponse, error) {
 	out := new(GetPolicyResponse)
 	err := c.cc.Invoke(ctx, HeadscaleService_GetPolicy_FullMethodName, in, out, opts...)
@@ -396,6 +407,7 @@ type HeadscaleServiceServer interface {
 	ExpireApiKey(context.Context, *ExpireApiKeyRequest) (*ExpireApiKeyResponse, error)
 	ListApiKeys(context.Context, *ListApiKeysRequest) (*ListApiKeysResponse, error)
 	DeleteApiKey(context.Context, *DeleteApiKeyRequest) (*DeleteApiKeyResponse, error)
+	RefreshApiKey(context.Context, *RefreshApiKeyRequest) (*RefreshApiKeyResponse, error)
 	// --- Policy start ---
 	GetPolicy(context.Context, *GetPolicyRequest) (*GetPolicyResponse, error)
 	SetPolicy(context.Context, *SetPolicyRequest) (*SetPolicyResponse, error)
@@ -486,6 +498,9 @@ func (UnimplementedHeadscaleServiceServer) ListApiKeys(context.Context, *ListApi
 }
 func (UnimplementedHeadscaleServiceServer) DeleteApiKey(context.Context, *DeleteApiKeyRequest) (*DeleteApiKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteApiKey not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) RefreshApiKey(context.Context, *RefreshApiKeyRequest) (*RefreshApiKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshApiKey not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) GetPolicy(context.Context, *GetPolicyRequest) (*GetPolicyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetPolicy not implemented")
@@ -992,6 +1007,24 @@ func _HeadscaleService_DeleteApiKey_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HeadscaleService_RefreshApiKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshApiKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).RefreshApiKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_RefreshApiKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).RefreshApiKey(ctx, req.(*RefreshApiKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HeadscaleService_GetPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetPolicyRequest)
 	if err := dec(in); err != nil {
@@ -1142,6 +1175,10 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteApiKey",
 			Handler:    _HeadscaleService_DeleteApiKey_Handler,
+		},
+		{
+			MethodName: "RefreshApiKey",
+			Handler:    _HeadscaleService_RefreshApiKey_Handler,
 		},
 		{
 			MethodName: "GetPolicy",

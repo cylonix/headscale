@@ -37,7 +37,7 @@ var file_headscale_v1_headscale_proto_rawDesc = []byte{
 	0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x19, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c,
 	0x65, 0x2f, 0x76, 0x31, 0x2f, 0x61, 0x70, 0x69, 0x6b, 0x65, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74,
 	0x6f, 0x1a, 0x19, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2f, 0x76, 0x31, 0x2f,
-	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x32, 0xcf, 0x1a, 0x0a,
+	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x32, 0xd3, 0x1b, 0x0a,
 	0x10, 0x48, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63,
 	0x65, 0x12, 0x63, 0x0a, 0x07, 0x47, 0x65, 0x74, 0x55, 0x73, 0x65, 0x72, 0x12, 0x1c, 0x2e, 0x68,
 	0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x55,
@@ -238,23 +238,31 @@ var file_headscale_v1_headscale_proto_rawDesc = []byte{
 	0x41, 0x70, 0x69, 0x4b, 0x65, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x1f,
 	0x82, 0xd3, 0xe4, 0x93, 0x02, 0x19, 0x2a, 0x17, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x76, 0x31, 0x2f,
 	0x61, 0x70, 0x69, 0x6b, 0x65, 0x79, 0x2f, 0x7b, 0x70, 0x72, 0x65, 0x66, 0x69, 0x78, 0x7d, 0x12,
-	0x64, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x1e, 0x2e, 0x68,
-	0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x50,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x68,
-	0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x50,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x16, 0x82,
-	0xd3, 0xe4, 0x93, 0x02, 0x10, 0x12, 0x0e, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x76, 0x31, 0x2f, 0x70,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x67, 0x0a, 0x09, 0x53, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69,
-	0x63, 0x79, 0x12, 0x1e, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x53, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x53, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x22, 0x19, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x13, 0x3a, 0x01, 0x2a, 0x1a, 0x0e,
-	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x76, 0x31, 0x2f, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x42, 0x29,
-	0x5a, 0x27, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6a, 0x75, 0x61,
-	0x6e, 0x66, 0x6f, 0x6e, 0x74, 0x2f, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2f,
-	0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x81, 0x01, 0x0a, 0x0d, 0x52, 0x65, 0x66, 0x72, 0x65, 0x73, 0x68, 0x41, 0x70, 0x69, 0x4b, 0x65,
+	0x79, 0x12, 0x22, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x52, 0x65, 0x66, 0x72, 0x65, 0x73, 0x68, 0x41, 0x70, 0x69, 0x4b, 0x65, 0x79, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x23, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c,
+	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x66, 0x72, 0x65, 0x73, 0x68, 0x41, 0x70, 0x69, 0x4b,
+	0x65, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x27, 0x82, 0xd3, 0xe4, 0x93,
+	0x02, 0x21, 0x22, 0x1f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x76, 0x31, 0x2f, 0x61, 0x70, 0x69, 0x6b,
+	0x65, 0x79, 0x2f, 0x72, 0x65, 0x66, 0x72, 0x65, 0x73, 0x68, 0x2f, 0x7b, 0x70, 0x72, 0x65, 0x66,
+	0x69, 0x78, 0x7d, 0x12, 0x64, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x12, 0x1e, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x1a, 0x1f, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x22, 0x16, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x10, 0x12, 0x0e, 0x2f, 0x61, 0x70, 0x69, 0x2f,
+	0x76, 0x31, 0x2f, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x67, 0x0a, 0x09, 0x53, 0x65, 0x74,
+	0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x1e, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61,
+	0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61,
+	0x6c, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x19, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x13, 0x3a,
+	0x01, 0x2a, 0x1a, 0x0e, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x76, 0x31, 0x2f, 0x70, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x42, 0x29, 0x5a, 0x27, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d,
+	0x2f, 0x6a, 0x75, 0x61, 0x6e, 0x66, 0x6f, 0x6e, 0x74, 0x2f, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63,
+	0x61, 0x6c, 0x65, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var file_headscale_v1_headscale_proto_goTypes = []any{
@@ -285,37 +293,39 @@ var file_headscale_v1_headscale_proto_goTypes = []any{
 	(*ExpireApiKeyRequest)(nil),      // 24: headscale.v1.ExpireApiKeyRequest
 	(*ListApiKeysRequest)(nil),       // 25: headscale.v1.ListApiKeysRequest
 	(*DeleteApiKeyRequest)(nil),      // 26: headscale.v1.DeleteApiKeyRequest
-	(*GetPolicyRequest)(nil),         // 27: headscale.v1.GetPolicyRequest
-	(*SetPolicyRequest)(nil),         // 28: headscale.v1.SetPolicyRequest
-	(*GetUserResponse)(nil),          // 29: headscale.v1.GetUserResponse
-	(*CreateUserResponse)(nil),       // 30: headscale.v1.CreateUserResponse
-	(*RenameUserResponse)(nil),       // 31: headscale.v1.RenameUserResponse
-	(*DeleteUserResponse)(nil),       // 32: headscale.v1.DeleteUserResponse
-	(*ListUsersResponse)(nil),        // 33: headscale.v1.ListUsersResponse
-	(*CreatePreAuthKeyResponse)(nil), // 34: headscale.v1.CreatePreAuthKeyResponse
-	(*ExpirePreAuthKeyResponse)(nil), // 35: headscale.v1.ExpirePreAuthKeyResponse
-	(*ListPreAuthKeysResponse)(nil),  // 36: headscale.v1.ListPreAuthKeysResponse
-	(*DebugCreateNodeResponse)(nil),  // 37: headscale.v1.DebugCreateNodeResponse
-	(*GetNodeResponse)(nil),          // 38: headscale.v1.GetNodeResponse
-	(*SetTagsResponse)(nil),          // 39: headscale.v1.SetTagsResponse
-	(*RegisterNodeResponse)(nil),     // 40: headscale.v1.RegisterNodeResponse
-	(*DeleteNodeResponse)(nil),       // 41: headscale.v1.DeleteNodeResponse
-	(*ExpireNodeResponse)(nil),       // 42: headscale.v1.ExpireNodeResponse
-	(*RenameNodeResponse)(nil),       // 43: headscale.v1.RenameNodeResponse
-	(*ListNodesResponse)(nil),        // 44: headscale.v1.ListNodesResponse
-	(*MoveNodeResponse)(nil),         // 45: headscale.v1.MoveNodeResponse
-	(*BackfillNodeIPsResponse)(nil),  // 46: headscale.v1.BackfillNodeIPsResponse
-	(*GetRoutesResponse)(nil),        // 47: headscale.v1.GetRoutesResponse
-	(*EnableRouteResponse)(nil),      // 48: headscale.v1.EnableRouteResponse
-	(*DisableRouteResponse)(nil),     // 49: headscale.v1.DisableRouteResponse
-	(*GetNodeRoutesResponse)(nil),    // 50: headscale.v1.GetNodeRoutesResponse
-	(*DeleteRouteResponse)(nil),      // 51: headscale.v1.DeleteRouteResponse
-	(*CreateApiKeyResponse)(nil),     // 52: headscale.v1.CreateApiKeyResponse
-	(*ExpireApiKeyResponse)(nil),     // 53: headscale.v1.ExpireApiKeyResponse
-	(*ListApiKeysResponse)(nil),      // 54: headscale.v1.ListApiKeysResponse
-	(*DeleteApiKeyResponse)(nil),     // 55: headscale.v1.DeleteApiKeyResponse
-	(*GetPolicyResponse)(nil),        // 56: headscale.v1.GetPolicyResponse
-	(*SetPolicyResponse)(nil),        // 57: headscale.v1.SetPolicyResponse
+	(*RefreshApiKeyRequest)(nil),     // 27: headscale.v1.RefreshApiKeyRequest
+	(*GetPolicyRequest)(nil),         // 28: headscale.v1.GetPolicyRequest
+	(*SetPolicyRequest)(nil),         // 29: headscale.v1.SetPolicyRequest
+	(*GetUserResponse)(nil),          // 30: headscale.v1.GetUserResponse
+	(*CreateUserResponse)(nil),       // 31: headscale.v1.CreateUserResponse
+	(*RenameUserResponse)(nil),       // 32: headscale.v1.RenameUserResponse
+	(*DeleteUserResponse)(nil),       // 33: headscale.v1.DeleteUserResponse
+	(*ListUsersResponse)(nil),        // 34: headscale.v1.ListUsersResponse
+	(*CreatePreAuthKeyResponse)(nil), // 35: headscale.v1.CreatePreAuthKeyResponse
+	(*ExpirePreAuthKeyResponse)(nil), // 36: headscale.v1.ExpirePreAuthKeyResponse
+	(*ListPreAuthKeysResponse)(nil),  // 37: headscale.v1.ListPreAuthKeysResponse
+	(*DebugCreateNodeResponse)(nil),  // 38: headscale.v1.DebugCreateNodeResponse
+	(*GetNodeResponse)(nil),          // 39: headscale.v1.GetNodeResponse
+	(*SetTagsResponse)(nil),          // 40: headscale.v1.SetTagsResponse
+	(*RegisterNodeResponse)(nil),     // 41: headscale.v1.RegisterNodeResponse
+	(*DeleteNodeResponse)(nil),       // 42: headscale.v1.DeleteNodeResponse
+	(*ExpireNodeResponse)(nil),       // 43: headscale.v1.ExpireNodeResponse
+	(*RenameNodeResponse)(nil),       // 44: headscale.v1.RenameNodeResponse
+	(*ListNodesResponse)(nil),        // 45: headscale.v1.ListNodesResponse
+	(*MoveNodeResponse)(nil),         // 46: headscale.v1.MoveNodeResponse
+	(*BackfillNodeIPsResponse)(nil),  // 47: headscale.v1.BackfillNodeIPsResponse
+	(*GetRoutesResponse)(nil),        // 48: headscale.v1.GetRoutesResponse
+	(*EnableRouteResponse)(nil),      // 49: headscale.v1.EnableRouteResponse
+	(*DisableRouteResponse)(nil),     // 50: headscale.v1.DisableRouteResponse
+	(*GetNodeRoutesResponse)(nil),    // 51: headscale.v1.GetNodeRoutesResponse
+	(*DeleteRouteResponse)(nil),      // 52: headscale.v1.DeleteRouteResponse
+	(*CreateApiKeyResponse)(nil),     // 53: headscale.v1.CreateApiKeyResponse
+	(*ExpireApiKeyResponse)(nil),     // 54: headscale.v1.ExpireApiKeyResponse
+	(*ListApiKeysResponse)(nil),      // 55: headscale.v1.ListApiKeysResponse
+	(*DeleteApiKeyResponse)(nil),     // 56: headscale.v1.DeleteApiKeyResponse
+	(*RefreshApiKeyResponse)(nil),    // 57: headscale.v1.RefreshApiKeyResponse
+	(*GetPolicyResponse)(nil),        // 58: headscale.v1.GetPolicyResponse
+	(*SetPolicyResponse)(nil),        // 59: headscale.v1.SetPolicyResponse
 }
 var file_headscale_v1_headscale_proto_depIdxs = []int32{
 	0,  // 0: headscale.v1.HeadscaleService.GetUser:input_type -> headscale.v1.GetUserRequest
@@ -345,39 +355,41 @@ var file_headscale_v1_headscale_proto_depIdxs = []int32{
 	24, // 24: headscale.v1.HeadscaleService.ExpireApiKey:input_type -> headscale.v1.ExpireApiKeyRequest
 	25, // 25: headscale.v1.HeadscaleService.ListApiKeys:input_type -> headscale.v1.ListApiKeysRequest
 	26, // 26: headscale.v1.HeadscaleService.DeleteApiKey:input_type -> headscale.v1.DeleteApiKeyRequest
-	27, // 27: headscale.v1.HeadscaleService.GetPolicy:input_type -> headscale.v1.GetPolicyRequest
-	28, // 28: headscale.v1.HeadscaleService.SetPolicy:input_type -> headscale.v1.SetPolicyRequest
-	29, // 29: headscale.v1.HeadscaleService.GetUser:output_type -> headscale.v1.GetUserResponse
-	30, // 30: headscale.v1.HeadscaleService.CreateUser:output_type -> headscale.v1.CreateUserResponse
-	31, // 31: headscale.v1.HeadscaleService.RenameUser:output_type -> headscale.v1.RenameUserResponse
-	32, // 32: headscale.v1.HeadscaleService.DeleteUser:output_type -> headscale.v1.DeleteUserResponse
-	33, // 33: headscale.v1.HeadscaleService.ListUsers:output_type -> headscale.v1.ListUsersResponse
-	34, // 34: headscale.v1.HeadscaleService.CreatePreAuthKey:output_type -> headscale.v1.CreatePreAuthKeyResponse
-	35, // 35: headscale.v1.HeadscaleService.ExpirePreAuthKey:output_type -> headscale.v1.ExpirePreAuthKeyResponse
-	36, // 36: headscale.v1.HeadscaleService.ListPreAuthKeys:output_type -> headscale.v1.ListPreAuthKeysResponse
-	37, // 37: headscale.v1.HeadscaleService.DebugCreateNode:output_type -> headscale.v1.DebugCreateNodeResponse
-	38, // 38: headscale.v1.HeadscaleService.GetNode:output_type -> headscale.v1.GetNodeResponse
-	39, // 39: headscale.v1.HeadscaleService.SetTags:output_type -> headscale.v1.SetTagsResponse
-	40, // 40: headscale.v1.HeadscaleService.RegisterNode:output_type -> headscale.v1.RegisterNodeResponse
-	41, // 41: headscale.v1.HeadscaleService.DeleteNode:output_type -> headscale.v1.DeleteNodeResponse
-	42, // 42: headscale.v1.HeadscaleService.ExpireNode:output_type -> headscale.v1.ExpireNodeResponse
-	43, // 43: headscale.v1.HeadscaleService.RenameNode:output_type -> headscale.v1.RenameNodeResponse
-	44, // 44: headscale.v1.HeadscaleService.ListNodes:output_type -> headscale.v1.ListNodesResponse
-	45, // 45: headscale.v1.HeadscaleService.MoveNode:output_type -> headscale.v1.MoveNodeResponse
-	46, // 46: headscale.v1.HeadscaleService.BackfillNodeIPs:output_type -> headscale.v1.BackfillNodeIPsResponse
-	47, // 47: headscale.v1.HeadscaleService.GetRoutes:output_type -> headscale.v1.GetRoutesResponse
-	48, // 48: headscale.v1.HeadscaleService.EnableRoute:output_type -> headscale.v1.EnableRouteResponse
-	49, // 49: headscale.v1.HeadscaleService.DisableRoute:output_type -> headscale.v1.DisableRouteResponse
-	50, // 50: headscale.v1.HeadscaleService.GetNodeRoutes:output_type -> headscale.v1.GetNodeRoutesResponse
-	51, // 51: headscale.v1.HeadscaleService.DeleteRoute:output_type -> headscale.v1.DeleteRouteResponse
-	52, // 52: headscale.v1.HeadscaleService.CreateApiKey:output_type -> headscale.v1.CreateApiKeyResponse
-	53, // 53: headscale.v1.HeadscaleService.ExpireApiKey:output_type -> headscale.v1.ExpireApiKeyResponse
-	54, // 54: headscale.v1.HeadscaleService.ListApiKeys:output_type -> headscale.v1.ListApiKeysResponse
-	55, // 55: headscale.v1.HeadscaleService.DeleteApiKey:output_type -> headscale.v1.DeleteApiKeyResponse
-	56, // 56: headscale.v1.HeadscaleService.GetPolicy:output_type -> headscale.v1.GetPolicyResponse
-	57, // 57: headscale.v1.HeadscaleService.SetPolicy:output_type -> headscale.v1.SetPolicyResponse
-	29, // [29:58] is the sub-list for method output_type
-	0,  // [0:29] is the sub-list for method input_type
+	27, // 27: headscale.v1.HeadscaleService.RefreshApiKey:input_type -> headscale.v1.RefreshApiKeyRequest
+	28, // 28: headscale.v1.HeadscaleService.GetPolicy:input_type -> headscale.v1.GetPolicyRequest
+	29, // 29: headscale.v1.HeadscaleService.SetPolicy:input_type -> headscale.v1.SetPolicyRequest
+	30, // 30: headscale.v1.HeadscaleService.GetUser:output_type -> headscale.v1.GetUserResponse
+	31, // 31: headscale.v1.HeadscaleService.CreateUser:output_type -> headscale.v1.CreateUserResponse
+	32, // 32: headscale.v1.HeadscaleService.RenameUser:output_type -> headscale.v1.RenameUserResponse
+	33, // 33: headscale.v1.HeadscaleService.DeleteUser:output_type -> headscale.v1.DeleteUserResponse
+	34, // 34: headscale.v1.HeadscaleService.ListUsers:output_type -> headscale.v1.ListUsersResponse
+	35, // 35: headscale.v1.HeadscaleService.CreatePreAuthKey:output_type -> headscale.v1.CreatePreAuthKeyResponse
+	36, // 36: headscale.v1.HeadscaleService.ExpirePreAuthKey:output_type -> headscale.v1.ExpirePreAuthKeyResponse
+	37, // 37: headscale.v1.HeadscaleService.ListPreAuthKeys:output_type -> headscale.v1.ListPreAuthKeysResponse
+	38, // 38: headscale.v1.HeadscaleService.DebugCreateNode:output_type -> headscale.v1.DebugCreateNodeResponse
+	39, // 39: headscale.v1.HeadscaleService.GetNode:output_type -> headscale.v1.GetNodeResponse
+	40, // 40: headscale.v1.HeadscaleService.SetTags:output_type -> headscale.v1.SetTagsResponse
+	41, // 41: headscale.v1.HeadscaleService.RegisterNode:output_type -> headscale.v1.RegisterNodeResponse
+	42, // 42: headscale.v1.HeadscaleService.DeleteNode:output_type -> headscale.v1.DeleteNodeResponse
+	43, // 43: headscale.v1.HeadscaleService.ExpireNode:output_type -> headscale.v1.ExpireNodeResponse
+	44, // 44: headscale.v1.HeadscaleService.RenameNode:output_type -> headscale.v1.RenameNodeResponse
+	45, // 45: headscale.v1.HeadscaleService.ListNodes:output_type -> headscale.v1.ListNodesResponse
+	46, // 46: headscale.v1.HeadscaleService.MoveNode:output_type -> headscale.v1.MoveNodeResponse
+	47, // 47: headscale.v1.HeadscaleService.BackfillNodeIPs:output_type -> headscale.v1.BackfillNodeIPsResponse
+	48, // 48: headscale.v1.HeadscaleService.GetRoutes:output_type -> headscale.v1.GetRoutesResponse
+	49, // 49: headscale.v1.HeadscaleService.EnableRoute:output_type -> headscale.v1.EnableRouteResponse
+	50, // 50: headscale.v1.HeadscaleService.DisableRoute:output_type -> headscale.v1.DisableRouteResponse
+	51, // 51: headscale.v1.HeadscaleService.GetNodeRoutes:output_type -> headscale.v1.GetNodeRoutesResponse
+	52, // 52: headscale.v1.HeadscaleService.DeleteRoute:output_type -> headscale.v1.DeleteRouteResponse
+	53, // 53: headscale.v1.HeadscaleService.CreateApiKey:output_type -> headscale.v1.CreateApiKeyResponse
+	54, // 54: headscale.v1.HeadscaleService.ExpireApiKey:output_type -> headscale.v1.ExpireApiKeyResponse
+	55, // 55: headscale.v1.HeadscaleService.ListApiKeys:output_type -> headscale.v1.ListApiKeysResponse
+	56, // 56: headscale.v1.HeadscaleService.DeleteApiKey:output_type -> headscale.v1.DeleteApiKeyResponse
+	57, // 57: headscale.v1.HeadscaleService.RefreshApiKey:output_type -> headscale.v1.RefreshApiKeyResponse
+	58, // 58: headscale.v1.HeadscaleService.GetPolicy:output_type -> headscale.v1.GetPolicyResponse
+	59, // 59: headscale.v1.HeadscaleService.SetPolicy:output_type -> headscale.v1.SetPolicyResponse
+	30, // [30:60] is the sub-list for method output_type
+	0,  // [0:30] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name

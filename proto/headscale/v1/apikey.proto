@@ -60,3 +60,11 @@ message DeleteApiKeyRequest {
 
 message DeleteApiKeyResponse {
 }
+
+// __BEGIN_CYLONIX_MOD__
+message RefreshApiKeyRequest {
+    string prefix = 1;
+}
+message RefreshApiKeyResponse {
+}
+// __END_CYLONIX_MOD__

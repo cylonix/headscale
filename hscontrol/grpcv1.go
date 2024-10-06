@@ -858,19 +858,27 @@ func (api headscaleV1APIServer) DeleteApiKey(
 	var (
 		apiKey *types.APIKey
 		err    error
+		prefix = request.Prefix // __CYLONIX_MOD__
 	)
 
 	apiKey, err = api.h.db.GetAPIKey(request.Prefix)
 	if err != nil {
+		// __BEGIN_CYLONIX_MOD__
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &v1.DeleteApiKeyResponse{}, nil
+		}
+		log.Error().Err(err).Str("prefix", prefix).Msg("failed to fetch api key")
+		// __END_CYLONIX_MOD__
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, "")); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, apiKey.Username())); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
 
 	if err := api.h.db.DestroyAPIKey(*apiKey); err != nil {
+		log.Error().Err(err).Str("prefix", prefix).Msg("failed to delete api key") // __CYLONIX_MOD__
 		return nil, err
 	}
 
@@ -1109,5 +1117,34 @@ func (api headscaleV1APIServer) auth(ctx context.Context, request interface{}) e
 		log.Debug().Err(err).Str("path", path).Msg("request authorization failed")
 	}
 	return err
+}
+func (api headscaleV1APIServer) RefreshApiKey(
+	ctx context.Context,
+	request *v1.RefreshApiKeyRequest,
+) (*v1.RefreshApiKeyResponse, error) {
+	prefix := strings.TrimPrefix(request.Prefix, AuthPrefix)
+	key, valid, err := api.h.db.GetAndValidateAPIKey(prefix)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", prefix))
+		}
+		log.Error().Err(err).Str("prefix", prefix).Msg("Failed to fetch")
+		return nil, err
+	}
+	if !valid {
+		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", prefix))
+	}
+	if err := api.auth(ctx, types.NewAuthScope(key.Namespace, key.Username())); err != nil {
+		return nil, err
+	}
+	expire := time.Now().Add(time.Minute * 30)
+	if key.Expiration == nil || key.Expiration.IsZero() || expire.Before(*key.Expiration) {
+		return &v1.RefreshApiKeyResponse{}, nil
+	}
+	if err := api.h.db.RefreshAPIKey(key.ID, expire); err != nil {
+		log.Error().Err(err).Str("prefix", prefix).Msg("Failed to refresh")
+		return nil, err
+	}
+	return &v1.RefreshApiKeyResponse{}, nil
 }
 // __END_CYLONIX_MOD__

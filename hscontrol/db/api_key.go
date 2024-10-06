@@ -86,7 +86,7 @@ func (hsdb *HSDatabase) ListAPIKeys() ([]types.APIKey, error) {
 // GetAPIKey returns a ApiKey for a given key.
 func (hsdb *HSDatabase) GetAPIKey(prefix string) (*types.APIKey, error) {
 	key := types.APIKey{}
-	if result := hsdb.DB.First(&key, "prefix = ?", prefix); result.Error != nil {
+	if result := hsdb.DB.Preload("User").First(&key, "prefix = ?", prefix); result.Error != nil { // __CYLONIX_MOD__
 		return nil, result.Error
 	}
 
@@ -123,6 +123,12 @@ func (hsdb *HSDatabase) ExpireAPIKey(key *types.APIKey) error {
 }
 
 // __BEGIN_CYLONIX_MOD__
+func (hsdb *HSDatabase) RefreshAPIKey(id uint64, expire time.Time) error {
+	return hsdb.DB.
+		Model(&types.APIKey{ID: id}).
+		Update("Expiration", expire).
+		Error
+}
 func (hsdb *HSDatabase) ValidateAPIKey(keyStr string) (bool, error) {
 	_, valid, err := hsdb.GetAndValidateAPIKey(keyStr)
 	return valid, err

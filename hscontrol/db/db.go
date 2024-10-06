@@ -691,8 +691,15 @@ func Sort(db *gorm.DB, sortBy string, sortDesc bool) *gorm.DB {
 	return db
 }
 func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
-	if page >= 0 && pageSize > 0 {
-		return db.Limit(int(total)).Offset(page * pageSize)
+	if page > 0 && pageSize > 0 {
+		limit := int(total) - (page - 1) * pageSize
+		if limit < 0 {
+			limit = 0
+		}
+		if limit > pageSize {
+			limit = pageSize
+		}
+		return db.Limit(limit).Offset((page - 1) * pageSize)
 	}
 	return db
 }
@@ -720,7 +727,7 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 		rx = rx.Where("id in ?", idList)
 	}
 	if filterBy != "" && filterValue != "" {
-		rx = rx.Where(filterBy + " like ?", "%"+filterValue+"%")
+		rx = rx.Where(filterBy+" like ?", "%"+filterValue+"%")
 	}
 	if err := rx.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -731,4 +738,5 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 
 	return ret, total, err
 }
+
 // __END_CYLONIX_MOD__

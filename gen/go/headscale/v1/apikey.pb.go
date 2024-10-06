@@ -579,6 +579,92 @@ func (*DeleteApiKeyResponse) Descriptor() ([]byte, []int) {
 	return file_headscale_v1_apikey_proto_rawDescGZIP(), []int{8}
 }
 
+// __BEGIN_CYLONIX_MOD__
+type RefreshApiKeyRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Prefix string `protobuf:"bytes,1,opt,name=prefix,proto3" json:"prefix,omitempty"`
+}
+
+func (x *RefreshApiKeyRequest) Reset() {
+	*x = RefreshApiKeyRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_headscale_v1_apikey_proto_msgTypes[9]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *RefreshApiKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshApiKeyRequest) ProtoMessage() {}
+
+func (x *RefreshApiKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_headscale_v1_apikey_proto_msgTypes[9]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshApiKeyRequest.ProtoReflect.Descriptor instead.
+func (*RefreshApiKeyRequest) Descriptor() ([]byte, []int) {
+	return file_headscale_v1_apikey_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RefreshApiKeyRequest) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
+}
+
+type RefreshApiKeyResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *RefreshApiKeyResponse) Reset() {
+	*x = RefreshApiKeyResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_headscale_v1_apikey_proto_msgTypes[10]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *RefreshApiKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshApiKeyResponse) ProtoMessage() {}
+
+func (x *RefreshApiKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_headscale_v1_apikey_proto_msgTypes[10]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshApiKeyResponse.ProtoReflect.Descriptor instead.
+func (*RefreshApiKeyResponse) Descriptor() ([]byte, []int) {
+	return file_headscale_v1_apikey_proto_rawDescGZIP(), []int{10}
+}
+
 var File_headscale_v1_apikey_proto protoreflect.FileDescriptor
 
 var file_headscale_v1_apikey_proto_rawDesc = []byte{
@@ -667,10 +753,15 @@ var file_headscale_v1_apikey_proto_rawDesc = []byte{
 	0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x70, 0x72, 0x65, 0x66,
 	0x69, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x70, 0x72, 0x65, 0x66, 0x69, 0x78,
 	0x22, 0x16, 0x0a, 0x14, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x70, 0x69, 0x4b, 0x65, 0x79,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x42, 0x29, 0x5a, 0x27, 0x67, 0x69, 0x74, 0x68,
-	0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6a, 0x75, 0x61, 0x6e, 0x66, 0x6f, 0x6e, 0x74, 0x2f,
-	0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f,
-	0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x2e, 0x0a, 0x14, 0x52, 0x65, 0x66, 0x72,
+	0x65, 0x73, 0x68, 0x41, 0x70, 0x69, 0x4b, 0x65, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x12, 0x16, 0x0a, 0x06, 0x70, 0x72, 0x65, 0x66, 0x69, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x06, 0x70, 0x72, 0x65, 0x66, 0x69, 0x78, 0x22, 0x17, 0x0a, 0x15, 0x52, 0x65, 0x66, 0x72,
+	0x65, 0x73, 0x68, 0x41, 0x70, 0x69, 0x4b, 0x65, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x42, 0x29, 0x5a, 0x27, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f,
+	0x6a, 0x75, 0x61, 0x6e, 0x66, 0x6f, 0x6e, 0x74, 0x2f, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61,
+	0x6c, 0x65, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -685,7 +776,7 @@ func file_headscale_v1_apikey_proto_rawDescGZIP() []byte {
 	return file_headscale_v1_apikey_proto_rawDescData
 }
 
-var file_headscale_v1_apikey_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_headscale_v1_apikey_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_headscale_v1_apikey_proto_goTypes = []any{
 	(*ApiKey)(nil),                // 0: headscale.v1.ApiKey
 	(*CreateApiKeyRequest)(nil),   // 1: headscale.v1.CreateApiKeyRequest
@@ -696,15 +787,17 @@ var file_headscale_v1_apikey_proto_goTypes = []any{
 	(*ListApiKeysResponse)(nil),   // 6: headscale.v1.ListApiKeysResponse
 	(*DeleteApiKeyRequest)(nil),   // 7: headscale.v1.DeleteApiKeyRequest
 	(*DeleteApiKeyResponse)(nil),  // 8: headscale.v1.DeleteApiKeyResponse
-	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
-	(*User)(nil),                  // 10: headscale.v1.User
+	(*RefreshApiKeyRequest)(nil),  // 9: headscale.v1.RefreshApiKeyRequest
+	(*RefreshApiKeyResponse)(nil), // 10: headscale.v1.RefreshApiKeyResponse
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*User)(nil),                  // 12: headscale.v1.User
 }
 var file_headscale_v1_apikey_proto_depIdxs = []int32{
-	9,  // 0: headscale.v1.ApiKey.expiration:type_name -> google.protobuf.Timestamp
-	9,  // 1: headscale.v1.ApiKey.created_at:type_name -> google.protobuf.Timestamp
-	9,  // 2: headscale.v1.ApiKey.last_seen:type_name -> google.protobuf.Timestamp
-	10, // 3: headscale.v1.ApiKey.user:type_name -> headscale.v1.User
-	9,  // 4: headscale.v1.CreateApiKeyRequest.expiration:type_name -> google.protobuf.Timestamp
+	11, // 0: headscale.v1.ApiKey.expiration:type_name -> google.protobuf.Timestamp
+	11, // 1: headscale.v1.ApiKey.created_at:type_name -> google.protobuf.Timestamp
+	11, // 2: headscale.v1.ApiKey.last_seen:type_name -> google.protobuf.Timestamp
+	12, // 3: headscale.v1.ApiKey.user:type_name -> headscale.v1.User
+	11, // 4: headscale.v1.CreateApiKeyRequest.expiration:type_name -> google.protobuf.Timestamp
 	0,  // 5: headscale.v1.ListApiKeysResponse.api_keys:type_name -> headscale.v1.ApiKey
 	6,  // [6:6] is the sub-list for method output_type
 	6,  // [6:6] is the sub-list for method input_type
@@ -828,6 +921,30 @@ func file_headscale_v1_apikey_proto_init() {
 				return nil
 			}
 		}
+		file_headscale_v1_apikey_proto_msgTypes[9].Exporter = func(v any, i int) any {
+			switch v := v.(*RefreshApiKeyRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_headscale_v1_apikey_proto_msgTypes[10].Exporter = func(v any, i int) any {
+			switch v := v.(*RefreshApiKeyResponse); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	file_headscale_v1_apikey_proto_msgTypes[1].OneofWrappers = []any{}
 	file_headscale_v1_apikey_proto_msgTypes[5].OneofWrappers = []any{}
@@ -837,7 +954,7 @@ func file_headscale_v1_apikey_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_headscale_v1_apikey_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

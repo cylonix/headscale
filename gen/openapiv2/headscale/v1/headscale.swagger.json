@@ -166,6 +166,36 @@
         ]
       }
     },
+    "/api/v1/apikey/refresh/{prefix}": {
+      "post": {
+        "operationId": "HeadscaleService_RefreshApiKey",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RefreshApiKeyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/apikey/{prefix}": {
       "delete": {
         "operationId": "HeadscaleService_DeleteApiKey",
@@ -1765,6 +1795,9 @@
           "title": "__CYLONIX_MOD__"
         }
       }
+    },
+    "v1RefreshApiKeyResponse": {
+      "type": "object"
     },
     "v1RegisterMethod": {
       "type": "string",

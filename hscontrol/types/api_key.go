@@ -143,3 +143,12 @@ func (key *APIKey) Proto() *v1.ApiKey {
 
 	return &protoKey
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (key *APIKey) Username() string {
+	if key == nil || key.User == nil {
+		return ""
+	}
+	return key.User.Name
+}
+// __END_CYLONIX_MOD__
