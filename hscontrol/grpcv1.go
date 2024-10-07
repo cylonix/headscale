@@ -861,7 +861,15 @@ func (api headscaleV1APIServer) DeleteApiKey(
 		prefix = request.Prefix // __CYLONIX_MOD__
 	)
 
-	apiKey, err = api.h.db.GetAPIKey(request.Prefix)
+	// __BEGIN_CYLONIX_MOD__
+	if request.Prefix == "" {
+		// Deleting the api key used to invoke this API.
+		apiKey, err = api.getAPIKeyFromIncomingContext(ctx)
+		prefix = apiKey.Prefix
+	} else {
+		apiKey, err = api.h.db.GetAPIKey(prefix)
+	}
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		// __BEGIN_CYLONIX_MOD__
 		if errors.Is(err, gorm.ErrRecordNotFound) {
