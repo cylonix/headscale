@@ -21,12 +21,14 @@ import (
 )
 
 func logAuthFunc(
+	req *http.Request, // __CYLONIX_MOD__
 	registerRequest tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) (func(string), func(string), func(error, string)) {
 	return func(msg string) {
 			log.Info().
 				Caller().
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
 				Str("node_key_old", registerRequest.OldNodeKey.ShortString()).
@@ -38,6 +40,7 @@ func logAuthFunc(
 		func(msg string) {
 			log.Trace().
 				Caller().
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
 				Str("node_key_old", registerRequest.OldNodeKey.ShortString()).
@@ -49,6 +52,7 @@ func logAuthFunc(
 		func(err error, msg string) {
 			log.Error().
 				Caller().
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
 				Str("node_key_old", registerRequest.OldNodeKey.ShortString()).
@@ -67,7 +71,7 @@ func (h *Headscale) handleRegister(
 	regReq tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) {
-	logInfo, logTrace, logErr := logAuthFunc(regReq, machineKey)
+	logInfo, logTrace, logErr := logAuthFunc(req, regReq, machineKey) // __CYLONIX_MOD__
 	now := time.Now().UTC()
 	logTrace("handleRegister called, looking up machine in DB")
 	node, err := h.db.GetNodeByAnyKey(machineKey, regReq.NodeKey, regReq.OldNodeKey)
@@ -75,7 +79,7 @@ func (h *Headscale) handleRegister(
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// If the node has AuthKey set, handle registration via PreAuthKeys
 		if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-			h.handleAuthKey(writer, regReq, machineKey)
+			h.handleAuthKey(req, writer, regReq, machineKey) // __CYLONIX_MOD__
 
 			return
 		}
@@ -97,7 +101,7 @@ func (h *Headscale) handleRegister(
 				case <-req.Context().Done():
 					return
 				case <-time.After(registrationHoldoff):
-					h.handleNewNode(writer, regReq, machineKey)
+					h.handleNewNode(req, writer, regReq, machineKey) // __CYLONIX_MOD__
 
 					return
 				}
@@ -140,7 +144,7 @@ func (h *Headscale) handleRegister(
 			registerCacheExpiration,
 		)
 
-		h.handleNewNode(writer, regReq, machineKey)
+		h.handleNewNode(req, writer, regReq, machineKey) // __CYLONIX_MOD__
 
 		return
 	}
@@ -159,6 +163,8 @@ func (h *Headscale) handleRegister(
 					Caller().
 					Str("func", "RegistrationHandler").
 					Str("node", node.Hostname).
+					Str("namesapce", node.Namespace). // __CYLONIX_MOD__
+					Str("user", node.User.Name). // __CYLONIX_MOD__
 					Err(err).
 					Msg("Error saving machine key to database")
 
@@ -225,7 +231,7 @@ func (h *Headscale) handleRegister(
 		}
 
 		// The node has expired or it is logged out
-		h.handleNodeExpiredOrLoggedOut(writer, regReq, *node, machineKey)
+		h.handleNodeExpiredOrLoggedOut(req, writer, regReq, *node, machineKey) // __CYLONIX_MOD__
 
 		// TODO(juan): RegisterRequest includes an Expiry time, that we could optionally use
 		node.Expiry = &time.Time{}
@@ -248,6 +254,7 @@ func (h *Headscale) handleRegister(
 // handleAuthKey contains the logic to manage auth key client registration
 // When using Noise, the machineKey is Zero.
 func (h *Headscale) handleAuthKey(
+	req *http.Request, // __CYLONIX_MOD__
 	writer http.ResponseWriter,
 	registerRequest tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
@@ -255,14 +262,24 @@ func (h *Headscale) handleAuthKey(
 	log.Debug().
 		Caller().
 		Str("node", registerRequest.Hostinfo.Hostname).
+		Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 		Msgf("Processing auth key for %s", registerRequest.Hostinfo.Hostname)
 	resp := tailcfg.RegisterResponse{}
 
 	pak, err := h.db.ValidatePreAuthKey(registerRequest.Auth.AuthKey)
 	if err != nil {
-		log.Error().
+		// __BEGIN_CYLONIX_MOD__
+		// Don't log above debug level to avoid excessive logging due to
+		// intentional unauthorized access.
+		logEvent := log.Error()
+		if db.UnauthorizedPreAuthKeyError(err) {
+			logEvent = log.Debug()
+		}
+		logEvent.
+		// __END_CYLONIX_MOD__
 			Caller().
 			Str("node", registerRequest.Hostinfo.Hostname).
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Err(err).
 			Msg("Failed authentication via AuthKey")
 		resp.MachineAuthorized = false
@@ -272,6 +289,7 @@ func (h *Headscale) handleAuthKey(
 			log.Error().
 				Caller().
 				Str("node", registerRequest.Hostinfo.Hostname).
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Err(err).
 				Msg("Cannot encode message")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
@@ -285,14 +303,10 @@ func (h *Headscale) handleAuthKey(
 		if err != nil {
 			log.Error().
 				Caller().
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Err(err).
 				Msg("Failed to write response")
 		}
-
-		log.Error().
-			Caller().
-			Str("node", registerRequest.Hostinfo.Hostname).
-			Msg("Failed authentication via AuthKey")
 
 		return
 	}
@@ -300,6 +314,7 @@ func (h *Headscale) handleAuthKey(
 	log.Debug().
 		Caller().
 		Str("node", registerRequest.Hostinfo.Hostname).
+		Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 		Msg("Authentication key was valid, proceeding to acquire IP addresses")
 
 	nodeKey := registerRequest.NodeKey
@@ -313,6 +328,8 @@ func (h *Headscale) handleAuthKey(
 		log.Trace().
 			Caller().
 			Str("node", node.Hostname).
+			Str("namespace", node.Namespace). // __CYLONIX_MOD__
+			Str("user", node.User.Name). // __CYLONIX_MOD__
 			Msg("node was already registered before, refreshing with new auth key")
 
 		node.NodeKey = nodeKey
@@ -328,6 +345,8 @@ func (h *Headscale) handleAuthKey(
 			log.Error().
 				Caller().
 				Str("node", node.Hostname).
+				Str("namespace", node.Namespace). // __CYLONIX_MOD__
+				Str("user", node.User.Name). // __CYLONIX_MOD__
 				Err(err).
 				Msg("failed to save node after logging in with auth key")
 
@@ -342,6 +361,8 @@ func (h *Headscale) handleAuthKey(
 				log.Error().
 					Caller().
 					Str("node", node.Hostname).
+					Str("namespace", node.Namespace). // __CYLONIX_MOD__
+					Str("user", node.User.Name). // __CYLONIX_MOD__
 					Strs("aclTags", aclTags).
 					Err(err).
 					Msg("Failed to set tags after refreshing node")
@@ -361,6 +382,7 @@ func (h *Headscale) handleAuthKey(
 				Caller().
 				Str("func", "RegistrationHandler").
 				Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Err(err).
 				Msg("Failed to generate given name for node")
 
@@ -387,6 +409,7 @@ func (h *Headscale) handleAuthKey(
 				Caller().
 				Str("func", "RegistrationHandler").
 				Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Err(err).
 				Msg("failed to allocate IP	")
 
@@ -418,6 +441,7 @@ func (h *Headscale) handleAuthKey(
 					if err != nil {
 						log.Error().
 							Caller().
+							Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 							Err(err).
 							Msg("Failed to write response")
 					}
@@ -430,6 +454,7 @@ func (h *Headscale) handleAuthKey(
 			log.Error().
 				Caller().
 				Err(err).
+				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Msg("could not register node")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
 			return
@@ -443,6 +468,7 @@ func (h *Headscale) handleAuthKey(
 		log.Error().
 			Caller().
 			Err(err).
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Msg("Failed to use pre-auth key")
 		http.Error(writer, "Internal server error", http.StatusInternalServerError)
 
@@ -460,6 +486,7 @@ func (h *Headscale) handleAuthKey(
 		log.Error().
 			Caller().
 			Str("node", registerRequest.Hostinfo.Hostname).
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Err(err).
 			Msg("Cannot encode message")
 		http.Error(writer, "Internal server error", http.StatusInternalServerError)
@@ -473,12 +500,14 @@ func (h *Headscale) handleAuthKey(
 		log.Error().
 			Caller().
 			Err(err).
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Msg("Failed to write response")
 		return
 	}
 
 	log.Info().
 		Str("node", registerRequest.Hostinfo.Hostname).
+		Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 		Msg("Successfully authenticated via AuthKey")
 }
 
@@ -486,11 +515,12 @@ func (h *Headscale) handleAuthKey(
 // of registration headscale is configured with.
 // This url is then showed to the user by the local Tailscale client.
 func (h *Headscale) handleNewNode(
+	req *http.Request, // __CYLONIX_MOD__
 	writer http.ResponseWriter,
 	registerRequest tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) {
-	logInfo, logTrace, logErr := logAuthFunc(registerRequest, machineKey)
+	logInfo, logTrace, logErr := logAuthFunc(req, registerRequest, machineKey) // __CYLONIX_MOD__
 
 	resp := tailcfg.RegisterResponse{}
 
@@ -713,6 +743,7 @@ func (h *Headscale) handleNodeKeyRefresh(
 }
 
 func (h *Headscale) handleNodeExpiredOrLoggedOut(
+	req *http.Request, // __CYLONIX_MOD__
 	writer http.ResponseWriter,
 	regReq tailcfg.RegisterRequest,
 	node types.Node,
@@ -721,7 +752,7 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 	resp := tailcfg.RegisterResponse{}
 
 	if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-		h.handleAuthKey(writer, regReq, machineKey)
+		h.handleAuthKey(req, writer, regReq, machineKey) // __CYLONIX_MOD_-
 
 		return
 	}

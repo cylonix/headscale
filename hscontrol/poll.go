@@ -722,6 +722,8 @@ func logPollFunc(
 				Bool("stream", mapRequest.Stream).
 				Uint64("node.id", node.ID.Uint64()).
 				Str("node", node.Hostname).
+				Str("namespace", node.Namespace). // __CYLONIX_MOD__
+				Str("user", node.User.Name). // __CYLONIX_MOD__
 				Err(err).
 				Msgf(msg, a...)
 		}

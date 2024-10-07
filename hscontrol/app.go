@@ -391,7 +391,7 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 		// __END_CYLONIX_MOD__
 
 		if !strings.HasPrefix(authHeader, AuthPrefix) {
-			log.Error().
+			log.Debug(). // __CYLONIX_MOD__
 				Caller().
 				Str("client_address", req.RemoteAddr).
 				Msg(`missing "Bearer " prefix in "Authorization" header`)
@@ -410,7 +410,7 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 		valid, err := h.db.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
 
 		if err != nil {
-			log.Error().
+			log.Debug(). // __CYLONIX_MOD__
 				Caller().
 				Err(err).
 				Str("client_address", req.RemoteAddr).

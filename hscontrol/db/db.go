@@ -113,6 +113,8 @@ func NewHeadscaleDatabase(
 									Err(err).
 									Str("node", node.Hostname).
 									Str("machine_key", node.MachineKey.ShortString()).
+									Str("namespace", node.Namespace). // __CYLONIX_MOD__
+									Str("user", node.User.Name). // __CYLONIX_MOD__
 									Msg("Error deleting unregistered node")
 							}
 						}
@@ -263,6 +265,8 @@ func NewHeadscaleDatabase(
 									log.Error().
 										Caller().
 										Str("hostname", node.Hostname).
+										Str("namespace", node.Namespace). // __CYLONIX_MOD__
+										Str("user", node.User.Name). // __CYLONIX_MOD__
 										Err(err).
 										Msg("Failed to normalize node hostname in DB migration")
 								}
@@ -274,6 +278,8 @@ func NewHeadscaleDatabase(
 									log.Error().
 										Caller().
 										Str("hostname", node.Hostname).
+										Str("namespace", node.Namespace). // __CYLONIX_MOD__
+										Str("user", node.User.Name). // __CYLONIX_MOD__
 										Err(err).
 										Msg("Failed to save normalized node name in DB migration")
 								}

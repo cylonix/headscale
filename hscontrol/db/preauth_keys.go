@@ -129,6 +129,11 @@ func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
 	})
 	return int(total), keys, err
 }
+func UnauthorizedPreAuthKeyError(err error) bool {
+	return errors.Is(err, ErrSingleUseAuthKeyHasBeenUsed) ||
+		errors.Is(err, ErrPreAuthKeyNotFound) ||
+		errors.Is(err, ErrPreAuthKeyExpired)
+}
 // __END_CYLONIX_MOD__
 
 // ListPreAuthKeys returns the list of PreAuthKeys for a user.

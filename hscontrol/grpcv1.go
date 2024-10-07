@@ -886,7 +886,14 @@ func (api headscaleV1APIServer) DeleteApiKey(
 	// __END_CYLONIX_MOD__
 
 	if err := api.h.db.DestroyAPIKey(*apiKey); err != nil {
-		log.Error().Err(err).Str("prefix", prefix).Msg("failed to delete api key") // __CYLONIX_MOD__
+		// __BEGIN_CYLONIX_MOD__
+		log.Error().
+			Err(err).
+			Str("prefix", prefix).
+			Str("namespace", apiKey.Namespace).
+			Str("user", apiKey.Username()).
+			Msg("failed to delete api key")
+		// __END_CYLONIX_MOD__
 		return nil, err
 	}
 
@@ -1150,7 +1157,14 @@ func (api headscaleV1APIServer) RefreshApiKey(
 		return &v1.RefreshApiKeyResponse{}, nil
 	}
 	if err := api.h.db.RefreshAPIKey(key.ID, expire); err != nil {
-		log.Error().Err(err).Str("prefix", prefix).Msg("Failed to refresh")
+		// __BEGIN_CYLONIX_MOD__
+		log.Error().
+			Err(err).
+			Str("prefix", prefix).
+			Str("namespace", key.Namespace).
+			Str("user", key.Username()).
+			Msg("Failed to refresh")
+		// __END_CYLONIX_MOD__
 		return nil, err
 	}
 	return &v1.RefreshApiKeyResponse{}, nil

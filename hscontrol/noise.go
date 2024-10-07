@@ -198,6 +198,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		log.Error().
 			Caller().
 			Err(err).
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Msg("Cannot parse MapRequest")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
 
@@ -226,6 +227,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	if err != nil {
 		log.Error().
 			Str("handler", "NoisePollNetMap").
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Msgf("Failed to fetch node from the database with node key: %s", mapRequest.NodeKey.String())
 
 		// __BEGIN_CYLONIX_MOD__
@@ -234,6 +236,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 			if err := ns.headscale.cfg.NodeHandler.Recover(ns.conn.Peer(), mapRequest.NodeKey); err != nil {
 				log.Error().
 					Str("error", err.Error()).
+					Str("namespace", req.Header.Get("namespace")).
 					Str("machine-key", ns.conn.Peer().ShortString()).
 					Str("node-key", mapRequest.NodeKey.ShortString()).
 					Msg("Failed to recover.")
