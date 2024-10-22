@@ -112,6 +112,8 @@ func tailNode(
 
 		MachineAuthorized: !node.IsExpired(),
 		Expired:           node.IsExpired(),
+
+		IsWireGuardOnly: node.DiscoKey.IsZero(), // __CYLONIX_MOD__
 	}
 
 	//   - 74: 2023-09-18: Client understands NodeCapMap
