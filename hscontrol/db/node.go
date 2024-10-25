@@ -471,6 +471,7 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 		Str("machine_key", node.MachineKey.ShortString()).
 		Str("node_key", node.NodeKey.ShortString()).
 		Str("user", node.User.Name).
+		Str("Namespace", node.User.GetNamespace()). // __CYLONIX_MOD__
 		Msg("Registering node")
 
 	// If the node exists and it already has IP(s), we just save it
@@ -514,6 +515,7 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 			return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
 		}
 	}
+	node.Namespace = node.User.GetNamespace()
 	// __END_CYLONIX_MOD__
 
 	if err := tx.Save(&node).Error; err != nil {

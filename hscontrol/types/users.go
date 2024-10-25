@@ -22,7 +22,7 @@ type User struct {
 	// Since name field is unique and used extensively as a unique field in
 	// headscale, we use it to store the uuid field instead for multi-tenancy
 	// support. The real username for multi-tenant deployment is set in the
-	// LoginName field instead. LoginName is uninque for a namespace/tenant.
+	// LoginName field instead. LoginName is unique for a namespace/tenant.
 	LoginName *string `gorm:"unique:namespace_login"`
 	Namespace *string `gorm:"unique:namespace_login"`
 	// __END_CYLONIX_MOD__
@@ -112,6 +112,12 @@ func (n *User) Proto() *v1.User {
 }
 
 // __BEGIN_CYLONIX_MOD__
+func (u *User) GetNamespace() string {
+	if u.Namespace == nil {
+		return ""
+	}
+	return *u.Namespace
+}
 func (n *User) FromProto(v1User *v1.User) error {
 	id, err := strconv.ParseUint(v1User.Id, util.Base10, util.BitSize64)
 	if err != nil {

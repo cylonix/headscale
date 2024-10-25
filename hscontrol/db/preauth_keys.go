@@ -71,6 +71,7 @@ func CreatePreAuthKey(
 		Ephemeral:  ephemeral,
 		CreatedAt:  &now,
 		Expiration: expiration,
+		Namespace:  user.GetNamespace(), // __CYLONIX_MOD__
 	}
 
 	if err := tx.Save(&key).Error; err != nil {
