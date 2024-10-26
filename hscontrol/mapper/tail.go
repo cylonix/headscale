@@ -84,9 +84,16 @@ func tailNode(
 	tags, _ := pol.TagsOfNode(node)
 	tags = lo.Uniq(append(tags, node.ForcedTags...))
 
+	// __BEGIN_CYLONIX_MOD__
+	stableID := node.ID.StableID()
+	if node.DiscoKey.IsZero() {
+		stableID = tailcfg.StableNodeID(node.GivenName)
+	}
+	// __END_CYLONIX_MOD__
+
 	tNode := tailcfg.Node{
 		ID:       tailcfg.NodeID(node.ID), // this is the actual ID
-		StableID: node.ID.StableID(),
+		StableID: stableID, // __CYLONIX_MOD__
 		Name:     hostname,
 		Cap:      capVer,
 
