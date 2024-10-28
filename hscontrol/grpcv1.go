@@ -1205,4 +1205,33 @@ func (api headscaleV1APIServer) CreateNode(
 
 	return &v1.CreateNodeResponse{NodeId: uint64(node.ID)}, nil
 }
+func (api headscaleV1APIServer) UpdateNode(
+	ctx context.Context,
+	request *v1.UpdateNodeRequest,
+) (*v1.UpdateNodeResponse, error) {
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+
+	n := request.Update
+	logger := log.Error().Str("namespace", n.Namespace).Str("name", n.Name).
+		Str("machine-key", n.MachineKey)
+	node, err := types.ParseProtoNode(n)
+	if err != nil {
+		logger.Err(err).Msg("Failed to parse node")
+		return nil, err
+	}
+
+	tx := api.h.db.DB.Model(types.Node{ID: types.NodeID(request.NodeId)})
+	if err = tx.Updates(node).Error; err != nil {
+		logger.Err(err).Msg("Failed to update node to db")
+		return nil, err
+	}
+
+	log.Info().Str("namespace", n.Namespace).Str("name", n.Name).
+		Str("machine-key", n.MachineKey).
+		Msg("Updated node")
+
+	return &v1.UpdateNodeResponse{}, nil
+}
 // __END_CYLONIX_MOD__
