@@ -1222,7 +1222,12 @@ func (api headscaleV1APIServer) UpdateNode(
 		return nil, err
 	}
 
-	tx := api.h.db.DB.Model(types.Node{ID: types.NodeID(request.NodeId)})
+	node.Routes = nil // Cannot update routes for now.
+	if err = node.BeforeSave(nil); err != nil {
+		logger.Err(err).Msg("Failed to prepare node before update.")
+		return nil, err
+	}
+	tx := api.h.db.DB.Model(&types.Node{ID: types.NodeID(request.NodeId)})
 	if err = tx.Updates(node).Error; err != nil {
 		logger.Err(err).Msg("Failed to update node to db")
 		return nil, err

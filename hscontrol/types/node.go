@@ -384,7 +384,8 @@ func (node *Node) Proto() *v1.Node {
 		Namespace:     node.Namespace,             // __CYLONIX_MOD__
 		StableId:      node.StableID,              // __CYLONIX_MOD__
 		WireguardOnly: node.IsWireguardOnly,       // __CYLONIX_MOD__
-		Endpoints:     node.EndpointStringSlice(), //__CYLONIX_MOD__
+		Endpoints:     node.EndpointStringSlice(), // __CYLONIX_MOD__
+		Routes:        node.ProtoRouteSpecs(),     // __CYLONIX_MOD__
 	}
 
 	if node.AuthKey != nil {
@@ -569,12 +570,51 @@ func (nodes Nodes) IDMap() map[NodeID]*Node {
 }
 
 // __BEGIN_CYLONIX_MOD__
-func (node *Node) EndpointStringSlice() []string {
-	list := make([]string, len(node.Endpoints))
-	for _, v := range node.Endpoints {
-		list = append(list, v.String())
+func SliceMap[T1 any, T2 any](from []T1, mapFn func(T1) (T2, error)) ([]T2, error) {
+	list := make([]T2, 0, len(from))
+	for _, v := range from {
+		to, err := mapFn(v)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, to)
 	}
+	return list, nil
+}
+
+func (node *Node) EndpointStringSlice() []string {
+	ss, _ := SliceMap(node.Endpoints, func(ep netip.AddrPort) (string, error) {
+		return ep.String(), nil
+	})
+	return ss
+}
+func (node *Node) ProtoRouteSpecs() []*v1.RouteSpec {
+	list, _ := SliceMap(node.Routes, func(r Route) (*v1.RouteSpec, error) {
+		return &v1.RouteSpec{
+			Prefix:     netip.Prefix(r.Prefix).String(),
+			Advertised: r.Advertised,
+			Enabled:    r.Enabled,
+			IsPrimary:  r.IsPrimary,
+		}, nil
+	})
 	return list
+}
+func ParseProtoRouteSpecs(nodeID uint64, userID *uint, namespace string, routes []*v1.RouteSpec) ([]Route, error) {
+	return SliceMap(routes, func(r *v1.RouteSpec) (Route, error) {
+		prefix, err := netip.ParsePrefix(r.Prefix)
+		if err != nil {
+			return Route{}, err
+		}
+		return Route{
+			NodeID:     nodeID,
+			Namespace:  namespace,
+			Prefix:     IPPrefix(prefix),
+			Advertised: r.Advertised,
+			Enabled:    r.Enabled,
+			IsPrimary:  r.IsPrimary,
+			UserID:     userID,
+		}, nil
+	})
 }
 func ParseProtoNode(p *v1.Node) (*Node, error) {
 	var (
@@ -587,16 +627,16 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		endpoints  []netip.AddrPort
 	)
 	if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse machine key %v: %w", p.MachineKey, err)
 	}
 	if err := nodeKey.UnmarshalText([]byte(p.NodeKey)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse node key %v: %w", p.NodeKey, err)
 	}
 	if err := discoKey.UnmarshalText([]byte(p.DiscoKey)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse disco key %v: %w", p.DiscoKey, err)
 	}
 	if err := user.FromProto(p.User); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse user %v: %w", p.User, err)
 	}
 
 	for _, addr := range p.IpAddresses {
@@ -614,9 +654,14 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 	for _, v := range p.Endpoints {
 		ep, err := netip.ParseAddrPort(v)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse addr/port %v: %w", ep, err)
 		}
 		endpoints = append(endpoints, ep)
+	}
+
+	routes, err := ParseProtoRouteSpecs(p.Id, &user.ID, p.Namespace, p.Routes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse route specs: %w", err)
 	}
 
 	n := &Node{
@@ -627,6 +672,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		IPv4:            ipv4,
 		IPv6:            ipv6,
 		Hostname:        p.Name,
+		Hostinfo:        &tailcfg.Hostinfo{Hostname: p.Name},
 		GivenName:       p.GivenName,
 		User:            user,
 		ForcedTags:      p.ForcedTags,
@@ -636,6 +682,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		StableID:        p.StableId,
 		IsWireguardOnly: p.WireguardOnly,
 		Endpoints:       endpoints,
+		Routes:          routes,
 	}
 
 	if p.PreAuthKey != nil {

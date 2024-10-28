@@ -53,6 +53,7 @@ message Node {
     optional string stable_id    = 24; // __CYLONIX_MOD__
     string namespace             = 25; // __CYLONIX_MOD_
     repeated string endpoints    = 26; // __CYLONIX_MOD__
+    repeated RouteSpec routes    = 27; // __CYLONIX_MOD__
 }
 
 message RegisterNodeRequest {
@@ -167,5 +168,11 @@ message UpdateNodeRequest {
     Node   update  = 2;
 }
 message UpdateNodeResponse {
+}
+message RouteSpec {
+    string prefix     = 1;
+    bool   advertised = 2;
+    bool   enabled    = 3;
+    bool   is_primary = 4;
 }
 // __END_CYLONIX_MOD__

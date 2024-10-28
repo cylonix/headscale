@@ -2390,6 +2390,14 @@
             "type": "string"
           },
           "title": "__CYLONIX_MOD__"
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1RouteSpec"
+          },
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -2512,6 +2520,23 @@
         "namespace": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
+        }
+      }
+    },
+    "v1RouteSpec": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string"
+        },
+        "advertised": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "isPrimary": {
+          "type": "boolean"
         }
       }
     },
