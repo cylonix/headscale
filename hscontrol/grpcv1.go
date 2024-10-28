@@ -1169,4 +1169,40 @@ func (api headscaleV1APIServer) RefreshApiKey(
 	}
 	return &v1.RefreshApiKeyResponse{}, nil
 }
+func (api headscaleV1APIServer) CreateNode(
+	ctx context.Context,
+	request *v1.CreateNodeRequest,
+) (*v1.CreateNodeResponse, error) {
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+
+	n := request.Node
+	logger := log.Error().Str("namespace", n.Namespace).Str("name", n.Name).
+		Str("machine-key", n.MachineKey)
+	node, err := types.ParseProtoNode(n)
+	if err != nil {
+		logger.Err(err).Msg("Failed to parse node")
+		return nil, err
+	}
+
+	if node.GivenName == "" {
+		givenName, err := api.h.db.GenerateGivenName(node.MachineKey, n.Name)
+		if err != nil {
+			logger.Err(err).Msg("Failed to generate given name")
+			return nil, err
+		}
+		node.GivenName = givenName
+	}
+	if err = api.h.db.DB.Save(node).Error; err != nil {
+		logger.Err(err).Msg("Failed to save node to db")
+		return nil, err
+	}
+
+	log.Info().Str("namespace", n.Namespace).Str("name", n.Name).
+		Str("machine_key", n.MachineKey).
+		Msg("Added node")
+
+	return &v1.CreateNodeResponse{NodeId: uint64(node.ID)}, nil
+}
 // __END_CYLONIX_MOD__

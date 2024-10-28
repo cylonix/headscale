@@ -49,6 +49,15 @@ proto-lint:
 compress: build
 	upx --brute headscale
 
-generate:
+generate: install_grpc_tools
 	rm -rf gen
 	buf generate proto
+
+# __BEGIN_CYLONIX_MOD__
+install_grpc_tools:
+	go install \
+		github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway \
+		github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2 \
+		google.golang.org/protobuf/cmd/protoc-gen-go \
+		google.golang.org/grpc/cmd/protoc-gen-go-grpc
+# __END_CYLONIX_MOD__

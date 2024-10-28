@@ -133,7 +133,9 @@ type Node struct {
 
 	IsOnline *bool `gorm:"-"`
 
-	Namespace string // __CYLONIX_MOD__
+	IsWireguardOnly *bool   // __CYLONIX_MOD__
+	StableID        *string // __CYLONIX_MOD__
+	Namespace       string  // __CYLONIX_MOD__
 }
 
 type (
@@ -378,7 +380,11 @@ func (node *Node) Proto() *v1.Node {
 		RegisterMethod: node.RegisterMethodToV1Enum(),
 
 		CreatedAt: timestamppb.New(node.CreatedAt),
-		Namespace: node.Namespace, // __CYLONIX_MOD__
+
+		Namespace:     node.Namespace,             // __CYLONIX_MOD__
+		StableId:      node.StableID,              // __CYLONIX_MOD__
+		WireguardOnly: node.IsWireguardOnly,       // __CYLONIX_MOD__
+		Endpoints:     node.EndpointStringSlice(), //__CYLONIX_MOD__
 	}
 
 	if node.AuthKey != nil {
@@ -563,6 +569,13 @@ func (nodes Nodes) IDMap() map[NodeID]*Node {
 }
 
 // __BEGIN_CYLONIX_MOD__
+func (node *Node) EndpointStringSlice() []string {
+	list := make([]string, len(node.Endpoints))
+	for _, v := range node.Endpoints {
+		list = append(list, v.String())
+	}
+	return list
+}
 func ParseProtoNode(p *v1.Node) (*Node, error) {
 	var (
 		machineKey key.MachinePublic
@@ -571,6 +584,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		ipv4       *netip.Addr
 		ipv6       *netip.Addr
 		user       User
+		endpoints  []netip.AddrPort
 	)
 	if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
 		return nil, err
@@ -597,20 +611,31 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		}
 	}
 
+	for _, v := range p.Endpoints {
+		ep, err := netip.ParseAddrPort(v)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, ep)
+	}
+
 	n := &Node{
-		ID:             NodeID(p.Id),
-		MachineKey:     machineKey,
-		NodeKey:        nodeKey,
-		DiscoKey:       discoKey,
-		IPv4:           ipv4,
-		IPv6:           ipv6,
-		Hostname:       p.Name,
-		GivenName:      p.GivenName,
-		User:           user,
-		ForcedTags:     p.ForcedTags,
-		RegisterMethod: nodeRegisterMethodFromV1Enum(p.RegisterMethod),
-		CreatedAt:      p.CreatedAt.AsTime(),
-		Namespace:      p.Namespace,
+		ID:              NodeID(p.Id),
+		MachineKey:      machineKey,
+		NodeKey:         nodeKey,
+		DiscoKey:        discoKey,
+		IPv4:            ipv4,
+		IPv6:            ipv6,
+		Hostname:        p.Name,
+		GivenName:       p.GivenName,
+		User:            user,
+		ForcedTags:      p.ForcedTags,
+		RegisterMethod:  nodeRegisterMethodFromV1Enum(p.RegisterMethod),
+		CreatedAt:       p.CreatedAt.AsTime(),
+		Namespace:       p.Namespace,
+		StableID:        p.StableId,
+		IsWireguardOnly: p.WireguardOnly,
+		Endpoints:       endpoints,
 	}
 
 	if p.PreAuthKey != nil {

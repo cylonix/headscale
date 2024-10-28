@@ -421,7 +421,7 @@ func NewHeadscaleDatabase(
 			},
 			// __BEGIN_CYLONIX_MOD__
 			{
-				ID: "202410031400",
+				ID: "202410261400",
 				// Migrate tables with additional columns.
 				Migrate: func(tx *gorm.DB) error {
 					return tx.AutoMigrate(

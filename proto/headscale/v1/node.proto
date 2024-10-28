@@ -49,7 +49,10 @@ message Node {
     string          given_name   = 21;
     bool            online       = 22;
 
-    string namespace = 23; // __CYLONIX_MOD__
+    optional bool wireguard_only = 23; // __CYLONIX_MOD__
+    optional string stable_id    = 24; // __CYLONIX_MOD__
+    string namespace             = 25; // __CYLONIX_MOD_
+    repeated string endpoints    = 26; // __CYLONIX_MOD__
 }
 
 message RegisterNodeRequest {
@@ -150,3 +153,19 @@ message BackfillNodeIPsRequest {
 message BackfillNodeIPsResponse {
     repeated string changes = 1;
 }
+
+// ___BEGIN_CYLONIX_MOD__
+message CreateNodeRequest {
+    Node node = 1;
+}
+message CreateNodeResponse {
+    uint64 node_id = 1;
+}
+// ___BEGIN_CYLONIX_MOD__
+message UpdateNodeRequest {
+    uint64 node_id = 1;
+    Node   update  = 2;
+}
+message UpdateNodeResponse {
+}
+// __END_CYLONIX_MOD__

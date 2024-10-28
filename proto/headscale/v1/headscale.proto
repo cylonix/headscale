@@ -131,6 +131,19 @@ service HeadscaleService {
         };
     }
 
+    // __BEGIN_CYLONIX_MOD__
+    rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
+        option (google.api.http) = {
+            post: "/api/v1/node/create"
+        };
+    }
+    rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
+        option (google.api.http) = {
+            put: "/api/v1/node/{node_id}"
+        };
+    }
+    // __END_CYLONIX_MOD__
+
     // --- Node end ---
 
     // --- Route start ---

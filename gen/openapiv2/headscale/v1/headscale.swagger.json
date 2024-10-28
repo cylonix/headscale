@@ -383,6 +383,313 @@
         ]
       }
     },
+    "/api/v1/node/create": {
+      "post": {
+        "summary": "__BEGIN_CYLONIX_MOD__",
+        "operationId": "HeadscaleService_CreateNode",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateNodeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "node.id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "node.machineKey",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.nodeKey",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.discoKey",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.ipAddresses",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.user.loginName",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.lastSeen",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.expiry",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.preAuthKey.user",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.key",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.reusable",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "node.preAuthKey.ephemeral",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "node.preAuthKey.used",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "node.preAuthKey.expiration",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.preAuthKey.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.preAuthKey.aclTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.preAuthKey.userDetail.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.userDetail.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.userDetail.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.preAuthKey.userDetail.loginName",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.userDetail.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.registerMethod",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "REGISTER_METHOD_UNSPECIFIED",
+              "REGISTER_METHOD_AUTH_KEY",
+              "REGISTER_METHOD_CLI",
+              "REGISTER_METHOD_OIDC"
+            ],
+            "default": "REGISTER_METHOD_UNSPECIFIED"
+          },
+          {
+            "name": "node.forcedTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.invalidTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.validTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.givenName",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.online",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "node.wireguardOnly",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "node.stableId",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.namespace",
+            "description": "__CYLONIX_MOD_",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.endpoints",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/node/register": {
       "post": {
         "operationId": "HeadscaleService_RegisterNode",
@@ -479,6 +786,317 @@
             "required": true,
             "type": "string",
             "format": "uint64"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      },
+      "put": {
+        "operationId": "HeadscaleService_UpdateNode",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateNodeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "update.id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "update.machineKey",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.nodeKey",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.discoKey",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.ipAddresses",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "update.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.user.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.user.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.user.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.user.loginName",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.user.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.lastSeen",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.expiry",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.preAuthKey.user",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.key",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.reusable",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "update.preAuthKey.ephemeral",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "update.preAuthKey.used",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "update.preAuthKey.expiration",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.preAuthKey.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.preAuthKey.aclTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "update.preAuthKey.userDetail.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.userDetail.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.userDetail.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.preAuthKey.userDetail.loginName",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.userDetail.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "update.registerMethod",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "REGISTER_METHOD_UNSPECIFIED",
+              "REGISTER_METHOD_AUTH_KEY",
+              "REGISTER_METHOD_CLI",
+              "REGISTER_METHOD_OIDC"
+            ],
+            "default": "REGISTER_METHOD_UNSPECIFIED"
+          },
+          {
+            "name": "update.forcedTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "update.invalidTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "update.validTags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "update.givenName",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.online",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "update.wireguardOnly",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "update.stableId",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.namespace",
+            "description": "__CYLONIX_MOD_",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.endpoints",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
           }
         ],
         "tags": [
@@ -1404,6 +2022,15 @@
         }
       }
     },
+    "v1CreateNodeResponse": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "format": "uint64"
+        }
+      }
+    },
     "v1CreatePreAuthKeyRequest": {
       "type": "object",
       "properties": {
@@ -1745,8 +2372,23 @@
         "online": {
           "type": "boolean"
         },
+        "wireguardOnly": {
+          "type": "boolean",
+          "title": "__CYLONIX_MOD__"
+        },
+        "stableId": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
         "namespace": {
           "type": "string",
+          "title": "__CYLONIX_MOD_"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
           "title": "__CYLONIX_MOD__"
         }
       }
@@ -1908,6 +2550,9 @@
           "$ref": "#/definitions/v1Node"
         }
       }
+    },
+    "v1UpdateNodeResponse": {
+      "type": "object"
     },
     "v1User": {
       "type": "object",
