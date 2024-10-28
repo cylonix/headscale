@@ -23,8 +23,8 @@ type User struct {
 	// headscale, we use it to store the uuid field instead for multi-tenancy
 	// support. The real username for multi-tenant deployment is set in the
 	// LoginName field instead. LoginName is unique for a namespace/tenant.
-	LoginName *string `gorm:"unique:namespace_login"`
-	Namespace *string `gorm:"unique:namespace_login"`
+	LoginName *string `gorm:"uniqueIndex:users_namespace_login"`
+	Namespace *string `gorm:"uniqueIndex:users_namespace_login"`
 	// __END_CYLONIX_MOD__
 }
 
