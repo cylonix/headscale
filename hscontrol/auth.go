@@ -164,7 +164,7 @@ func (h *Headscale) handleRegister(
 					Str("func", "RegistrationHandler").
 					Str("node", node.Hostname).
 					Str("namesapce", node.Namespace). // __CYLONIX_MOD__
-					Str("user", node.User.Name). // __CYLONIX_MOD__
+					Str("user", node.User.Name).      // __CYLONIX_MOD__
 					Err(err).
 					Msg("Error saving machine key to database")
 
@@ -276,7 +276,7 @@ func (h *Headscale) handleAuthKey(
 			logEvent = log.Debug()
 		}
 		logEvent.
-		// __END_CYLONIX_MOD__
+			// __END_CYLONIX_MOD__
 			Caller().
 			Str("node", registerRequest.Hostinfo.Hostname).
 			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
@@ -329,7 +329,7 @@ func (h *Headscale) handleAuthKey(
 			Caller().
 			Str("node", node.Hostname).
 			Str("namespace", node.Namespace). // __CYLONIX_MOD__
-			Str("user", node.User.Name). // __CYLONIX_MOD__
+			Str("user", node.User.Name).      // __CYLONIX_MOD__
 			Msg("node was already registered before, refreshing with new auth key")
 
 		node.NodeKey = nodeKey
@@ -337,19 +337,23 @@ func (h *Headscale) handleAuthKey(
 			node.AuthKeyID = ptr.To(pak.ID)
 		}
 
+		// __BEGIN_CYLONIX_MOD__
+		if h.cfg.NodeHandler != nil {
+			if err := h.cfg.NodeHandler.RotateNodeKey(node, nodeKey); err != nil {
+				logNodeError(node, err, "failed to rotate node key")
+				writeInternalError(writer)
+				return
+			}
+		}
+		// __END_CYLONIX_MOD__
+
 		node.Expiry = &registerRequest.Expiry
 		node.User = pak.User
 		node.UserID = pak.UserID
 		err := h.db.DB.Save(node).Error
 		if err != nil {
-			log.Error().
-				Caller().
-				Str("node", node.Hostname).
-				Str("namespace", node.Namespace). // __CYLONIX_MOD__
-				Str("user", node.User.Name). // __CYLONIX_MOD__
-				Err(err).
-				Msg("failed to save node after logging in with auth key")
-
+			logNodeError(node, err, "failed to save node after logging in with auth key") // __CYLONIX_MOD__
+			writeInternalError(writer) // __CYLONIX_MOD__
 			return
 		}
 
@@ -362,11 +366,12 @@ func (h *Headscale) handleAuthKey(
 					Caller().
 					Str("node", node.Hostname).
 					Str("namespace", node.Namespace). // __CYLONIX_MOD__
-					Str("user", node.User.Name). // __CYLONIX_MOD__
+					Str("user", node.User.Name).      // __CYLONIX_MOD__
 					Strs("aclTags", aclTags).
 					Err(err).
 					Msg("Failed to set tags after refreshing node")
 
+				writeInternalError(writer) // __CYLONIX_MOD__
 				return
 			}
 		}
@@ -413,6 +418,7 @@ func (h *Headscale) handleAuthKey(
 				Err(err).
 				Msg("failed to allocate IP	")
 
+			writeInternalError(writer) // __CYLONIX_MOD__
 			return
 		}
 
@@ -655,7 +661,7 @@ func (h *Headscale) handleNodeWithValidRegistration(
 
 	resp.AuthURL = ""
 	resp.MachineAuthorized = true
-	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
+	resp.User = *node.User.TailscaleUser(h.cfg)   // __CYLONIX_MOD__
 	resp.Login = *node.User.TailscaleLogin(h.cfg) // __CYLONIX_MOD__
 
 	respBody, err := json.Marshal(resp)
@@ -697,6 +703,16 @@ func (h *Headscale) handleNodeKeyRefresh(
 		Caller().
 		Str("node", node.Hostname).
 		Msg("We have the OldNodeKey in the database. This is a key refresh")
+
+	// __BEGIN_CYLONIX_MOD__
+	if h.cfg.NodeHandler != nil {
+		if err := h.cfg.NodeHandler.RotateNodeKey(&node, registerRequest.NodeKey); err != nil {
+			logNodeError(&node, err, "failed to rotate node key")
+			writeInternalError(writer)
+			return
+		}
+	}
+	// __END_CYLONIX_MOD__
 
 	err := h.db.Write(func(tx *gorm.DB) error {
 		return db.NodeSetNodeKey(tx, &node, registerRequest.NodeKey)
@@ -805,3 +821,19 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 		Str("node", node.Hostname).
 		Msg("Node logged out. Sent AuthURL for reauthentication")
 }
+
+// __BEGIN_CYLONIX_MOD__
+func writeInternalError(writer http.ResponseWriter) {
+	http.Error(writer, "Internal server error", http.StatusInternalServerError)
+}
+func logNodeError(node *types.Node, err error, msg string) {
+	log.Error().
+		Str("machine-key", node.MachineKey.ShortString()).
+		Str("node", node.Hostname).
+		Str("namespace", node.Namespace).
+		Str("user", node.User.Name).
+		Err(err).
+		Msg(msg)
+}
+
+// __END_CYLONIX_MOD__
