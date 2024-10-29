@@ -1194,7 +1194,7 @@ func (api headscaleV1APIServer) CreateNode(
 		}
 		node.GivenName = givenName
 	}
-	if err = api.h.db.DB.Save(node).Error; err != nil {
+	if err = api.h.db.DB.Create(node).Error; err != nil {
 		logger.Err(err).Msg("Failed to save node to db")
 		return nil, err
 	}
