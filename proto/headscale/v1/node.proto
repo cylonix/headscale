@@ -54,6 +54,7 @@ message Node {
     string namespace             = 25; // __CYLONIX_MOD_
     repeated string endpoints    = 26; // __CYLONIX_MOD__
     repeated RouteSpec routes    = 27; // __CYLONIX_MOD__
+    optional uint32 cap_version  = 28; // __CYLONIX_MOD__
 }
 
 message RegisterNodeRequest {

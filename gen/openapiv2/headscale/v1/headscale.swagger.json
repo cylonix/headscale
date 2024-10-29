@@ -683,6 +683,14 @@
               "type": "string"
             },
             "collectionFormat": "multi"
+          },
+          {
+            "name": "node.capVersion",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -1097,6 +1105,14 @@
               "type": "string"
             },
             "collectionFormat": "multi"
+          },
+          {
+            "name": "update.capVersion",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -2397,6 +2413,11 @@
             "type": "object",
             "$ref": "#/definitions/v1RouteSpec"
           },
+          "title": "__CYLONIX_MOD__"
+        },
+        "capVersion": {
+          "type": "integer",
+          "format": "int64",
           "title": "__CYLONIX_MOD__"
         }
       }

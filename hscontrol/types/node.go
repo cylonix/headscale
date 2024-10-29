@@ -136,6 +136,7 @@ type Node struct {
 	IsWireguardOnly *bool   // __CYLONIX_MOD__
 	StableID        *string // __CYLONIX_MOD__
 	Namespace       string  // __CYLONIX_MOD__
+	CapVersion      *uint32 // __CYLONIX_MOD__
 }
 
 type (
@@ -386,6 +387,7 @@ func (node *Node) Proto() *v1.Node {
 		WireguardOnly: node.IsWireguardOnly,       // __CYLONIX_MOD__
 		Endpoints:     node.EndpointStringSlice(), // __CYLONIX_MOD__
 		Routes:        node.ProtoRouteSpecs(),     // __CYLONIX_MOD__
+		CapVersion:    node.CapVersion,            // __CYLONIX_MOD__
 	}
 
 	if node.AuthKey != nil {
@@ -683,6 +685,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		IsWireguardOnly: p.WireguardOnly,
 		Endpoints:       endpoints,
 		Routes:          routes,
+		CapVersion:      p.CapVersion,
 	}
 
 	if p.PreAuthKey != nil {

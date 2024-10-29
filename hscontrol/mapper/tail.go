@@ -89,6 +89,9 @@ func tailNode(
 	if node.DiscoKey.IsZero() {
 		stableID = tailcfg.StableNodeID(node.GivenName)
 	}
+	if node.CapVersion != nil {
+		capVer = tailcfg.CapabilityVersion(*node.CapVersion)
+	}
 	// __END_CYLONIX_MOD__
 
 	tNode := tailcfg.Node{

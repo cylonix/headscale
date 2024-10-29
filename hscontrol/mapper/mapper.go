@@ -298,7 +298,7 @@ func (m *Mapper) PeerChangedResponse(
 		}
 	}
 
-	err = m.appendPeerChanges( // __CYLONI_MOD__
+	err = m.appendPeerChanges( // __CYLONIX_MOD__
 		&resp,
 		false, // partial change
 		pol,
