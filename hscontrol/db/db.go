@@ -421,11 +421,11 @@ func NewHeadscaleDatabase(
 			},
 			// __BEGIN_CYLONIX_MOD__
 			{
-				ID: "202410281400",
+				ID: "202410301400",
 				// Migrate tables with additional columns.
 				Migrate: func(tx *gorm.DB) error {
 					if err := tx.Migrator().DropIndex(&types.Node{}, "machine_key"); err != nil {
-						return err
+						log.Error().Err(err).Msg("Failed to drop machine key index in nodes.")
 					}
 					return tx.AutoMigrate(
 						&types.APIKey{},
