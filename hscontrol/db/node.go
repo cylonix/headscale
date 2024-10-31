@@ -205,12 +205,13 @@ func GetNodeByMachineKey(
 }
 
 func (hsdb *HSDatabase) GetNodeByAnyKey(
+	userID *uint, // __CYLONIX_MOD__
 	machineKey key.MachinePublic,
 	nodeKey key.NodePublic,
 	oldNodeKey key.NodePublic,
 ) (*types.Node, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
-		return GetNodeByAnyKey(rx, machineKey, nodeKey, oldNodeKey)
+		return GetNodeByAnyKey(rx, userID, machineKey, nodeKey, oldNodeKey) // __CYLONIX_MOD__
 	})
 }
 
@@ -218,9 +219,15 @@ func (hsdb *HSDatabase) GetNodeByAnyKey(
 // TODO(kradalby): see if we can remove this.
 func GetNodeByAnyKey(
 	tx *gorm.DB,
+	userID *uint, // __CYLONIX_MOD__
 	machineKey key.MachinePublic, nodeKey key.NodePublic, oldNodeKey key.NodePublic,
 ) (*types.Node, error) {
 	node := types.Node{}
+	// ___BEGIN_CYLONIX_MOD__
+	if userID != nil {
+		tx = tx.Model(&node).Where("user_id = ?", *userID)
+	}
+	// __END_CYLONIX_MOD__
 	if result := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").

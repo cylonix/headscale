@@ -108,7 +108,7 @@ func (s *Suite) TestGetNodeByAnyNodeKey(c *check.C) {
 	trx := db.DB.Save(&node)
 	c.Assert(trx.Error, check.IsNil)
 
-	_, err = db.GetNodeByAnyKey(machineKey.Public(), nodeKey.Public(), oldNodeKey.Public())
+	_, err = db.GetNodeByAnyKey(nil, machineKey.Public(), nodeKey.Public(), oldNodeKey.Public()) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 }
 

@@ -74,7 +74,32 @@ func (h *Headscale) handleRegister(
 	logInfo, logTrace, logErr := logAuthFunc(req, regReq, machineKey) // __CYLONIX_MOD__
 	now := time.Now().UTC()
 	logTrace("handleRegister called, looking up machine in DB")
-	node, err := h.db.GetNodeByAnyKey(machineKey, regReq.NodeKey, regReq.OldNodeKey)
+
+	// __BEGIN_CYLONIX_MOD__
+	// Pre-auth key is always required for multi-tenancy support as we need to
+	// get the user information from it to look up the nodes base on user
+	// information.
+	var userID *uint
+	authKey := ""
+	if regReq.Auth != nil {
+		authKey = regReq.Auth.AuthKey
+	}
+	pak, err, code := h.validateRequestPreAuthKey(authKey)
+	if err != nil {
+		if code == http.StatusUnauthorized {
+			logInfo(err.Error())
+			http.Error(writer, "Unauthorized", code)
+			return
+		}
+		logErr(err, "Failed to validate pre-auth key.")
+		http.Error(writer, "Internal error", code)
+		return
+	}
+	if pak != nil {
+		userID = &pak.User.ID
+	}
+	node, err := h.db.GetNodeByAnyKey(userID, machineKey, regReq.NodeKey, regReq.OldNodeKey)
+	// __END_CYLONIX_MOD__
 	logTrace("handleRegister database lookup has returned")
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// If the node has AuthKey set, handle registration via PreAuthKeys
@@ -323,7 +348,7 @@ func (h *Headscale) handleAuthKey(
 	// The error is not important, because if it does not
 	// exist, then this is a new node and we will move
 	// on to registration.
-	node, _ := h.db.GetNodeByAnyKey(machineKey, registerRequest.NodeKey, registerRequest.OldNodeKey)
+	node, _ := h.db.GetNodeByAnyKey(&pak.User.ID, machineKey, registerRequest.NodeKey, registerRequest.OldNodeKey) // __CYLONIX_MOD__
 	if node != nil {
 		log.Trace().
 			Caller().
@@ -353,7 +378,7 @@ func (h *Headscale) handleAuthKey(
 		err := h.db.DB.Save(node).Error
 		if err != nil {
 			logNodeError(node, err, "failed to save node after logging in with auth key") // __CYLONIX_MOD__
-			writeInternalError(writer) // __CYLONIX_MOD__
+			writeInternalError(writer)                                                    // __CYLONIX_MOD__
 			return
 		}
 
@@ -834,6 +859,25 @@ func logNodeError(node *types.Node, err error, msg string) {
 		Str("user", node.User.Name).
 		Err(err).
 		Msg(msg)
+}
+func (h *Headscale) validateRequestPreAuthKey(authKey string) (pak *types.PreAuthKey, err error, code int) {
+	if !h.cfg.RequirePreAuth {
+		return
+	}
+	if authKey == "" {
+		err = errors.New("missing pre-auth key")
+		code = http.StatusUnauthorized
+		return
+	}
+	pak, err = h.db.ValidatePreAuthKey(authKey)
+	if err != nil {
+		if db.UnauthorizedPreAuthKeyError(err) {
+			code = http.StatusUnauthorized
+			return
+		}
+		code = http.StatusInternalServerError
+	}
+	return
 }
 
 // __END_CYLONIX_MOD__

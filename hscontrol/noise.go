@@ -219,7 +219,27 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 
 	ns.nodeKey = mapRequest.NodeKey
 
+	// __BEGIN_CYLONIX_MOD__
+	var userID *uint
+	authKey := req.URL.Query().Get("auth-key")
+	pak, err, code := ns.headscale.validateRequestPreAuthKey(authKey)
+	if err != nil {
+		if code == http.StatusUnauthorized {
+			log.Info().Caller().Msg(err.Error())
+			http.Error(writer, "Unauthorized", code)
+			return
+		}
+		log.Error().Caller().Err(err).Msg("Failed to validate pre-auth key.")
+		http.Error(writer, "Internal error", code)
+		return
+	}
+	if pak != nil {
+		userID = &pak.User.ID
+	}
+	// __END_CYLONIX_MOD__
+
 	node, err := ns.headscale.db.GetNodeByAnyKey(
+		userID, // __CYLONIX_MOD__
 		ns.conn.Peer(),
 		mapRequest.NodeKey,
 		key.NodePublic{},

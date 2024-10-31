@@ -89,8 +89,9 @@ type Config struct {
 	Tuning Tuning
 
 	// __BEGIN_CYLONIX_MOD__
-	IPAllocator IPAllocator
-	NodeHandler NodeHandler
+	RequirePreAuth bool
+	IPAllocator    IPAllocator
+	NodeHandler    NodeHandler
 	// __END_CYLONIX_MOD__
 }
 
