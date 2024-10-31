@@ -424,6 +424,9 @@ func NewHeadscaleDatabase(
 				ID: "202410281400",
 				// Migrate tables with additional columns.
 				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Migrator().DropIndex(&types.Node{}, "machine_key"); err != nil {
+						return err
+					}
 					return tx.AutoMigrate(
 						&types.APIKey{},
 						&types.Node{},
@@ -431,6 +434,7 @@ func NewHeadscaleDatabase(
 						&types.PreAuthKey{},
 						&types.Route{},
 						&types.User{},
+						&types.Capability{},
 					)
 				},
 				Rollback: func(db *gorm.DB) error { return nil },

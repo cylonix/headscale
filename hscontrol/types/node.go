@@ -55,7 +55,7 @@ type Node struct {
 	// it is _only_ used for reading and writing the key to the
 	// database and should not be used.
 	// Use MachineKey instead.
-	MachineKeyDatabaseField string            `gorm:"column:machine_key;unique_index"`
+	MachineKeyDatabaseField string            `gorm:"column:machine_key;uniqueIndex:nodes_user_machine_key"`
 	MachineKey              key.MachinePublic `gorm:"-"`
 
 	// NodeKeyDatabaseField is the string representation of NodeKey
@@ -111,7 +111,7 @@ type Node struct {
 	// GivenName is the name used in all DNS related
 	// parts of headscale.
 	GivenName string `gorm:"type:varchar(63);unique_index"`
-	UserID    uint
+	UserID    uint `gorm:"uniqueIndex:nodes_user_machine_key"`
 	User      User `gorm:"constraint:OnDelete:CASCADE;"`
 
 	RegisterMethod string
@@ -133,10 +133,19 @@ type Node struct {
 
 	IsOnline *bool `gorm:"-"`
 
-	IsWireguardOnly *bool   // __CYLONIX_MOD__
-	StableID        *string // __CYLONIX_MOD__
-	Namespace       string  // __CYLONIX_MOD__
-	CapVersion      *uint32 // __CYLONIX_MOD__
+	// __BEGIN_CYLONIX_MOD__
+	IsWireguardOnly *bool
+	StableID        *string
+	Namespace       string
+	CapVersion      *uint32
+	Capabilities    []Capability `gorm:"many2many:node_capabilities_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
+	// __END_CYLONIX_MOD__
+}
+
+type Capability struct {
+	gorm.Model
+	Name      string `gorm:"uniqueIndex:capabilities_name_namespace"`
+	Namespace string `gorm:"uniqueIndex:capabilities_name_namespace"`
 }
 
 type (
@@ -382,12 +391,15 @@ func (node *Node) Proto() *v1.Node {
 
 		CreatedAt: timestamppb.New(node.CreatedAt),
 
-		Namespace:     node.Namespace,             // __CYLONIX_MOD__
-		StableId:      node.StableID,              // __CYLONIX_MOD__
-		WireguardOnly: node.IsWireguardOnly,       // __CYLONIX_MOD__
-		Endpoints:     node.EndpointStringSlice(), // __CYLONIX_MOD__
-		Routes:        node.ProtoRouteSpecs(),     // __CYLONIX_MOD__
-		CapVersion:    node.CapVersion,            // __CYLONIX_MOD__
+		// __BEGIN_CYLONIX_MAP__
+		Namespace:     node.Namespace,
+		StableId:      node.StableID,
+		WireguardOnly: node.IsWireguardOnly,
+		Endpoints:     node.EndpointStringSlice(),
+		Routes:        node.ProtoRouteSpecs(),
+		Capabilities:  node.ProtoCapabilities(),
+		CapVersion:    node.CapVersion,
+		// __END_CYLONIX_MOD__
 	}
 
 	if node.AuthKey != nil {
@@ -584,6 +596,16 @@ func SliceMap[T1 any, T2 any](from []T1, mapFn func(T1) (T2, error)) ([]T2, erro
 	return list, nil
 }
 
+func SliceFind[T any](from []T, testFn func(T) bool) []T {
+	list := make([]T, 0, len(from))
+	for _, v := range from {
+		if testFn(v) {
+			list = append(list, v)
+		}
+	}
+	return list
+}
+
 func (node *Node) EndpointStringSlice() []string {
 	ss, _ := SliceMap(node.Endpoints, func(ep netip.AddrPort) (string, error) {
 		return ep.String(), nil
@@ -601,6 +623,18 @@ func (node *Node) ProtoRouteSpecs() []*v1.RouteSpec {
 	})
 	return list
 }
+func (node *Node) ProtoCapabilities() []string {
+	list, _ := SliceMap(node.Capabilities, func(c Capability) (string, error) {
+		return c.Name, nil
+	})
+	return list
+}
+func ParseProtoCapabilities(namespace string, caps []string) []Capability {
+	list, _ := SliceMap(caps, func(c string) (Capability, error) {
+		return Capability{Name: c, Namespace: namespace}, nil
+	})
+	return list
+}
 func ParseProtoRouteSpecs(nodeID uint64, userID *uint, namespace string, routes []*v1.RouteSpec) ([]Route, error) {
 	return SliceMap(routes, func(r *v1.RouteSpec) (Route, error) {
 		prefix, err := netip.ParsePrefix(r.Prefix)
@@ -609,12 +643,10 @@ func ParseProtoRouteSpecs(nodeID uint64, userID *uint, namespace string, routes 
 		}
 		return Route{
 			NodeID:     nodeID,
-			Namespace:  namespace,
 			Prefix:     IPPrefix(prefix),
 			Advertised: r.Advertised,
 			Enabled:    r.Enabled,
 			IsPrimary:  r.IsPrimary,
-			UserID:     userID,
 		}, nil
 	})
 }
@@ -686,6 +718,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		Endpoints:       endpoints,
 		Routes:          routes,
 		CapVersion:      p.CapVersion,
+		Capabilities:    ParseProtoCapabilities(p.Namespace, p.Capabilities),
 	}
 
 	if p.PreAuthKey != nil {

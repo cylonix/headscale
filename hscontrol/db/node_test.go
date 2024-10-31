@@ -726,3 +726,154 @@ func TestListEphemeralNodes(t *testing.T) {
 	assert.Equal(t, nodeEph.UserID, ephemeralNodes[0].UserID)
 	assert.Equal(t, nodeEph.Hostname, ephemeralNodes[0].Hostname)
 }
+
+// __BEGIN_CYLONIX_MOD__
+func TestUpdateNodeRoutes(t *testing.T) {
+	db, err := newTestDB()
+	if err != nil {
+		t.Fatalf("creating db: %s", err)
+	}
+
+	user, err := db.CreateUser("test")
+	assert.NoError(t, err)
+
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	assert.NoError(t, err)
+
+	routes := []types.Route{
+		{
+			Prefix:    types.IPPrefix(netip.MustParsePrefix("100.64.1.0/24")),
+			Enabled:   true,
+			IsPrimary: true,
+		},
+	}
+
+	node := &types.Node{
+		MachineKey:     key.NewMachine().Public(),
+		NodeKey:        key.NewNode().Public(),
+		Hostname:       "test",
+		UserID:         user.ID,
+		RegisterMethod: util.RegisterMethodAuthKey,
+		AuthKeyID:      ptr.To(pak.ID),
+		Routes:         routes,
+	}
+
+	checkRoutes := func(node *types.Node) {
+		num := len(node.Routes)
+		nodes, err := db.ListNodes()
+		assert.NoError(t, err)
+		if assert.Len(t, nodes, 1) {
+			if assert.Len(t, nodes[0].Routes, num) {
+				r0, r1 := node.Routes[num-1], nodes[0].Routes[num-1]
+				t.Logf("nodeID: in=%v db=%v", node.ID, r1.NodeID)
+				t.Logf("prefix: in=%v db=%v", r0.Prefix, r1.Prefix)
+				assert.Equal(t, uint(node.ID), uint(r1.NodeID))
+				assert.Equal(t, r0.Prefix.String(), r1.Prefix.String())
+			}
+		}
+	}
+	err = db.DB.Create(node).Error
+	if assert.NoError(t, err) {
+		checkRoutes(node)
+	}
+
+	routes = append(routes, types.Route{
+		Prefix:    types.IPPrefix(netip.MustParsePrefix("0.0.0.0/0")),
+		Enabled:   true,
+		IsPrimary: true,
+	})
+
+	// Update routes only.
+	update := types.Node{
+		ID:     node.ID,
+		Routes: []types.Route{routes[1]},
+	}
+
+	err = db.UpdateNode(node.ID, &update)
+	if assert.NoError(t, err) {
+		checkRoutes(&update)
+	}
+
+	// Update with other fields being non-empty.
+	node.Routes = routes
+	err = db.UpdateNode(node.ID, node)
+	if assert.NoError(t, err) {
+		checkRoutes(node)
+	}
+}
+
+func TestUpdateNodeCapabilities(t *testing.T) {
+	db, err := newTestDB()
+	if err != nil {
+		t.Fatalf("creating db: %s", err)
+	}
+
+	namespace, login := "test-namespace", "test"
+	user, err := db.CreateNamespaceUser("test-user-id", &namespace, &login)
+	assert.NoError(t, err)
+
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	assert.NoError(t, err)
+
+	caps := []types.Capability{
+		{
+			Name:      "cap1",
+			Namespace: "test-namespace",
+		},
+	}
+
+	node := &types.Node{
+		MachineKey:     key.NewMachine().Public(),
+		NodeKey:        key.NewNode().Public(),
+		Hostname:       "test",
+		UserID:         user.ID,
+		RegisterMethod: util.RegisterMethodAuthKey,
+		AuthKeyID:      ptr.To(pak.ID),
+		Capabilities:   caps,
+	}
+
+	checkCaps := func(node *types.Node) {
+		num := len(node.Capabilities)
+		t.Logf("cap num=%v", num)
+		nodes, err := db.ListNodes()
+		assert.NoError(t, err)
+		if assert.Len(t, nodes, 1) {
+			if assert.Len(t, nodes[0].Capabilities, num) {
+				c0, c1 := node.Capabilities[num-1], nodes[0].Capabilities[num-1]
+				t.Logf("node caps=%v", node.ProtoCapabilities())
+				t.Logf("cap: in=%v/%v db=%v/%v", c0.ID, c0.Name, c1.ID, c1.Name)
+				assert.Equal(t, c0.Name, c1.Name)
+				assert.Equal(t, c0.Namespace, c1.Namespace)
+			}
+		}
+	}
+	err = db.DB.Create(node).Error
+	if assert.NoError(t, err) {
+		checkCaps(node)
+	}
+
+	caps = append(caps, types.Capability{
+		Name:      "cap2",
+		Namespace: namespace,
+	})
+
+	// Update routes only.
+	update := types.Node{
+		ID:           node.ID,
+		Capabilities: []types.Capability{caps[1]},
+	}
+
+	err = db.UpdateNode(node.ID, &update)
+	if assert.NoError(t, err) {
+		checkCaps(&update)
+	}
+
+	// Update with other fields being non-empty.
+	node.Capabilities = caps
+	err = db.UpdateNode(node.ID, node)
+	if assert.NoError(t, err) {
+		checkCaps(node)
+	}
+}
+
+// __END_CYLONIX_MOD__

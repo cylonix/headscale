@@ -49,6 +49,7 @@ func ListPeers(tx *gorm.DB, nodeID types.NodeID) (types.Nodes, error) {
 		Preload("AuthKey.User").
 		Preload("User").
 		Preload("Routes").
+		Preload("Capabilities"). // __CYLONIX_MOD__
 		Where("id <> ?",
 			nodeID).Find(&nodes).Error; err != nil {
 		return types.Nodes{}, err
@@ -101,12 +102,14 @@ func listNodes(tx *gorm.DB) ([]*types.Node, error) {
 		Preload("AuthKey.User").
 		Preload("User").
 		Preload("Routes").
+		Preload("Capabilities").
 		Find(&nodes).Error; err != nil {
 		return nil, err
 	}
 
 	return nodes, nil
 }
+
 // __END_CYLONIX_MOD__
 
 func (hsdb *HSDatabase) ListEphemeralNodes() (types.Nodes, error) {
@@ -903,3 +906,84 @@ func (e *EphemeralGarbageCollector) Start() {
 		}
 	}
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (hsdb *HSDatabase) UpdateNode(id types.NodeID, update *types.Node) error {
+	tx := hsdb.DB.Begin()
+	defer tx.Rollback()
+	if err := update.BeforeSave(tx); err != nil {
+		return fmt.Errorf("failed to prepare node before update: %w", err)
+	}
+
+	m := &types.Node{ID: id}
+	update.ID = id
+	tx = tx.Session(&gorm.Session{FullSaveAssociations: true})
+
+	// Delete current associated routes if the 'Routes' field is not 'nil'.
+	// Note for updates that do not intend to delete all the routes,
+	// 'update.Routes' must be 'nil' instead of '[]'.
+	if update.Routes != nil {
+		if err := tx.Model(m).Association("Routes").Clear(); err != nil {
+			return err
+		}
+	}
+	// Delete current associated capabilities if the 'Capabilities' field is
+	// not 'nil'. Note for updates that do not intend to delete all the
+	// capabilities, 'update.Capabilities' must be 'nil' instead of '[]'.
+	if update.Capabilities != nil {
+		// ID fields need to be pre-populated for existing caps.
+		if err := tx.Model(m).Association("Capabilities").Clear(); err != nil {
+			return err
+		}
+		if err := addCapabilityIDs(tx, update.Capabilities); err != nil {
+			return nil
+		}
+	}
+
+	if err := tx.Updates(update).Error; err != nil {
+		return err
+	}
+	return tx.Commit().Error
+}
+
+// To update capabilities, we need to make sure the ID field is pre-populated.
+// Otherwise associations will fail as it only checks conflict on
+// the id field with sql of: "...ON CONFLICT (`id`) DO UPDATE SET..."
+func addCapabilityIDs(tx *gorm.DB, caps []types.Capability) error {
+	if len(caps) <= 0 {
+		return nil
+	}
+
+	capsNeedID := types.SliceFind(caps, func(c types.Capability) bool {
+		return c.ID == 0
+	})
+	if len(capsNeedID) <= 0 {
+		return nil
+	}
+	namespace := caps[0].Namespace
+	capNames, _ := types.SliceMap(capsNeedID, func(c types.Capability) (string, error) {
+		return c.Name, nil
+	})
+	var capsWithID []types.Capability
+	if err := tx.
+		Model(&types.Capability{}).
+		Where("namespace = ? and name in ?", namespace, capNames).
+		Find(&capsWithID).
+		Error; err != nil {
+		return err
+	}
+	if len(capsWithID) <= 0 {
+		return nil
+	}
+	for i := range caps {
+		c := &caps[i]
+		for _, v := range capsWithID {
+			if v.Name == c.Name {
+				c.ID = v.ID
+			}
+		}
+	}
+	return nil
+}
+
+// __END_CYLONIX_MOD__

@@ -49,12 +49,15 @@ message Node {
     string          given_name   = 21;
     bool            online       = 22;
 
-    optional bool wireguard_only = 23; // __CYLONIX_MOD__
-    optional string stable_id    = 24; // __CYLONIX_MOD__
-    string namespace             = 25; // __CYLONIX_MOD_
-    repeated string endpoints    = 26; // __CYLONIX_MOD__
-    repeated RouteSpec routes    = 27; // __CYLONIX_MOD__
-    optional uint32 cap_version  = 28; // __CYLONIX_MOD__
+    // __BEGIN_CYLONIX_MOD__
+    optional bool wireguard_only = 23;
+    optional string stable_id    = 24;
+    string namespace             = 25;
+    repeated string endpoints    = 26;
+    repeated RouteSpec routes    = 27;
+    optional uint32 cap_version  = 28;
+    repeated string capabilities = 29;
+    // __END_CYLONIX_MOD__
 }
 
 message RegisterNodeRequest {

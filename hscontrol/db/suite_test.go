@@ -57,6 +57,7 @@ func newTestDB() (*HSDatabase, error) {
 			Sqlite: types.SqliteConfig{
 				Path: tmpDir + "/headscale_test.db",
 			},
+			Debug: true, // __CYLONIX_MOD__
 		},
 		"",
 	)

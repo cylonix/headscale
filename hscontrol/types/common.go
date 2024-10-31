@@ -45,6 +45,15 @@ func (i IPPrefix) Value() (driver.Value, error) {
 	return prefixStr, nil
 }
 
+// __BEGIN_CYLONIX_MOD__
+func (i IPPrefix) String() string {
+	return netip.Prefix(i).String()
+}
+func (i IPPrefix) MarshalText() ([]byte, error) {
+	return netip.Prefix(i).MarshalText()
+}
+// __END_CYLONIX_MOD__
+
 type IPPrefixes []netip.Prefix
 
 func (i *IPPrefixes) Scan(destination interface{}) error {
