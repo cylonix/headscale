@@ -189,6 +189,10 @@ func (m *Mapper) fullMapResponse(
 		return nil, err
 	}
 
+	log.Info().Caller().
+		Int("peers-count", len(peers)).
+		Msg("Peers listed for full map response") // __CYLONIX_MOD__
+
 	err = m.appendPeerChanges( // __CYLONIX_MOD__
 		resp,
 		true, // full change
@@ -297,6 +301,11 @@ func (m *Mapper) PeerChangedResponse(
 			changedNodes = append(changedNodes, peer)
 		}
 	}
+
+	log.Info().Caller().
+		Int("peers-count", len(peers)).
+		Int("peers-changed", len(changedNodes)).
+		Msg("Peers listed") // __CYLONIX_MOD__
 
 	err = m.appendPeerChanges( // __CYLONIX_MOD__
 		&resp,
@@ -533,6 +542,11 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 	}
 
 	for _, peer := range peers {
+		// __BEGIN_CYLONIX_MOD__
+		if peer.IsWireguardOnly != nil && *peer.IsWireguardOnly {
+			continue
+		}
+		// __END_CYLONIX_MOD__
 		online := m.notif.IsLikelyConnected(peer.ID)
 		peer.IsOnline = &online
 	}
