@@ -832,6 +832,12 @@
             "format": "uint64"
           },
           {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "update.id",
             "in": "query",
             "required": false,
@@ -1120,6 +1126,26 @@
           {
             "name": "update.capabilities",
             "description": "__END_CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "addCapabilities",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "delCapabilities",
             "in": "query",
             "required": false,
             "type": "array",

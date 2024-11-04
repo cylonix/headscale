@@ -168,8 +168,11 @@ message CreateNodeResponse {
 }
 // ___BEGIN_CYLONIX_MOD__
 message UpdateNodeRequest {
-    uint64 node_id = 1;
-    Node   update  = 2;
+    uint64                   node_id = 1;
+    string                 namespace = 2;
+    Node                      update = 3;
+    repeated string add_capabilities = 4;
+    repeated string del_capabilities = 5;
 }
 message UpdateNodeResponse {
 }

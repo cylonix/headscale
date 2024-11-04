@@ -1214,15 +1214,23 @@ func (api headscaleV1APIServer) UpdateNode(
 	}
 
 	n := request.Update
-	logger := log.Error().Str("namespace", n.Namespace).Str("name", n.Name).
+	logger := log.Error().
+		Str("namespace", request.Namespace).
+		Str("name", n.Name).
 		Str("machine-key", n.MachineKey)
-	node, err := types.ParseProtoNode(n)
+	update, err := types.ParseProtoNode(n)
 	if err != nil {
 		logger.Err(err).Msg("Failed to parse node")
 		return nil, err
 	}
 
-	if err = api.h.db.UpdateNode(types.NodeID(request.NodeId), node); err != nil {
+	if err = api.h.db.UpdateNode(
+		types.NodeID(request.NodeId),
+		request.Namespace,
+		update,
+		request.AddCapabilities,
+		request.DelCapabilities,
+	); err != nil {
 		logger.Err(err).Msg("Failed to update node")
 		return nil, err
 	}

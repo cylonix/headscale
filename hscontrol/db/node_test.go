@@ -734,7 +734,8 @@ func TestUpdateNodeRoutes(t *testing.T) {
 		t.Fatalf("creating db: %s", err)
 	}
 
-	user, err := db.CreateUser("test")
+	namespace, login := "test-update-node-namespace", "test-update-node-login"
+	user, err := db.CreateNamespaceUser("test", &namespace, &login)
 	assert.NoError(t, err)
 
 	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
@@ -749,6 +750,7 @@ func TestUpdateNodeRoutes(t *testing.T) {
 	}
 
 	node := &types.Node{
+		Namespace:      namespace,
 		MachineKey:     key.NewMachine().Public(),
 		NodeKey:        key.NewNode().Public(),
 		Hostname:       "test",
@@ -789,14 +791,14 @@ func TestUpdateNodeRoutes(t *testing.T) {
 		Routes: []types.Route{routes[1]},
 	}
 
-	err = db.UpdateNode(node.ID, &update)
+	err = db.UpdateNode(node.ID, namespace, &update, nil, nil)
 	if assert.NoError(t, err) {
 		checkRoutes(&update)
 	}
 
 	// Update with other fields being non-empty.
 	node.Routes = routes
-	err = db.UpdateNode(node.ID, node)
+	err = db.UpdateNode(node.ID, namespace, node, nil, nil)
 	if assert.NoError(t, err) {
 		checkRoutes(node)
 	}
@@ -818,7 +820,7 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 	caps := []types.Capability{
 		{
 			Name:      "cap1",
-			Namespace: "test-namespace",
+			Namespace: namespace,
 		},
 	}
 
@@ -863,15 +865,34 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 		Capabilities: []types.Capability{caps[1]},
 	}
 
-	err = db.UpdateNode(node.ID, &update)
+	err = db.UpdateNode(node.ID, namespace, &update, nil, nil)
 	if assert.NoError(t, err) {
 		checkCaps(&update)
 	}
 
 	// Update with other fields being non-empty.
 	node.Capabilities = caps
-	err = db.UpdateNode(node.ID, node)
+	err = db.UpdateNode(node.ID, namespace, node, nil, nil)
 	if assert.NoError(t, err) {
+		checkCaps(node)
+	}
+
+	caps = append(caps, types.Capability{
+		Name:      "cap3",
+		Namespace: namespace,
+	})
+	node.Capabilities = caps
+	err = db.UpdateNode(node.ID, namespace, &types.Node{}, []string{"cap3"}, nil)
+	if assert.NoError(t, err) {
+		checkCaps(node)
+	}
+
+	err = db.UpdateNode(node.ID, namespace, &types.Node{}, nil, []string{"cap2"})
+	if assert.NoError(t, err) {
+		node.Capabilities = []types.Capability{
+			{Name: "cap1", Namespace: namespace},
+			{Name: "cap3", Namespace: namespace},
+		}
 		checkCaps(node)
 	}
 }

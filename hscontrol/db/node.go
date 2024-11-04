@@ -915,7 +915,13 @@ func (e *EphemeralGarbageCollector) Start() {
 }
 
 // __BEGIN_CYLONIX_MOD__
-func (hsdb *HSDatabase) UpdateNode(id types.NodeID, update *types.Node) error {
+func (hsdb *HSDatabase) UpdateNode(
+	id types.NodeID,
+	namespace string,
+	update *types.Node,
+	addCapabilities []string,
+	delCapabilities []string,
+) error {
 	tx := hsdb.DB.Begin()
 	defer tx.Rollback()
 	if err := update.BeforeSave(tx); err != nil {
@@ -937,13 +943,33 @@ func (hsdb *HSDatabase) UpdateNode(id types.NodeID, update *types.Node) error {
 	// Delete current associated capabilities if the 'Capabilities' field is
 	// not 'nil'. Note for updates that do not intend to delete all the
 	// capabilities, 'update.Capabilities' must be 'nil' instead of '[]'.
+	// Typically request should use the specific 'addCapabilities' and
+	// 'delCapabilities' parameters instead.
 	if update.Capabilities != nil {
 		// ID fields need to be pre-populated for existing caps.
 		if err := tx.Model(m).Association("Capabilities").Clear(); err != nil {
 			return err
 		}
 		if err := addCapabilityIDs(tx, update.Capabilities); err != nil {
-			return nil
+			return err
+		}
+	}
+	if len(addCapabilities) > 0 {
+		caps := types.ParseProtoCapabilities(namespace, addCapabilities)
+		if err := addCapabilityIDs(tx, caps); err != nil {
+			return err
+		}
+		if err := tx.Model(m).Association("Capabilities").Append(caps); err != nil {
+			return err
+		}
+	}
+	if len(delCapabilities) > 0 {
+		caps := types.ParseProtoCapabilities(namespace, delCapabilities)
+		if err := addCapabilityIDs(tx, caps); err != nil {
+			return err
+		}
+		if err := tx.Model(m).Association("Capabilities").Delete(caps); err != nil {
+			return err
 		}
 	}
 
