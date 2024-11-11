@@ -30,7 +30,10 @@ type NodeHandler interface {
 	Recover(key.MachinePublic, key.NodePublic) error
 
 	// Peers lists any peers additional to the requester's own nodes.
-	Peers(*Node) (Nodes, []NodeID, error)
+	// Implementations can return part of the peers in nodes with 'peerNodes'
+	// and/or just peer node IDs with 'peerNodeIDs', and optionally indicate
+	// the online ones through the 'onlinePeers' return value.
+	Peers(*Node) (peerNodes Nodes, peerNodeIDs []NodeID, onlinePeers []NodeID, err error)
 
 	// Profiles gets the user profiles base on the node slice.
 	Profiles([]*Node)([]tailcfg.UserProfile, error)

@@ -515,8 +515,8 @@ func (m *Mapper) baseWithConfigMapResponse(
 func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { // __CYLONIX_MOD__
 	// __BEGIN_CYLONIX_MOD__
 	if m.cfg.NodeHandler != nil {
-		var nodeIDs []types.NodeID
-		peers, nodeIDs, err = m.cfg.NodeHandler.Peers(node)
+		var nodeIDs, onlineIDs []types.NodeID
+		peers, nodeIDs, onlineIDs, err = m.cfg.NodeHandler.Peers(node)
 		if err != nil {
 			return nil, err
 		}
@@ -527,6 +527,16 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 			}
 			log.Debug().Int("peers", len(list)).
 				Msg("Peers-by-id listed by node handler")
+			if len(onlineIDs) > 0 {
+				for _, v := range list {
+					if v.IsOnline == nil || !*v.IsOnline {
+						if slices.Contains(onlineIDs, v.ID) {
+							online := true
+							v.IsOnline = &online
+						}
+					}
+				}
+			}
 			peers = append(peers, list...)
 		}
 		log.Debug().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
@@ -543,7 +553,9 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 
 	for _, peer := range peers {
 		// __BEGIN_CYLONIX_MOD__
-		if peer.IsWireguardOnly != nil && *peer.IsWireguardOnly {
+		if peer.IsOnline != nil && *peer.IsOnline &&
+			((peer.IsWireguardOnly != nil && *peer.IsWireguardOnly) ||
+				peer.DiscoKey.IsZero()) {
 			continue
 		}
 		// __END_CYLONIX_MOD__
