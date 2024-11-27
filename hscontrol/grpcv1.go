@@ -177,6 +177,7 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 		request.GetUser(),
 		request.GetReusable(),
 		request.GetEphemeral(),
+		request.GetKey(), // __CYLONIX_MOD__
 		&expiration,
 		request.AclTags,
 	)

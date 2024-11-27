@@ -25,7 +25,8 @@ message CreatePreAuthKeyRequest {
     bool                      ephemeral  = 3;
     google.protobuf.Timestamp expiration = 4;
     repeated string           acl_tags   = 5;
-    optional string           namespace  = 6; // __CYLONIX_MOD__
+    optional string           key        = 6; // __CYLONIX_MOD__
+    optional string           namespace  = 7; // __CYLONIX_MOD__
 }
 
 message CreatePreAuthKeyResponse {

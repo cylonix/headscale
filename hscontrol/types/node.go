@@ -306,6 +306,29 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 	return nil
 }
 
+// __BEGIN_CYLONIX_MOD__
+func (node *Node) PreloadUpdate(update *Node) {
+	if update.MachineKey.IsZero() {
+		update.MachineKey = node.MachineKey
+	}
+	if update.NodeKey.IsZero() {
+		update.NodeKey = node.NodeKey
+	}
+	if update.DiscoKey.IsZero() {
+		update.DiscoKey = node.DiscoKey
+	}
+	if update.Hostinfo == nil {
+		update.Hostinfo = node.Hostinfo
+	}
+	if update.IPv4 == nil {
+		update.IPv4 = node.IPv4
+	}
+	if update.IPv6 == nil {
+		update.IPv6 = node.IPv6
+	}
+}
+// __END_CYLONIX_MOD__
+
 // AfterFind is a hook that ensures that Node objects fields that
 // has a different type in the database is unwrapped and populated
 // correctly.

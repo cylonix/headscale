@@ -220,16 +220,26 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	ns.nodeKey = mapRequest.NodeKey
 
 	// __BEGIN_CYLONIX_MOD__
+	hostname := ""
+	if mapRequest.Hostinfo != nil {
+		hostname = mapRequest.Hostinfo.Hostname
+	}
 	var userID *uint
 	authKey := req.URL.Query().Get("auth-key")
-	pak, err, code := ns.headscale.validateRequestPreAuthKey(authKey)
+	pak, code, err := ns.headscale.validateRequestPreAuthKey(authKey)
 	if err != nil {
 		if code == http.StatusUnauthorized {
-			log.Info().Caller().Msg(err.Error())
+			log.Info().Caller().
+				Str("hostname", hostname).
+				Str("auth-key", authKey).
+				Msg(err.Error())
 			http.Error(writer, "Unauthorized", code)
 			return
 		}
-		log.Error().Caller().Err(err).Msg("Failed to validate pre-auth key.")
+		log.Error().Caller().Err(err).
+			Str("hostname", hostname).
+			Str("auth-key", authKey).
+			Msg("Failed to validate pre-auth key.")
 		http.Error(writer, "Internal error", code)
 		return
 	}
@@ -247,6 +257,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	if err != nil {
 		log.Error().
 			Str("handler", "NoisePollNetMap").
+			Str("hostname", hostname). // __CYLONIX_MOD__
 			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 			Msgf("Failed to fetch node from the database with node key: %s", mapRequest.NodeKey.String())
 
@@ -254,11 +265,11 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		msg := "Internal error"
 		if ns.headscale.cfg.NodeHandler != nil {
 			if err := ns.headscale.cfg.NodeHandler.Recover(ns.conn.Peer(), mapRequest.NodeKey); err != nil {
-				log.Error().
-					Str("error", err.Error()).
+				log.Error().Err(err).
 					Str("namespace", req.Header.Get("namespace")).
 					Str("machine-key", ns.conn.Peer().ShortString()).
 					Str("node-key", mapRequest.NodeKey.ShortString()).
+					Str("hostname", hostname).
 					Msg("Failed to recover.")
 			} else {
 				msg = "Machine needs approval"
@@ -268,6 +279,20 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		// __END_CYLONIX_MOD__
 		return
 	}
+
+	// __BEGIN_CYLONIX_MOD__
+	// Update auth-key in node if changed.
+	if node.AuthKeyID != nil && pak != nil && *node.AuthKeyID != pak.ID {
+		update := &types.Node{AuthKeyID: &pak.ID, AuthKey: pak}
+		if err := ns.headscale.db.UpdateNode(node.ID, node.Namespace, update, nil, nil); err != nil {
+			msg := "failed to update node auth key"
+			logNodeError(node, err, msg)
+			http.Error(writer, msg, http.StatusInternalServerError)
+			return
+		}
+		log.Debug().Str("node", node.Hostname).Msg("updated auth key")
+	}
+	// __END_CYLONIX_MOD__
 
 	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, node)
 	sess.tracef("a node sending a MapRequest with Noise protocol")

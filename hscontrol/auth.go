@@ -84,7 +84,7 @@ func (h *Headscale) handleRegister(
 	if regReq.Auth != nil {
 		authKey = regReq.Auth.AuthKey
 	}
-	pak, err, code := h.validateRequestPreAuthKey(authKey)
+	pak, code, err := h.validateRequestPreAuthKey(authKey)
 	if err != nil {
 		if code == http.StatusUnauthorized {
 			logInfo(err.Error())
@@ -188,7 +188,7 @@ func (h *Headscale) handleRegister(
 					Caller().
 					Str("func", "RegistrationHandler").
 					Str("node", node.Hostname).
-					Str("namesapce", node.Namespace). // __CYLONIX_MOD__
+					Str("namespace", node.Namespace). // __CYLONIX_MOD__
 					Str("user", node.User.Name).      // __CYLONIX_MOD__
 					Err(err).
 					Msg("Error saving machine key to database")
@@ -196,6 +196,20 @@ func (h *Headscale) handleRegister(
 				return
 			}
 		}
+
+		// __BEGIN_CYLONIX_MOD__
+		// Update auth-key in node if changed.
+		if node.AuthKeyID != nil && pak != nil && *node.AuthKeyID != pak.ID {
+			update := &types.Node{AuthKeyID: &pak.ID, AuthKey: pak}
+			if err := h.db.UpdateNode(node.ID, node.Namespace, update, nil, nil); err != nil {
+				msg := "failed to update node auth key"
+				logNodeError(node, err, msg)
+				http.Error(writer, msg, http.StatusInternalServerError)
+				return
+			}
+			log.Debug().Str("node", node.Hostname).Msg("updated auth key")
+		}
+		// __END_CYLONIX_MOD__
 
 		// If the NodeKey stored in headscale is the same as the key presented in a registration
 		// request, then we have a node that is either:
@@ -860,7 +874,7 @@ func logNodeError(node *types.Node, err error, msg string) {
 		Err(err).
 		Msg(msg)
 }
-func (h *Headscale) validateRequestPreAuthKey(authKey string) (pak *types.PreAuthKey, err error, code int) {
+func (h *Headscale) validateRequestPreAuthKey(authKey string) (pak *types.PreAuthKey, code int, err error) {
 	if !h.cfg.RequirePreAuth {
 		return
 	}

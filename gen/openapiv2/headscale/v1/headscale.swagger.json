@@ -2109,6 +2109,10 @@
             "type": "string"
           }
         },
+        "key": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
         "namespace": {
           "type": "string",
           "title": "__CYLONIX_MOD__"

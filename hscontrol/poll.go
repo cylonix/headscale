@@ -252,6 +252,8 @@ func (m *mapSession) serveLongPoll() {
 
 	m.infof("node has connected, mapSession: %p, chan: %p", m, m.ch)
 
+	keepAliveCount := 0 // __CYLONIX_MOD__
+
 	// Loop through updates and continuously send them to the
 	// client.
 	for {
@@ -390,6 +392,19 @@ func (m *mapSession) serveLongPoll() {
 				mapResponseLastSentSeconds.WithLabelValues("keepalive", m.node.ID.String()).Set(float64(time.Now().Unix()))
 			}
 			mapResponseSent.WithLabelValues("ok", "keepalive").Inc()
+
+			// __BEGIN_CYLONIX_MOD__
+			// Refresh token that authorized the node for every 20 success
+			// keep-alive sent or when the first keep alive is sent,
+			// roughly every 20 minutes.
+			if m.h.cfg.NodeHandler != nil && (keepAliveCount == 0 || keepAliveCount > 20) {
+				keepAliveCount = 0
+				if err := m.h.cfg.NodeHandler.RefreshToken(m.node); err != nil {
+					logNodeError(m.node, err, "failed to refresh token")
+				}
+			}
+			keepAliveCount += 1
+			// __END_CYLONIX_MOD__
 		}
 	}
 }

@@ -18,6 +18,9 @@ type NodeHandler interface {
 	// Update is invoked when a node is updated.
 	Update(*Node) (*Node, error)
 
+	// Refresh token refreshes the token that authorized the node.
+	RefreshToken(*Node) error
+
 	// RotateNodeKey is invoked when a node refresh its node key.
 	// This is more specific than Update as it needs to trigger more processing
 	// that any update that does not rotate the node key.

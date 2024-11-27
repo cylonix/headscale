@@ -31,7 +31,7 @@ func (s *Suite) TestGetRoutes(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "test_get_route_node")
@@ -75,7 +75,7 @@ func (s *Suite) TestGetEnableRoutes(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "test_enable_route_node")
@@ -149,7 +149,7 @@ func (s *Suite) TestIsUniquePrefix(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "test_enable_route_node")
@@ -230,7 +230,7 @@ func (s *Suite) TestDeleteRoutes(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "test_enable_route_node")

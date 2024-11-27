@@ -27,7 +27,7 @@ func (s *Suite) TestGetNode(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "testnode")
@@ -56,7 +56,7 @@ func (s *Suite) TestGetNodeByID(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.GetNodeByID(0)
@@ -85,7 +85,7 @@ func (s *Suite) TestGetNodeByAnyNodeKey(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.GetNodeByID(0)
@@ -141,7 +141,7 @@ func (s *Suite) TestListPeers(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.GetNodeByID(0)
@@ -187,7 +187,7 @@ func (s *Suite) TestGetACLFilteredPeers(c *check.C) {
 	for _, name := range []string{"test", "admin"} {
 		user, err := db.CreateUser(name)
 		c.Assert(err, check.IsNil)
-		pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+		pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 		c.Assert(err, check.IsNil)
 		stor = append(stor, base{user, pak})
 	}
@@ -275,7 +275,7 @@ func (s *Suite) TestExpireNode(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "testnode")
@@ -316,7 +316,7 @@ func (s *Suite) TestGenerateGivenName(c *check.C) {
 	user1, err := db.CreateUser("user-1")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user1.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user1.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("user-1", "testnode")
@@ -361,7 +361,7 @@ func (s *Suite) TestSetTags(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	_, err = db.getNode("test", "testnode")
@@ -550,7 +550,7 @@ func (s *Suite) TestAutoApproveRoutes(c *check.C) {
 	user, err := db.CreateUser("test")
 	c.Assert(err, check.IsNil)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	c.Assert(err, check.IsNil)
 
 	nodeKey := key.NewNode()
@@ -680,10 +680,10 @@ func TestListEphemeralNodes(t *testing.T) {
 	user, err := db.CreateUser("test")
 	assert.NoError(t, err)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	assert.NoError(t, err)
 
-	pakEph, err := db.CreatePreAuthKey(user.Name, false, true, nil, nil)
+	pakEph, err := db.CreatePreAuthKey(user.Name, false, true, "", nil, nil) // __CYLONIX_MOD__
 	assert.NoError(t, err)
 
 	node := types.Node{
@@ -738,7 +738,7 @@ func TestUpdateNodeRoutes(t *testing.T) {
 	user, err := db.CreateNamespaceUser("test", &namespace, &login)
 	assert.NoError(t, err)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	assert.NoError(t, err)
 
 	routes := []types.Route{
@@ -814,7 +814,7 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 	user, err := db.CreateNamespaceUser("test-user-id", &namespace, &login)
 	assert.NoError(t, err)
 
-	pak, err := db.CreatePreAuthKey(user.Name, false, false, nil, nil)
+	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", nil, nil) // __CYLONIX_MOD__
 	assert.NoError(t, err)
 
 	caps := []types.Capability{
@@ -834,7 +834,7 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 		Capabilities:   caps,
 	}
 
-	checkCaps := func(node *types.Node) {
+	checkCaps := func(node *types.Node, machineKey string) {
 		num := len(node.Capabilities)
 		t.Logf("cap num=%v", num)
 		nodes, err := db.ListNodes()
@@ -847,11 +847,12 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 				assert.Equal(t, c0.Name, c1.Name)
 				assert.Equal(t, c0.Namespace, c1.Namespace)
 			}
+			assert.Equal(t, machineKey, nodes[0].MachineKey.String())
 		}
 	}
 	err = db.DB.Create(node).Error
 	if assert.NoError(t, err) {
-		checkCaps(node)
+		checkCaps(node, node.MachineKey.String())
 	}
 
 	caps = append(caps, types.Capability{
@@ -867,14 +868,14 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 
 	err = db.UpdateNode(node.ID, namespace, &update, nil, nil)
 	if assert.NoError(t, err) {
-		checkCaps(&update)
+		checkCaps(&update, node.MachineKey.String())
 	}
 
 	// Update with other fields being non-empty.
 	node.Capabilities = caps
 	err = db.UpdateNode(node.ID, namespace, node, nil, nil)
 	if assert.NoError(t, err) {
-		checkCaps(node)
+		checkCaps(node, node.MachineKey.String())
 	}
 
 	caps = append(caps, types.Capability{
@@ -884,7 +885,7 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 	node.Capabilities = caps
 	err = db.UpdateNode(node.ID, namespace, &types.Node{}, []string{"cap3"}, nil)
 	if assert.NoError(t, err) {
-		checkCaps(node)
+		checkCaps(node, node.MachineKey.String())
 	}
 
 	err = db.UpdateNode(node.ID, namespace, &types.Node{}, nil, []string{"cap2"})
@@ -893,7 +894,7 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 			{Name: "cap1", Namespace: namespace},
 			{Name: "cap3", Namespace: namespace},
 		}
-		checkCaps(node)
+		checkCaps(node, node.MachineKey.String())
 	}
 }
 

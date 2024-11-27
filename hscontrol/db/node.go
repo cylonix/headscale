@@ -924,9 +924,13 @@ func (hsdb *HSDatabase) UpdateNode(
 ) error {
 	tx := hsdb.DB.Begin()
 	defer tx.Rollback()
-	if err := update.BeforeSave(tx); err != nil {
-		return fmt.Errorf("failed to prepare node before update: %w", err)
+
+	// Preload the 'BeforeSave()' hook changed fields.
+	node := &types.Node{}
+	if err := tx.Find(node, "id = ?", id).Error; err != nil {
+		return err
 	}
+	node.PreloadUpdate(update)
 
 	m := &types.Node{ID: id}
 	update.ID = id
