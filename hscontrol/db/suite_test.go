@@ -9,7 +9,7 @@ import (
 	"gopkg.in/check.v1"
 )
 
-func Test(t *testing.T) {
+func TestSuite(t *testing.T) { // __CYLONIX_MOD__
 	check.TestingT(t)
 }
 

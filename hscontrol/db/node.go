@@ -314,10 +314,9 @@ func DeleteExpiredNodeAuthKey(tx *gorm.DB,
 	if err := tx.
 		Model(&types.Node{}).
 		Where("id = ?", nodeID).
-		Select("AuthKeyID").
 		First(node).
 		Error; err != nil {
-		return err
+		return fmt.Errorf("failed to find node (id=%v) to delete expired auth key: %w", nodeID, err)
 	}
 	return DeleteNodePreAuthKey(tx, node)
 }
