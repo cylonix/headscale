@@ -591,6 +591,20 @@
             "type": "string"
           },
           {
+            "name": "node.preAuthKey.ipv4",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.ipv6",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "node.createdAt",
             "in": "query",
             "required": false,
@@ -1020,6 +1034,20 @@
           },
           {
             "name": "update.preAuthKey.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.ipv4",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.ipv6",
             "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
@@ -2116,6 +2144,14 @@
         "namespace": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
+        },
+        "ipv4": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "ipv6": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -2508,6 +2544,14 @@
           "title": "__CYLONIX_MOD_"
         },
         "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "ipv4": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "ipv6": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
         }

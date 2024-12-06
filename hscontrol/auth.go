@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -380,7 +381,7 @@ func (h *Headscale) handleAuthKey(
 		if h.cfg.NodeHandler != nil {
 			if err := h.cfg.NodeHandler.RotateNodeKey(node, nodeKey); err != nil {
 				logNodeError(node, err, "failed to rotate node key")
-				writeInternalError(writer)
+				writeInternalError(writer, fmt.Errorf("failed to rotate node key: %w", err))
 				return
 			}
 		}
@@ -392,7 +393,7 @@ func (h *Headscale) handleAuthKey(
 		err := h.db.DB.Save(node).Error
 		if err != nil {
 			logNodeError(node, err, "failed to save node after logging in with auth key") // __CYLONIX_MOD__
-			writeInternalError(writer)                                                    // __CYLONIX_MOD__
+			writeInternalError(writer, fmt.Errorf("failed to save node: %w", err))        // __CYLONIX_MOD__
 			return
 		}
 
@@ -410,7 +411,7 @@ func (h *Headscale) handleAuthKey(
 					Err(err).
 					Msg("Failed to set tags after refreshing node")
 
-				writeInternalError(writer) // __CYLONIX_MOD__
+				writeInternalError(writer, fmt.Errorf("failed to set node tags: %w", err)) // __CYLONIX_MOD__
 				return
 			}
 		}
@@ -447,17 +448,43 @@ func (h *Headscale) handleAuthKey(
 			ForcedTags:     pak.Proto().GetAclTags(),
 		}
 
-		ipv4, ipv6, err := h.ipAlloc.NextFor(&pak.User, &machineKey) // __CYLONIX_MOD__
+		// __BEGIN_CYLONIX_MOD__
+		parseIP := func(s string) (*netip.Addr, error) {
+			if s == "" {
+				return nil, nil
+			}
+			addr, err := netip.ParseAddr(s)
+			if err != nil {
+				log.Error().Caller().Err(err).Str("ip", s).Msg("parse error")
+				writeInternalError(writer, fmt.Errorf("failed to parse ip '%v': %w", s, err))
+				return nil, err
+			}
+			return &addr, nil
+		}
+
+		wantIPv4, err := parseIP(pak.IPv4)
+		if err != nil {
+			return
+		}
+		wantIPv6, err := parseIP(pak.IPv6)
+		if err != nil {
+			return
+		}
+		// __END_CYLONIX_MOD__
+
+		ipv4, ipv6, err := h.ipAlloc.NextFor(&pak.User, &machineKey, wantIPv4, wantIPv6) // __CYLONIX_MOD__
 		if err != nil {
 			log.Error().
 				Caller().
 				Str("func", "RegistrationHandler").
 				Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
 				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+				Str("want-ip-v4", pak.IPv4). // __CYLONIX_MOD__
+				Str("want-ip-v6", pak.IPv6). // __CYLONIX_MOD__
 				Err(err).
 				Msg("failed to allocate IP	")
 
-			writeInternalError(writer) // __CYLONIX_MOD__
+			writeInternalError(writer, fmt.Errorf("failed to allocate ip: %w", err)) // __CYLONIX_MOD__
 			return
 		}
 
@@ -747,7 +774,7 @@ func (h *Headscale) handleNodeKeyRefresh(
 	if h.cfg.NodeHandler != nil {
 		if err := h.cfg.NodeHandler.RotateNodeKey(&node, registerRequest.NodeKey); err != nil {
 			logNodeError(&node, err, "failed to rotate node key")
-			writeInternalError(writer)
+			writeInternalError(writer, fmt.Errorf("failed to rotate node key: %w", err))
 			return
 		}
 	}
@@ -862,8 +889,8 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 }
 
 // __BEGIN_CYLONIX_MOD__
-func writeInternalError(writer http.ResponseWriter) {
-	http.Error(writer, "Internal server error", http.StatusInternalServerError)
+func writeInternalError(writer http.ResponseWriter, err error) {
+	http.Error(writer, "Internal server error: " + err.Error(), http.StatusInternalServerError)
 }
 func logNodeError(node *types.Node, err error, msg string) {
 	log.Error().

@@ -178,6 +178,8 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 		request.GetReusable(),
 		request.GetEphemeral(),
 		request.GetKey(), // __CYLONIX_MOD__
+		request.GetIpv4(), // __CYLONIX_MOD__
+		request.GetIpv6(), // __CYLONIX_MOD__
 		&expiration,
 		request.AclTags,
 	)
@@ -273,7 +275,7 @@ func (api headscaleV1APIServer) RegisterNode(
 		return nil, err
 	}
 
-	ipv4, ipv6, err := api.h.ipAlloc.NextFor(user, &mkey)
+	ipv4, ipv6, err := api.h.ipAlloc.NextFor(user, &mkey, nil, nil)
 	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, err

@@ -131,7 +131,7 @@ func NewIPAllocator(
 }
 
 // __BEGIN_CYLONIX_MOD__
-func (i *IPAllocator) NextFor(*types.User, *key.MachinePublic) (*netip.Addr, *netip.Addr, error) {
+func (i *IPAllocator) NextFor(*types.User, *key.MachinePublic, *netip.Addr, *netip.Addr) (*netip.Addr, *netip.Addr, error) {
 	return i.Next()
 }
 func (i *IPAllocator) NextV4(*types.User) (*netip.Addr, error) {

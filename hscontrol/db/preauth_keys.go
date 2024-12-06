@@ -25,12 +25,12 @@ func (hsdb *HSDatabase) CreatePreAuthKey(
 	userName string,
 	reusable bool,
 	ephemeral bool,
-	keyStr string, // __CYLONIX_MOD__
+	keyStr, ipv4, ipv6 string, // __CYLONIX_MOD__
 	expiration *time.Time,
 	aclTags []string,
 ) (*types.PreAuthKey, error) {
 	return Write(hsdb.DB, func(tx *gorm.DB) (*types.PreAuthKey, error) {
-		return CreatePreAuthKey(tx, userName, reusable, ephemeral, keyStr, expiration, aclTags) // __CYLONIX_MOD__
+		return CreatePreAuthKey(tx, userName, reusable, ephemeral, keyStr, ipv4, ipv6, expiration, aclTags) // __CYLONIX_MOD__
 	})
 }
 
@@ -40,7 +40,7 @@ func CreatePreAuthKey(
 	userName string,
 	reusable bool,
 	ephemeral bool,
-	keyStr string, // __CYLONIX_MOD__
+	keyStr, ipv4, ipv6 string, // __CYLONIX_MOD__
 	expiration *time.Time,
 	aclTags []string,
 ) (*types.PreAuthKey, error) {
@@ -78,6 +78,8 @@ func CreatePreAuthKey(
 		CreatedAt:  &now,
 		Expiration: expiration,
 		Namespace:  user.GetNamespace(), // __CYLONIX_MOD__
+		IPv4:       ipv4, // __CYLONIX_MOD__
+		IPv6:       ipv6, // __CYLONIX_MDO__
 	}
 
 	if err := tx.Save(&key).Error; err != nil {

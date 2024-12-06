@@ -24,9 +24,11 @@ type PreAuthKey struct {
 	Expiration *time.Time
 
 	Namespace string // __CYLONIX_MOD__
+	IPv4      string // __CYLONIX_MOD__ optional ipv4 address requested
+	IPv6      string // __CYLONIX_MOD__ optional ipv6 address requested
 }
 
-// PreAuthKeyACLTag describes an autmatic tag applied to a node when registered with the associated PreAuthKey.
+// PreAuthKeyACLTag describes an automatic tag applied to a node when registered with the associated PreAuthKey.
 type PreAuthKeyACLTag struct {
 	ID           uint64 `gorm:"primary_key"`
 	PreAuthKeyID uint64
@@ -43,8 +45,12 @@ func (key *PreAuthKey) Proto() *v1.PreAuthKey {
 		Used:      key.Used,
 		AclTags:   make([]string, len(key.ACLTags)),
 
-		UserDetail: key.User.Proto(), // __CYLONIX_MOD__
-		Namespace:  key.Namespace,    // __CYLONIX_MOD__
+		// __BEGIN_CYLONIX_MOD__
+		UserDetail: key.User.Proto(),
+		Namespace:  key.Namespace,
+		Ipv4:       key.IPv4,
+		Ipv6:       key.IPv6,
+		// __END_CYLONIX_MOD__
 	}
 
 	if key.Expiration != nil {
