@@ -142,7 +142,7 @@ func (m *mapSession) beforeServeLongPoll() {
 }
 
 func (m *mapSession) afterServeLongPoll() {
-	if m.node.IsEphemeral() {
+	if m.node != nil && m.node.IsEphemeral() { // __CYLONIX_MOD__
 		m.h.ephemeralGC.Schedule(m.node.ID, m.h.cfg.EphemeralNodeInactivityTimeout)
 	}
 }
