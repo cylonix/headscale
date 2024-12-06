@@ -32,7 +32,7 @@ require (
 	github.com/spf13/viper v1.20.0-alpha.6
 	github.com/stretchr/testify v1.9.0
 	github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a
-	github.com/tailscale/tailsql v0.0.0-20240418235827-820559f382c1
+	github.com/tailscale/tailsql v0.0.0-20240819220832-7302ff05e363
 	github.com/tcnksm/go-latest v0.0.0-20170313132115-e3007ae9052e
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/crypto v0.26.0
@@ -62,20 +62,20 @@ require (
 	github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect
 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
-	github.com/aws/aws-sdk-go-v2 v1.24.1 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.26.6 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.16.16 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.14.11 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.2.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.5.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/ini v1.7.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.10.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.10.10 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.26.1 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.27.11 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.17.11 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.1 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.5 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.5 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.11.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.45.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.18.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.26.7 // indirect
-	github.com/aws/smithy-go v1.19.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.20.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.23.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.28.6 // indirect
+	github.com/aws/smithy-go v1.20.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.13.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -84,7 +84,7 @@ require (
 	github.com/containerd/console v1.0.4 // indirect
 	github.com/containerd/continuity v0.4.3 // indirect
 	github.com/coreos/go-iptables v0.7.1-0.20240112124308-65c67c9f46e6 // indirect
-	github.com/creachadair/mds v0.14.5 // indirect
+	github.com/creachadair/mds v0.14.7 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240123200102-b75a8a7d7eb0 // indirect
 	github.com/digitalocean/go-smbios v0.0.0-20180907143718-390a4f403a8e // indirect
 	github.com/docker/cli v27.2.0+incompatible // indirect
@@ -178,8 +178,8 @@ require (
 	github.com/tailscale/goupnp v1.0.1-0.20210804011211-c64d0f06ea05 // indirect
 	github.com/tailscale/netlink v1.1.1-0.20211101221916-cabfb018fe85 // indirect
 	github.com/tailscale/peercred v0.0.0-20240214030740-b535050b2aa4 // indirect
-	github.com/tailscale/setec v0.0.0-20240314234648-9da8e7407257 // indirect
-	github.com/tailscale/squibble v0.0.0-20240418235321-9ee0eeb78185 // indirect
+	github.com/tailscale/setec v0.0.0-20240729215356-5eb656b60dfe // indirect
+	github.com/tailscale/squibble v0.0.0-20240601210838-24fce2c81b7f // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20240226180453-5db17b287bf1 // indirect
 	github.com/tailscale/wireguard-go v0.0.0-20240731203015-71393c576b98 // indirect
 	github.com/tcnksm/go-httpstat v0.2.0 // indirect
