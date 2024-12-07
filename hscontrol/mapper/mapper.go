@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aws/smithy-go/ptr"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/notifier"
@@ -191,6 +192,9 @@ func (m *Mapper) fullMapResponse(
 
 	log.Info().Caller().
 		Int("peers-count", len(peers)).
+		Str("namespace", node.Namespace). // __CYLONIX_MOD__
+		Str("user", ptr.ToString(node.User.LoginName)). // __CYLONIX_MOD__
+		Str("node", node.Hostname). // __CYLONIX_MOD__
 		Msg("Peers listed for full map response") // __CYLONIX_MOD__
 
 	err = m.appendPeerChanges( // __CYLONIX_MOD__
@@ -600,7 +604,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	}
 
 	// If there are filter rules present, see if there are any nodes that cannot
-	// access eachother at all and remove them from the peers.
+	// access each other at all and remove them from the peers.
 	if len(packetFilter) > 0 {
 		changed = policy.FilterNodesByACL(node, changed, packetFilter)
 	}
@@ -613,7 +617,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 		nodes = append(nodes, changed...)
 		profiles, err = m.cfg.NodeHandler.Profiles(nodes)
 		if err != nil {
-			return nil
+			return err
 		}
 	}
 	// __END_CYLONIX_MOD__
@@ -640,6 +644,15 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	} else {
 		resp.PeersChanged = tailPeers
 	}
+	// __BEGIN_CYLONIX_MOD__
+	log.Info().Caller().
+		Str("namespace", node.Namespace).
+		Str("user", ptr.ToString(node.User.LoginName)).
+		Str("node", node.Hostname).
+		Int("tail-peers-count", len(tailPeers)).
+		Msg("mapper")
+	// __END_CYLONIX_MOD__
+
 	resp.DNSConfig = dnsConfig
 	resp.UserProfiles = profiles
 	resp.SSHPolicy = sshPolicy

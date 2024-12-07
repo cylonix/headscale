@@ -723,6 +723,9 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 		user := &types.User{}
 		err := rx.Model(&types.User{}).First(user, "name = ?", username).Error
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, 0, nil
+			}
 			return nil, 0, err
 		}
 		rx = rx.Model(model)

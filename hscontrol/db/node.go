@@ -168,13 +168,16 @@ func (hsdb *HSDatabase) GetNodeByID(id types.NodeID) (*types.Node, error) {
 // GetNodeByID finds a Node by ID and returns the Node struct.
 func GetNodeByID(tx *gorm.DB, id types.NodeID) (*types.Node, error) {
 	mach := types.Node{}
-	if result := tx.
+	if err := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
 		Preload("Routes").
-		Find(&types.Node{ID: id}).First(&mach); result.Error != nil {
-		return nil, result.Error
+		Find(&types.Node{ID: id}).First(&mach).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			err = ErrNodeNotFound
+		}
+		return nil, err
 	}
 
 	return &mach, nil

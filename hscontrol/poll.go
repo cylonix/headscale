@@ -284,7 +284,7 @@ func (m *mapSession) serveLongPoll() {
 			var lastMessage string
 
 			// Ensure the node object is updated, for example, there
-			// might have been a hostinfo update in a sidechannel
+			// might have been a hostinfo update in a side channel
 			// which contains data needed to generate a map response.
 			m.node, err = m.h.db.GetNodeByID(m.node.ID)
 			if err != nil {
