@@ -29,12 +29,12 @@ func GetRoutes(tx *gorm.DB) (types.Routes, error) {
 	return routes, nil
 }
 
-func getAdvertisedAndEnabledRoutes(tx *gorm.DB) (types.Routes, error) {
+func getAdvertisedAndEnabledRoutes(tx *gorm.DB, namespace string) (types.Routes, error) { // __CYLONIX_MOD__
 	var routes types.Routes
 	err := tx.
 		Preload("Node").
 		Preload("Node.User").
-		Where("advertised = ? AND enabled = ?", true, true).
+		Where("namespace = ? AND advertised = ? AND enabled = ?", namespace, true, true). // __CYLONIX_MOD__
 		Find(&routes).Error
 	if err != nil {
 		return nil, err
@@ -43,12 +43,13 @@ func getAdvertisedAndEnabledRoutes(tx *gorm.DB) (types.Routes, error) {
 	return routes, nil
 }
 
-func getRoutesByPrefix(tx *gorm.DB, pref netip.Prefix) (types.Routes, error) {
+func getRoutesByPrefix(tx *gorm.DB, namespace string, pref netip.Prefix) (types.Routes, error) { // __CYLONIX_MOD__
 	var routes types.Routes
 	err := tx.
+		Debug().
 		Preload("Node").
 		Preload("Node.User").
-		Where("prefix = ?", types.IPPrefix(pref)).
+		Where("namespace = ? AND prefix = ?", namespace, types.IPPrefix(pref)). // __CYLONIX_MOD__
 		Find(&routes).Error
 	if err != nil {
 		return nil, err
@@ -284,19 +285,20 @@ func deleteNodeRoutes(tx *gorm.DB, node *types.Node, isLikelyConnected *xsync.Ma
 func isUniquePrefix(tx *gorm.DB, route types.Route) bool {
 	var count int64
 	tx.Model(&types.Route{}).
-		Where("prefix = ? AND node_id != ? AND advertised = ? AND enabled = ?",
+		Where("namespace = ? AND prefix = ? AND node_id != ? AND advertised = ? AND enabled = ?", // __CYLONIX_MOD__
 			route.Prefix,
 			route.NodeID,
+			route.Namespace, // __CYLONIX_MOD__
 			true, true).Count(&count)
 
 	return count == 0
 }
 
-func getPrimaryRoute(tx *gorm.DB, prefix netip.Prefix) (*types.Route, error) {
+func getPrimaryRoute(tx *gorm.DB, namespace string, prefix netip.Prefix) (*types.Route, error) { // __CYLONIX_MOD__
 	var route types.Route
 	err := tx.
 		Preload("Node").
-		Where("prefix = ? AND advertised = ? AND enabled = ? AND is_primary = ?", types.IPPrefix(prefix), true, true, true).
+		Where("namespace = ? AND prefix = ? AND advertised = ? AND enabled = ? AND is_primary = ?", namespace, types.IPPrefix(prefix), true, true, true). // __CYLONIX_MOD__
 		First(&route).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -405,10 +407,10 @@ func SaveNodeRoutes(tx *gorm.DB, node *types.Node) (bool, error) {
 	return sendUpdate, nil
 }
 
-// FailoverNodeRoutesIfNeccessary takes a node and checks if the node's route
+// FailoverNodeRoutesIfNecessary takes a node and checks if the node's route
 // need to be failed over to another host.
 // If needed, the failover will be attempted.
-func FailoverNodeRoutesIfNeccessary(
+func FailoverNodeRoutesIfNecessary(
 	tx *gorm.DB,
 	isLikelyConnected *xsync.MapOf[types.NodeID, bool],
 	node *types.Node,
@@ -422,7 +424,7 @@ func FailoverNodeRoutesIfNeccessary(
 
 nodeRouteLoop:
 	for _, nodeRoute := range nodeRoutes {
-		routes, err := getRoutesByPrefix(tx, netip.Prefix(nodeRoute.Prefix))
+		routes, err := getRoutesByPrefix(tx, node.Namespace, netip.Prefix(nodeRoute.Prefix)) // __CYLONIX_MOD__
 		if err != nil {
 			return nil, fmt.Errorf("getting routes by prefix: %w", err)
 		}
@@ -461,7 +463,7 @@ nodeRouteLoop:
 		return &types.StateUpdate{
 			Type:        types.StatePeerChanged,
 			ChangeNodes: chng,
-			Message:     "called from db.FailoverNodeRoutesIfNeccessary",
+			Message:     "called from db.FailoverNodeRoutesIfNecessary",
 		}, nil
 	}
 
@@ -496,7 +498,7 @@ func failoverRouteTx(
 		return nil, nil
 	}
 
-	routes, err := getRoutesByPrefix(tx, netip.Prefix(r.Prefix))
+	routes, err := getRoutesByPrefix(tx, r.Namespace, netip.Prefix(r.Prefix)) // __CYLONIX_MOD__
 	if err != nil {
 		return nil, fmt.Errorf("getting routes by prefix: %w", err)
 	}

@@ -17,21 +17,29 @@ var (
 type Route struct {
 	gorm.Model
 
-	NodeID uint64
+	NodeID uint64 `gorm:"uniqueIndex:route_node_id_prefix"` // __CYLONIX_MOD__
 	Node   Node
 
 	// TODO(kradalby): change this custom type to netip.Prefix
-	Prefix IPPrefix
+	Prefix IPPrefix `gorm:"uniqueIndex:route_node_id_prefix"` // __CYLONIX_MOD__
 
 	Advertised bool
 	Enabled    bool
 	IsPrimary  bool
+
+	Namespace string // __CYLONIX_MOD__
 }
 
 type Routes []Route
 
 func (r *Route) String() string {
-	return fmt.Sprintf("%s:%s", r.Node.Hostname, netip.Prefix(r.Prefix).String())
+	// __BEGIN_CYLONIX_MOD__
+	deleted := ""
+	if r.DeletedAt.Valid {
+		deleted = ":deleted"
+	}
+	return fmt.Sprintf("%v:node%v:%s:%s%v", r.ID, r.NodeID, r.Node.Hostname, netip.Prefix(r.Prefix).String(), deleted)
+	// __END_CYLONIX_MOD__
 }
 
 func (r *Route) IsExitRoute() bool {
@@ -90,6 +98,7 @@ func (rs Routes) Proto() []*v1.Route {
 			IsPrimary:  route.IsPrimary,
 			CreatedAt:  timestamppb.New(route.CreatedAt),
 			UpdatedAt:  timestamppb.New(route.UpdatedAt),
+			Namespace:  route.Namespace, // __CYLONIX_MOD__
 		}
 
 		if route.DeletedAt.Valid {

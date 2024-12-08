@@ -6,6 +6,7 @@ import (
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
@@ -95,6 +96,13 @@ func DestroyUser(tx *gorm.DB, name string) error {
 		return err
 	}
 	if len(nodes) > 0 {
+		// __BEGIN_CYLONIX_MOD__
+		nodeIDs, _ := types.SliceMap(nodes, func(n *types.Node) (types.NodeID, error){ return n.ID, nil})
+		if len(nodeIDs) > 10 {
+			nodeIDs = nodeIDs[:10]
+		}
+		log.Debug().Str("node-ids", fmt.Sprintf("%v", nodeIDs)).Msg("nodes of user")
+		// __END_CYLONIX_MOD__
 		return ErrUserStillHasNodes
 	}
 

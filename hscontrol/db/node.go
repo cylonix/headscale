@@ -942,7 +942,9 @@ func (hsdb *HSDatabase) UpdateNode(
 	// Note for updates that do not intend to delete all the routes,
 	// 'update.Routes' must be 'nil' instead of '[]'.
 	if update.Routes != nil {
-		if err := tx.Model(m).Association("Routes").Clear(); err != nil {
+		if err := tx.Model(&types.Route{}).Unscoped().
+			Delete(&types.Route{}, "node_id = ?", id).
+			Error; err != nil {
 			return err
 		}
 	}

@@ -764,13 +764,24 @@ func TestUpdateNodeRoutes(t *testing.T) {
 		num := len(node.Routes)
 		nodes, err := db.ListNodes()
 		assert.NoError(t, err)
-		if assert.Len(t, nodes, 1) {
-			if assert.Len(t, nodes[0].Routes, num) {
-				r0, r1 := node.Routes[num-1], nodes[0].Routes[num-1]
-				t.Logf("nodeID: in=%v db=%v", node.ID, r1.NodeID)
-				t.Logf("prefix: in=%v db=%v", r0.Prefix, r1.Prefix)
-				assert.Equal(t, uint(node.ID), uint(r1.NodeID))
-				assert.Equal(t, r0.Prefix.String(), r1.Prefix.String())
+		if !assert.Len(t, nodes, 1) {
+			return
+		}
+		if !assert.Len(t, nodes[0].Routes, num) {
+			return
+		}
+		for _, v := range node.Routes {
+			found := false
+			for _, v2 := range nodes[0].Routes {
+				if v.Prefix.String() == v2.Prefix.String() &&
+					v.NodeID == v2.NodeID {
+					found = true
+					break
+				}
+			}
+			if !assert.True(t, found) {
+				t.Logf("failed to find route %v", v.String())
+				return
 			}
 		}
 	}
@@ -794,6 +805,15 @@ func TestUpdateNodeRoutes(t *testing.T) {
 	err = db.UpdateNode(node.ID, namespace, &update, nil, nil)
 	if assert.NoError(t, err) {
 		checkRoutes(&update)
+	}
+
+	update.Routes = routes
+	err = db.UpdateNode(node.ID, namespace, &update, nil, nil)
+	if !assert.NoError(t, err) {
+		routes, _ := GetRoutes(db.DB)
+		for _, v := range routes {
+			t.Logf("route: %v", v.String())
+		}
 	}
 
 	// Update with other fields being non-empty.

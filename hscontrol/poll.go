@@ -411,7 +411,7 @@ func (m *mapSession) serveLongPoll() {
 
 func (m *mapSession) pollFailoverRoutes(where string, node *types.Node) {
 	update, err := db.Write(m.h.db.DB, func(tx *gorm.DB) (*types.StateUpdate, error) {
-		return db.FailoverNodeRoutesIfNeccessary(tx, m.h.nodeNotifier.LikelyConnectedMap(), node)
+		return db.FailoverNodeRoutesIfNecessary(tx, m.h.nodeNotifier.LikelyConnectedMap(), node)
 	})
 	if err != nil {
 		m.errf(err, fmt.Sprintf("failed to ensure failover routes, %s", where))

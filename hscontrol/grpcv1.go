@@ -389,6 +389,11 @@ func (api headscaleV1APIServer) DeleteNode(
 ) (*v1.DeleteNodeResponse, error) {
 	node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 	if err != nil {
+		// __BEGIN_CYLONIX_MOD__
+		if errors.Is(err, db.ErrNodeNotFound) {
+			return &v1.DeleteNodeResponse{}, nil
+		}
+		// __END_CYLONIX_MOD__
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__

@@ -734,7 +734,6 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		User:            user,
 		ForcedTags:      p.ForcedTags,
 		RegisterMethod:  nodeRegisterMethodFromV1Enum(p.RegisterMethod),
-		CreatedAt:       p.CreatedAt.AsTime(),
 		Namespace:       p.Namespace,
 		StableID:        p.StableId,
 		IsWireguardOnly: p.WireguardOnly,
