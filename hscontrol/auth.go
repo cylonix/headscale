@@ -375,6 +375,7 @@ func (h *Headscale) handleAuthKey(
 		node.NodeKey = nodeKey
 		if pak.ID != 0 {
 			node.AuthKeyID = ptr.To(pak.ID)
+			node.AuthKey = pak // __CYLONIX_MOD__
 		}
 
 		// __BEGIN_CYLONIX_MOD__
