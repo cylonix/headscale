@@ -492,6 +492,7 @@ func (h *Headscale) handleAuthKey(
 		pakID := uint(pak.ID)
 		if pakID != 0 {
 			nodeToRegister.AuthKeyID = ptr.To(pak.ID)
+			nodeToRegister.AuthKey = pak // __CYLONIX_MOD__
 		}
 		_, err = h.db.RegisterNode( // __CYLONIX_MOD__ golint
 			nodeToRegister,
