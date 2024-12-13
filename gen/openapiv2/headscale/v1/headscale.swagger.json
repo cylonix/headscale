@@ -1602,7 +1602,7 @@
             "type": "string"
           },
           {
-            "name": "nodeIdList",
+            "name": "idList",
             "in": "query",
             "required": false,
             "type": "array",

@@ -23,7 +23,7 @@ message Route {
 message GetRoutesRequest {
     // __BEGIN_CYLONIX_MOD__
     optional string user         = 1;
-    repeated uint64 node_id_list = 2;
+    repeated uint64 id_list      = 2;
     optional string namespace    = 3;
     optional string filter_by    = 4;
     optional string filter_value = 5;

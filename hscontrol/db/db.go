@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -718,7 +719,15 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 	idList []uint64, namespace *string, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool, page, pageSize int,
 ) ([]T, int64, error) {
+	var m interface{}
+	m = model
+	v := reflect.ValueOf(model)
+	if v.Kind() == reflect.Struct {
+		m = &model
+	}
+
 	var total int64
+
 	if username != "" {
 		user := &types.User{}
 		err := rx.Model(&types.User{}).First(user, "name = ?", username).Error
@@ -728,10 +737,10 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 			}
 			return nil, 0, err
 		}
-		rx = rx.Model(model)
+		rx = rx.Model(m)
 		rx = rx.Where("user_id = ?", user.ID)
 	} else {
-		rx = rx.Model(model)
+		rx = rx.Model(m)
 	}
 	if namespace != nil {
 		rx = rx.Where("namespace = ?", *namespace)

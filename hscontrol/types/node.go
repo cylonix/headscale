@@ -111,8 +111,8 @@ type Node struct {
 	// GivenName is the name used in all DNS related
 	// parts of headscale.
 	GivenName string `gorm:"type:varchar(63);unique_index"`
-	UserID    uint `gorm:"uniqueIndex:nodes_user_machine_key"`
-	User      User `gorm:"constraint:OnDelete:CASCADE;"`
+	UserID    uint   `gorm:"uniqueIndex:nodes_user_machine_key"`
+	User      User   `gorm:"constraint:OnDelete:CASCADE;"`
 
 	RegisterMethod string
 
@@ -303,6 +303,26 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 		node.IPv6DatabaseField.String, node.IPv6DatabaseField.Valid = "", false
 	}
 
+	// __BEGIN_CYLONIX_MOD__
+	namespace := node.Namespace
+	if namespace != "" {
+		for i := range node.Routes {
+			r := &node.Routes[i]
+			if r.Namespace != "" && r.Namespace != namespace {
+				return fmt.Errorf("namespace mismatch for route '%v': expected %v got %v", r.Prefix.String(), namespace, r.Namespace)
+			}
+			r.Namespace = namespace
+		}
+		for i := range node.Capabilities {
+			c := &node.Capabilities[i]
+			if c.Namespace != "" && c.Namespace != namespace {
+				return fmt.Errorf("namespace mismatch for capability '%v': expected %v got %v", c.Name, namespace, c.Namespace)
+			}
+			c.Namespace = namespace
+		}
+	}
+	// __END_CYLONIX_MOD__
+
 	return nil
 }
 
@@ -327,6 +347,7 @@ func (node *Node) PreloadUpdate(update *Node) {
 		update.IPv6 = node.IPv6
 	}
 }
+
 // __END_CYLONIX_MOD__
 
 // AfterFind is a hook that ensures that Node objects fields that

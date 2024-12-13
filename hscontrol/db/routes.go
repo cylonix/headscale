@@ -16,7 +16,7 @@ import (
 
 var ErrRouteIsNotAvailable = errors.New("route is not available")
 
-func GetRoutes(tx *gorm.DB) (types.Routes, error) {
+func GetRoutes(tx *gorm.DB) ([]types.Route, error) { // __CYLONIX_MOD__
 	var routes types.Routes
 	err := tx.
 		Preload("Node").
@@ -672,3 +672,27 @@ func EnableAutoApprovedRoutes(
 
 	return nil
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (hsdb *HSDatabase) ListRoutesWithOptions(
+	idList []uint64, namespace *string, username string,
+	filterBy, filterValue, sortBy string, sortDesc bool,
+	page, pageSize int,
+) (int, types.Routes, error) {
+	if username != "" {
+		return 0, nil, fmt.Errorf("username based filtering is not supported: username=%v", username)
+	}
+	var total int64
+	list, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Routes, error) {
+		v, count, err := ListWithOptions(
+			types.Route{}, rx, GetRoutes,
+			idList, namespace, username,
+			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
+		)
+		total = count
+		return types.Routes(v), err
+	})
+	return int(total), list, err
+}
+
+// __END_CYLONIX_MOD__

@@ -627,10 +627,18 @@ func (api headscaleV1APIServer) GetRoutes(
 	if err := api.auth(ctx, request); err != nil {
 		return nil, err
 	}
+	_, routes, err := api.h.db.ListRoutesWithOptions(
+		request.GetIdList(),
+		request.Namespace,
+		request.GetUser(),
+		request.GetFilterBy(),
+		request.GetFilterValue(),
+		request.GetSortBy(),
+		request.GetSortDesc(),
+		int(request.GetPage()),
+		int(request.GetPageSize()),
+	)
 	// __END_CYLONIX_MOD__
-	routes, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (types.Routes, error) {
-		return db.GetRoutes(rx)
-	})
 	if err != nil {
 		return nil, err
 	}
