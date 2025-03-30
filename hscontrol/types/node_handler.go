@@ -6,6 +6,9 @@ import (
 )
 
 type NodeHandler interface {
+	// AuthURL is used to get the auth URL for a node.
+	AuthURL(key.NodePublic) (string, error)
+
 	// PreAdd may alter the content in the Node before saving to the node DB.
 	PreAdd(*Node) (*Node, error)
 

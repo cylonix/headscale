@@ -612,6 +612,17 @@ func (h *Headscale) handleNewNode(
 			strings.TrimSuffix(h.cfg.ServerURL, "/"),
 			machineKey.String())
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if h.cfg.NodeHandler != nil {
+		url, err := h.cfg.NodeHandler.AuthURL(registerRequest.NodeKey)
+		if err != nil {
+			logErr(err, "Failed to get auth url")
+			http.Error(writer, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		resp.AuthURL = url
+	}
+	// __END_CYLONIX_MOD__
 
 	respBody, err := json.Marshal(resp)
 	if err != nil {
