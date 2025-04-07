@@ -120,6 +120,39 @@ func (h *Headscale) handleRegister(
 		// successful RegisterResponse.
 		if regReq.Followup != "" {
 			logTrace("register request is a followup")
+			// __BEGIN_CYLONIX_MOD__
+			if h.cfg.NodeHandler != nil {
+				userStableID, err := h.cfg.NodeHandler.AuthStatus(regReq.Followup)
+				if err != nil {
+					logErr(err, "Failed to get auth status")
+					return
+				}
+				if userStableID != "" {
+					logInfo("User logged in " + userStableID)
+					user, err := h.db.GetUser(userStableID)
+					if err != nil {
+						logErr(err, "Failed to get user")
+						return
+					}
+					expiry := time.Now().Add(time.Hour * 24 * 150)
+					if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
+						logErr(err, "Failed to register node after authorization")
+						return
+					}
+					logInfo("Node registered after authorization")
+					node, err = h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, key.NodePublic{})
+					if err != nil {
+						logErr(err, "Failed to get node after authorization")
+						return
+					}
+					h.handleNodeWithValidRegistration(writer, *node, machineKey)
+					return
+				}
+				logInfo("User not logged in yet url=" + regReq.Followup)
+				// Not yet approved. Force the client to wait.
+			}
+			// __END_CYLONIX_MOD__
+
 			if _, ok := h.registrationCache.Get(machineKey.String()); ok {
 				logTrace("Node is waiting for interactive login")
 
