@@ -99,7 +99,8 @@ func (h *Headscale) handleRegister(
 	if pak != nil {
 		userID = &pak.User.ID
 	}
-	node, err := h.db.GetNodeByAnyKey(userID, machineKey, regReq.NodeKey, regReq.OldNodeKey)
+	node, err := h.db.GetNodeByAnyKey(userID, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey)
+	logInfo("handleRegister database lookup has returned: err=" + err.Error())
 	// __END_CYLONIX_MOD__
 	logTrace("handleRegister database lookup has returned")
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -903,6 +904,20 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 			strings.TrimSuffix(h.cfg.ServerURL, "/"),
 			machineKey.String())
 	}
+	// __BEGIN_CYLONIX_MOD__
+	if h.cfg.NodeHandler != nil {
+		url, err := h.cfg.NodeHandler.AuthURL(regReq.NodeKey)
+		if err != nil {
+			log.Error().
+				Caller().
+				Err(err).
+				Msg("Failed to get auth url")
+			http.Error(writer, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		resp.AuthURL = url
+	}
+	// __END_CYLONIX_MOD__
 
 	respBody, err := json.Marshal(resp)
 	if err != nil {
