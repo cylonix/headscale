@@ -100,7 +100,7 @@ func (h *Headscale) handleRegister(
 		userID = &pak.User.ID
 	}
 	node, err := h.db.GetNodeByAnyKey(userID, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey)
-	logInfo("handleRegister database lookup has returned: err=" + err.Error())
+	logInfo(fmt.Sprintf("handleRegister database lookup has returned: err=%v", err))
 	// __END_CYLONIX_MOD__
 	logTrace("handleRegister database lookup has returned")
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -285,7 +285,7 @@ func (h *Headscale) handleRegister(
 
 		// When logged out and reauthenticating with OIDC, the OldNodeKey is not passed, but the NodeKey has changed
 		if node.NodeKey.String() != regReq.NodeKey.String() &&
-			regReq.OldNodeKey.IsZero() && !node.IsExpired() {
+			regReq.OldNodeKey.IsZero() && !node.IsExpired() && regReq.Followup == "" { // __CYLONIX_MOD__
 			h.handleNodeKeyRefresh(
 				writer,
 				regReq,
@@ -297,6 +297,39 @@ func (h *Headscale) handleRegister(
 		}
 
 		if regReq.Followup != "" {
+			// __BEGIN_CYLONIX_MOD__
+			if h.cfg.NodeHandler != nil {
+				userStableID, err := h.cfg.NodeHandler.AuthStatus(regReq.Followup)
+				if err != nil {
+					logErr(err, "Failed to get auth status")
+					return
+				}
+				if userStableID != "" {
+					logInfo("User logged in " + userStableID)
+					user, err := h.db.GetUser(userStableID)
+					if err != nil {
+						logErr(err, "Failed to get user")
+						return
+					}
+					expiry := time.Now().Add(time.Hour * 24 * 150)
+					if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
+						logErr(err, "Failed to register node after authorization")
+						return
+					}
+					logInfo("Node registered after authorization")
+					node, err = h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, key.NodePublic{})
+					if err != nil {
+						logErr(err, "Failed to get node after authorization")
+						return
+					}
+					h.handleNodeWithValidRegistration(writer, *node, machineKey)
+					return
+				}
+				logInfo("User not logged in yet url=" + regReq.Followup)
+				// Not yet approved. Force the client to wait.
+			}
+			// __END_CYLONIX_MOD__
+
 			select {
 			case <-req.Context().Done():
 				return
@@ -314,10 +347,20 @@ func (h *Headscale) handleRegister(
 		// we need to make sure the NodeKey matches the one in the request
 		// TODO(juan): What happens when using fast user switching between two
 		// headscale-managed tailnets?
-		node.NodeKey = regReq.NodeKey
+		// __BEGIN_CYLONIX_MOD__
+		//node.NodeKey = regReq.NodeKey
+		newNode := types.Node{
+			MachineKey: machineKey,
+			Hostname:   regReq.Hostinfo.Hostname,
+			Hostinfo:   regReq.Hostinfo,
+			NodeKey:    regReq.NodeKey,
+			LastSeen:   &now,
+			Expiry:     &time.Time{},
+		}
+		// __END_CYLONIX_MOD__
 		h.registrationCache.Set(
 			machineKey.String(),
-			*node,
+			newNode, // __CYLONIX_MOD__
 			registerCacheExpiration,
 		)
 
@@ -514,8 +557,8 @@ func (h *Headscale) handleAuthKey(
 				Str("func", "RegistrationHandler").
 				Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
 				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-				Str("want-ip-v4", pak.IPv4). // __CYLONIX_MOD__
-				Str("want-ip-v6", pak.IPv6). // __CYLONIX_MOD__
+				Str("want-ip-v4", pak.IPv4).                   // __CYLONIX_MOD__
+				Str("want-ip-v6", pak.IPv6).                   // __CYLONIX_MOD__
 				Err(err).
 				Msg("failed to allocate IP	")
 
@@ -951,7 +994,7 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 
 // __BEGIN_CYLONIX_MOD__
 func writeInternalError(writer http.ResponseWriter, err error) {
-	http.Error(writer, "Internal server error: " + err.Error(), http.StatusInternalServerError)
+	http.Error(writer, "Internal server error: "+err.Error(), http.StatusInternalServerError)
 }
 func logNodeError(node *types.Node, err error, msg string) {
 	log.Error().
