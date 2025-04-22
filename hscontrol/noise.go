@@ -81,7 +81,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 	)
 	if err != nil {
 		log.Error().Err(err).Msg("noise upgrade failed")
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		//http.Error(writer, err.Error(), http.StatusInternalServerError) // __CYLONIX_MOD__
 
 		return
 	}
@@ -224,7 +224,6 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	if mapRequest.Hostinfo != nil {
 		hostname = mapRequest.Hostinfo.Hostname
 	}
-	var userID *uint
 	authKey := req.URL.Query().Get("auth-key")
 	pak, code, err := ns.headscale.validateRequestPreAuthKey(authKey)
 	if err != nil {
@@ -243,13 +242,10 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		http.Error(writer, "Internal error", code)
 		return
 	}
-	if pak != nil {
-		userID = &pak.User.ID
-	}
 	// __END_CYLONIX_MOD__
 
 	node, err := ns.headscale.db.GetNodeByAnyKey(
-		userID, // __CYLONIX_MOD__
+		nil, // __CYLONIX_MOD__
 		ns.conn.Peer(),
 		mapRequest.NodeKey,
 		key.NodePublic{},

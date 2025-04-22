@@ -62,7 +62,7 @@ type Node struct {
 	// it is _only_ used for reading and writing the key to the
 	// database and should not be used.
 	// Use NodeKey instead.
-	NodeKeyDatabaseField string         `gorm:"column:node_key"`
+	NodeKeyDatabaseField string         `gorm:"column:node_key;unique"`
 	NodeKey              key.NodePublic `gorm:"-"`
 
 	// DiscoKeyDatabaseField is the string representation of DiscoKey
@@ -267,6 +267,15 @@ func (nodes Nodes) FilterByIP(ip netip.Addr) Nodes {
 	}
 
 	return found
+}
+
+// BeforeUpdate to make sure readonly fields are not updated
+func (node *Node) BeforeUpdate(tx *gorm.DB) error {
+	if tx.Statement.Changed("NodeKey") {
+		panic("node key not allowed to change")
+		//return errors.New("node key not allowed to change")
+	}
+	return nil
 }
 
 // BeforeSave is a hook that ensures that some values that

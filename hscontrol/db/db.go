@@ -440,6 +440,16 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				ID: "202504201700",
+				Migrate: func(tx *gorm.DB) error {
+					log.Info().Msg("Migrating database to add unique constraint to node key.")
+					return tx.AutoMigrate(
+						&types.Node{},
+					)
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 			// __END_CYLONIX_MOD__
 		},
 	)

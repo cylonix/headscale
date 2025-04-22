@@ -80,7 +80,6 @@ func (h *Headscale) handleRegister(
 	// Pre-auth key is always required for multi-tenancy support as we need to
 	// get the user information from it to look up the nodes base on user
 	// information.
-	var userID *uint
 	authKey := ""
 	if regReq.Auth != nil {
 		authKey = regReq.Auth.AuthKey
@@ -96,10 +95,7 @@ func (h *Headscale) handleRegister(
 		http.Error(writer, "Internal error", code)
 		return
 	}
-	if pak != nil {
-		userID = &pak.User.ID
-	}
-	node, err := h.db.GetNodeByAnyKey(userID, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey)
+	node, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey)
 	logInfo(fmt.Sprintf("handleRegister database lookup has returned: err=%v", err))
 	// __END_CYLONIX_MOD__
 	logTrace("handleRegister database lookup has returned")
@@ -197,6 +193,14 @@ func (h *Headscale) handleRegister(
 			logTrace("Non-zero expiry time requested")
 			newNode.Expiry = &regReq.Expiry
 		}
+
+		// __BEGIN_CYLONIX_MOD__
+		log.Info().
+			Caller().
+			Str("machine", machineKey.ShortString()).
+			Str("node", regReq.NodeKey.ShortString()).
+			Msg("Set registration cache for node")
+		// __END_CYLONIX_MOD__
 
 		h.registrationCache.Set(
 			machineKey.String(),
@@ -357,6 +361,11 @@ func (h *Headscale) handleRegister(
 			LastSeen:   &now,
 			Expiry:     &time.Time{},
 		}
+		log.Info().
+			Caller().
+			Str("machine", machineKey.ShortString()).
+			Str("node", regReq.NodeKey.ShortString()).
+			Msg("Set registration cache for node")
 		// __END_CYLONIX_MOD__
 		h.registrationCache.Set(
 			machineKey.String(),

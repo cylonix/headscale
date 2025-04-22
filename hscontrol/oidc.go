@@ -480,7 +480,13 @@ func (h *Headscale) validateNodeForOIDCCallback(
 	// The error is not important, because if it does not
 	// exist, then this is a new node and we will move
 	// on to registration.
-	node, _ := h.db.GetNodeByMachineKey(machineKey)
+	// __BEGIN_CYLONIX_MOD__
+	username, err := getUserName(writer, claims, h.cfg.OIDC.StripEmaildomain)
+	if err != nil {
+		return nil, false, err
+	}
+	node, _ := h.db.GetNodeByMachineKey(username, machineKey)
+	// __END_CYLONIX_MOD__
 
 	if node != nil {
 		log.Trace().

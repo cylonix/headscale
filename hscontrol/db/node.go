@@ -183,24 +183,34 @@ func GetNodeByID(tx *gorm.DB, id types.NodeID) (*types.Node, error) {
 	return &mach, nil
 }
 
-func (hsdb *HSDatabase) GetNodeByMachineKey(machineKey key.MachinePublic) (*types.Node, error) {
+// GetNodeByUserAndName finds a Node by its username and machineky.
+// We need to have the username since a machine can have multiple users.
+func (hsdb *HSDatabase) GetNodeByMachineKey(username string, machineKey key.MachinePublic) (*types.Node, error) { // __CYLONIX_MOD__
 	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
-		return GetNodeByMachineKey(rx, machineKey)
+		return GetNodeByMachineKey(rx, username, machineKey) // __CYLONIX_MOD__
 	})
 }
 
-// GetNodeByMachineKey finds a Node by its MachineKey and returns the Node struct.
+// GetNodeByUserAndName finds a Node by its username and machineky.
+// We need to have the username since a machine can have multiple users.
 func GetNodeByMachineKey(
 	tx *gorm.DB,
+	username string, // __CYLONIX_MOD__
 	machineKey key.MachinePublic,
 ) (*types.Node, error) {
+	// __BEGIN_CYLONIX_MOD__
+	user, err := GetUser(tx, username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find user '%v': %w", username, err)
+	}
+	// __END_CYLONIX_MOD__
 	mach := types.Node{}
 	if result := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
 		Preload("Routes").
-		First(&mach, "machine_key = ?", machineKey.String()); result.Error != nil {
+		First(&mach, "user_id = ? AND machine_key = ?", user.ID, machineKey.String()); result.Error != nil { // __CYLONIX_MOD__
 		return nil, result.Error
 	}
 
@@ -226,21 +236,31 @@ func GetNodeByAnyKey(
 	machineKey key.MachinePublic, nodeKey key.NodePublic, oldNodeKey key.NodePublic,
 ) (*types.Node, error) {
 	node := types.Node{}
-	// ___BEGIN_CYLONIX_MOD__
-	if userID != nil {
-		tx = tx.Model(&node).Where("user_id = ?", *userID)
-	}
-	// __END_CYLONIX_MOD__
-	if result := tx.
+	tx = tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes").
-		First(&node, "machine_key = ? OR node_key = ? OR node_key = ?",
-			machineKey.String(),
-			nodeKey.String(),
-			oldNodeKey.String()); result.Error != nil {
-		return nil, result.Error
+		Preload("Routes")
+
+	// ___BEGIN_CYLONIX_MOD__
+	where := "node_key = ? OR node_key = ?"
+	if userID != nil {
+		where = "(machine_key = ? AND user_id = ?) OR " + where
+		if result :=
+			tx.First(&node, where,
+				machineKey.String(),
+				*userID,
+				nodeKey.String(),
+				oldNodeKey.String()); result.Error != nil {
+			return nil, result.Error
+		}
+	} else {
+		if result :=
+			tx.First(&node, where,
+				nodeKey.String(),
+				oldNodeKey.String()); result.Error != nil {
+			return nil, result.Error
+		}
 	}
 
 	return &node, nil
@@ -442,6 +462,21 @@ func RegisterNodeFromAuthCallback(
 				return nil, ErrDifferentRegisteredUser
 			}
 
+			// __BEGIN_CYLONIX_MOD__
+			node, err := GetNodeByAnyKey(tx, &user.ID, mkey, registrationNode.NodeKey, key.NodePublic{})
+			if err == nil {
+				node.NodeKey = registrationNode.NodeKey
+				registrationNode.RegisterMethod = registrationMethod
+				if nodeExpiry != nil {
+					node.Expiry = nodeExpiry
+				}
+				if err := tx.Save(node).Error; err != nil {
+					return nil, fmt.Errorf("failed to update node key for %v of %v in the database: %w", node.Hostname, userName, err)
+				}
+				return node, nil
+			}
+			// __END_CYLONIX_MOD__
+
 			registrationNode.UserID = user.ID
 			registrationNode.User = *user
 			registrationNode.RegisterMethod = registrationMethod
@@ -450,7 +485,7 @@ func RegisterNodeFromAuthCallback(
 				registrationNode.Expiry = nodeExpiry
 			}
 
-			node, err := RegisterNode(
+			node, err = RegisterNode(
 				tx,
 				registrationNode,
 				ipv4, ipv6,
