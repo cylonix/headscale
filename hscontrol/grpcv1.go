@@ -1058,7 +1058,7 @@ func (api headscaleV1APIServer) DebugCreateNode(
 		return nil, err
 	}
 
-	givenName, err := api.h.db.GenerateGivenName(mkey, request.GetName())
+	givenName, err := api.h.db.GenerateGivenName(mkey, request.GetName(), "") // __CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
@@ -1203,7 +1203,7 @@ func (api headscaleV1APIServer) CreateNode(
 	}
 
 	if node.GivenName == "" {
-		givenName, err := api.h.db.GenerateGivenName(node.MachineKey, n.Name)
+		givenName, err := api.h.db.GenerateGivenName(node.MachineKey, n.Name, node.NetworkDomain) // __CYLONIX_MOD__
 		if err != nil {
 			logger.Err(err).Msg("Failed to generate given name")
 			return nil, err

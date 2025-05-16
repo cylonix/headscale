@@ -341,17 +341,17 @@ func (s *Suite) TestGenerateGivenName(c *check.C) {
 	trx := db.DB.Save(node)
 	c.Assert(trx.Error, check.IsNil)
 
-	givenName, err := db.GenerateGivenName(machineKey2.Public(), "hostname-2")
+	givenName, err := db.GenerateGivenName(machineKey2.Public(), "hostname-2", "")
 	comment := check.Commentf("Same user, unique nodes, unique hostnames, no conflict")
 	c.Assert(err, check.IsNil, comment)
 	c.Assert(givenName, check.Equals, "hostname-2", comment)
 
-	givenName, err = db.GenerateGivenName(machineKey.Public(), "hostname-1")
+	givenName, err = db.GenerateGivenName(machineKey.Public(), "hostname-1", "")
 	comment = check.Commentf("Same user, same node, same hostname, no conflict")
 	c.Assert(err, check.IsNil, comment)
 	c.Assert(givenName, check.Equals, "hostname-1", comment)
 
-	givenName, err = db.GenerateGivenName(machineKey2.Public(), "hostname-1")
+	givenName, err = db.GenerateGivenName(machineKey2.Public(), "hostname-1", "")
 	comment = check.Commentf("Same user, unique nodes, same hostname, conflict")
 	c.Assert(err, check.IsNil, comment)
 	c.Assert(givenName, check.Matches, fmt.Sprintf("^hostname-1-[a-z0-9]{%d}$", NodeGivenNameHashLength), comment)

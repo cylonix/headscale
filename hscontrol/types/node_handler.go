@@ -51,4 +51,5 @@ type NodeHandler interface {
 	User(*User) *tailcfg.User
 	UserLogin(*User) *tailcfg.Login
 	UserProfile(*User) *tailcfg.UserProfile
+	NetworkDomain(*User) ([]byte, error)
 }

@@ -441,9 +441,11 @@ func NewHeadscaleDatabase(
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
 			{
-				ID: "202504201700",
+				ID: "202505161000",
 				Migrate: func(tx *gorm.DB) error {
-					log.Info().Msg("Migrating database to add unique constraint to node key.")
+					log.Info().Msg(`
+						Migrating database to add NetworkDomain and update
+						GivenName unique index to Node.`)
 					return tx.AutoMigrate(
 						&types.Node{},
 					)

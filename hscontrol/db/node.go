@@ -123,14 +123,11 @@ func (hsdb *HSDatabase) ListEphemeralNodes() (types.Nodes, error) {
 	})
 }
 
-func listNodesByGivenName(tx *gorm.DB, givenName string) (types.Nodes, error) {
+func listNodesByGivenName(tx *gorm.DB, givenName, networkDomain string) (types.Nodes, error) { // __CYLONIX_MOD__
 	nodes := types.Nodes{}
 	if err := tx.
-		Preload("AuthKey").
-		Preload("AuthKey.User").
-		Preload("User").
-		Preload("Routes").
-		Where("given_name = ?", givenName).Find(&nodes).Error; err != nil {
+		Where("given_name = ? and network_domain = ?", givenName, networkDomain). // __CYLONIX_MOD__
+		Find(&nodes).Error; err != nil {
 		return nil, err
 	}
 
@@ -530,6 +527,20 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 			if _, err := nodeHandler.PreAdd(&node); err != nil {
 				return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 			}
+			// Regenerate the given name since we now have the node user information.
+			v, err := nodeHandler.NetworkDomain(&node.User)
+			if err != nil {
+				return nil, err
+			}
+			networkDomain := string(v)
+			givenName, err := GenerateGivenName(
+					tx, node.MachineKey, node.Hostinfo.Hostname, networkDomain,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate given name: %w", err)
+			}
+			node.GivenName = givenName
+			node.NetworkDomain = networkDomain
 		}
 		// __END_CYLONIX_MOD__
 		if err := tx.Save(&node).Error; err != nil {
@@ -803,9 +814,10 @@ func generateGivenName(suppliedName string, randomSuffix bool) (string, error) {
 func (hsdb *HSDatabase) GenerateGivenName(
 	mkey key.MachinePublic,
 	suppliedName string,
+	networkDomain string, // __CYLONIX_MOD__
 ) (string, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (string, error) {
-		return GenerateGivenName(rx, mkey, suppliedName)
+		return GenerateGivenName(rx, mkey, suppliedName, networkDomain) // __CYLONIX_MOD__
 	})
 }
 
@@ -813,6 +825,7 @@ func GenerateGivenName(
 	tx *gorm.DB,
 	mkey key.MachinePublic,
 	suppliedName string,
+	networkDomain string, // __CYLONIX_MOD__
 ) (string, error) {
 	givenName, err := generateGivenName(suppliedName, false)
 	if err != nil {
@@ -820,19 +833,25 @@ func GenerateGivenName(
 	}
 
 	// Tailscale rules (may differ) https://tailscale.com/kb/1098/machine-names/
-	nodes, err := listNodesByGivenName(tx, givenName)
-	if err != nil {
-		return "", err
-	}
-
-	var nodeFound *types.Node
-	for idx, node := range nodes {
-		if node.GivenName == givenName {
-			nodeFound = nodes[idx]
+	// __BEGIN_CYLONIX_MOD__
+	// Try with 1-32 before going with a random suffix.
+	// Check if we need to do binary search for the given name instead of
+	// checking one by one.
+	nodeFound := true
+	for i := 1; i <= 32; i++ {
+		nodes, err := listNodesByGivenName(tx, givenName, networkDomain) // __CYLONIX_MOD__
+		if err != nil {
+			return "", err
 		}
+		if len(nodes) <= 0 {
+			nodeFound = false
+			break
+		}
+		givenName = fmt.Sprintf("%s-%d", givenName, i)
 	}
+	// __END_CYLONIX_MOD__
 
-	if nodeFound != nil && nodeFound.MachineKey.String() != mkey.String() {
+	if nodeFound { // __CYLONIX_MOD__
 		postfixedName, err := generateGivenName(suppliedName, true)
 		if err != nil {
 			return "", err

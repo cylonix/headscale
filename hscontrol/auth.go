@@ -77,9 +77,6 @@ func (h *Headscale) handleRegister(
 	logTrace("handleRegister called, looking up machine in DB")
 
 	// __BEGIN_CYLONIX_MOD__
-	// Pre-auth key is always required for multi-tenancy support as we need to
-	// get the user information from it to look up the nodes base on user
-	// information.
 	authKey := ""
 	if regReq.Auth != nil {
 		authKey = regReq.Auth.AuthKey
@@ -169,6 +166,7 @@ func (h *Headscale) handleRegister(
 		givenName, err := h.db.GenerateGivenName(
 			machineKey,
 			regReq.Hostinfo.Hostname,
+			"", // __CYLONIX_MOD__
 		)
 		if err != nil {
 			logErr(err, "Failed to generate given name for node")
@@ -508,7 +506,26 @@ func (h *Headscale) handleAuthKey(
 	} else {
 		now := time.Now().UTC()
 
-		givenName, err := h.db.GenerateGivenName(machineKey, registerRequest.Hostinfo.Hostname)
+		// __BEGIN_CYLONIX_MOD__
+		networkDomain := ""
+		if h.cfg.NodeHandler != nil {
+			v, err := h.cfg.NodeHandler.NetworkDomain(&pak.User)
+			if err != nil {
+				log.Error().
+					Caller().
+					Str("func", "RegistrationHandler").
+					Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
+					Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+					Err(err).
+					Msg("Failed to get network domain")
+				writeInternalError(writer, fmt.Errorf("failed to get network domain: %w", err))
+				return
+			}
+			networkDomain = string(v)
+		}
+		// __END_CYLONIX_MOD__
+
+		givenName, err := h.db.GenerateGivenName(machineKey, registerRequest.Hostinfo.Hostname, networkDomain) // __CYLONIX_MOD__
 		if err != nil {
 			log.Error().
 				Caller().
@@ -524,6 +541,7 @@ func (h *Headscale) handleAuthKey(
 		nodeToRegister := types.Node{
 			Hostname:       registerRequest.Hostinfo.Hostname,
 			Hostinfo:       registerRequest.Hostinfo, // __CYLONIX_MOD__
+			NetworkDomain:  networkDomain,            // __CYLONIX_MOD__
 			GivenName:      givenName,
 			UserID:         pak.User.ID,
 			User:           pak.User,

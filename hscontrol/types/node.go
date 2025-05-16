@@ -110,7 +110,7 @@ type Node struct {
 	//
 	// GivenName is the name used in all DNS related
 	// parts of headscale.
-	GivenName string `gorm:"type:varchar(63);unique_index"`
+	GivenName string `gorm:"type:varchar(63);unique_index:nodes_network_domain_given_name"`
 	UserID    uint   `gorm:"uniqueIndex:nodes_user_machine_key"`
 	User      User   `gorm:"constraint:OnDelete:CASCADE;"`
 
@@ -137,6 +137,7 @@ type Node struct {
 	IsWireguardOnly *bool
 	StableID        *string
 	Namespace       string
+	NetworkDomain   string
 	CapVersion      *uint32
 	Capabilities    []Capability `gorm:"many2many:node_capabilities_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
 	// __END_CYLONIX_MOD__
@@ -497,6 +498,12 @@ func (node *Node) GetFQDN(cfg *Config, baseDomain string) (string, error) {
 			baseDomain,
 		)
 	}
+
+	// __BEGIN_CYLONIX_MOD__
+	if node.NetworkDomain != "" {
+		hostname = node.GivenName + "." + node.NetworkDomain
+	}
+	// __END_CYLONIX_MOD__
 
 	if len(hostname) > MaxHostnameLength {
 		return "", fmt.Errorf(
