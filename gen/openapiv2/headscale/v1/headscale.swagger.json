@@ -668,25 +668,28 @@
           },
           {
             "name": "node.wireguardOnly",
-            "description": "__BEGIN_CYLONIX_MOD__",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "boolean"
           },
           {
             "name": "node.stableId",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.namespace",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.endpoints",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -697,6 +700,7 @@
           },
           {
             "name": "node.capVersion",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "integer",
@@ -704,7 +708,7 @@
           },
           {
             "name": "node.capabilities",
-            "description": "__END_CYLONIX_MOD__",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -712,6 +716,13 @@
               "type": "string"
             },
             "collectionFormat": "multi"
+          },
+          {
+            "name": "node.networkDomain",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -1117,25 +1128,28 @@
           },
           {
             "name": "update.wireguardOnly",
-            "description": "__BEGIN_CYLONIX_MOD__",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "boolean"
           },
           {
             "name": "update.stableId",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "update.namespace",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "update.endpoints",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -1146,6 +1160,7 @@
           },
           {
             "name": "update.capVersion",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "integer",
@@ -1153,7 +1168,7 @@
           },
           {
             "name": "update.capabilities",
-            "description": "__END_CYLONIX_MOD__",
+            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -1161,6 +1176,13 @@
               "type": "string"
             },
             "collectionFormat": "multi"
+          },
+          {
+            "name": "update.networkDomain",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
           },
           {
             "name": "addCapabilities",
@@ -2470,37 +2492,46 @@
         },
         "wireguardOnly": {
           "type": "boolean",
-          "title": "__BEGIN_CYLONIX_MOD__"
+          "title": "__CYLONIX_MOD__"
         },
         "stableId": {
-          "type": "string"
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         },
         "namespace": {
-          "type": "string"
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         },
         "endpoints": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "title": "__CYLONIX_MOD__"
         },
         "routes": {
           "type": "array",
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1RouteSpec"
-          }
+          },
+          "title": "__CYLONIX_MOD__"
         },
         "capVersion": {
           "type": "integer",
-          "format": "int64"
+          "format": "int64",
+          "title": "__CYLONIX_MOD__"
         },
         "capabilities": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "title": "__END_CYLONIX_MOD__"
+          "title": "__CYLONIX_MOD__"
+        },
+        "networkDomain": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },

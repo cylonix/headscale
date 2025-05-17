@@ -523,24 +523,8 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	// adding it to the registrationCache
 	if node.IPv4 != nil || node.IPv6 != nil {
 		// __BEGIN_CYLONIX_MOD__
-		if nodeHandler != nil {
-			if _, err := nodeHandler.PreAdd(&node); err != nil {
-				return nil, fmt.Errorf("failed register existing node in the database: %w", err)
-			}
-			// Regenerate the given name since we now have the node user information.
-			v, err := nodeHandler.NetworkDomain(&node.User)
-			if err != nil {
-				return nil, err
-			}
-			networkDomain := string(v)
-			givenName, err := GenerateGivenName(
-					tx, node.MachineKey, node.Hostinfo.Hostname, networkDomain,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate given name: %w", err)
-			}
-			node.GivenName = givenName
-			node.NetworkDomain = networkDomain
+		if err := registerNodePreAdd(tx, &node, nodeHandler); err != nil {
+			return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 		}
 		// __END_CYLONIX_MOD__
 		if err := tx.Save(&node).Error; err != nil {
@@ -568,10 +552,8 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	node.IPv6 = ipv6
 
 	// __BEGIN_CYLONIX_MOD__
-	if nodeHandler != nil {
-		if _, err := nodeHandler.PreAdd(&node); err != nil {
-			return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
-		}
+	if err := registerNodePreAdd(tx, &node, nodeHandler); err != nil {
+		return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
 	}
 	node.Namespace = node.User.GetNamespace()
 	// __END_CYLONIX_MOD__
@@ -834,33 +816,43 @@ func GenerateGivenName(
 
 	// Tailscale rules (may differ) https://tailscale.com/kb/1098/machine-names/
 	// __BEGIN_CYLONIX_MOD__
-	// Try with 1-32 before going with a random suffix.
-	// Check if we need to do binary search for the given name instead of
-	// checking one by one.
-	nodeFound := true
-	for i := 1; i <= 32; i++ {
-		nodes, err := listNodesByGivenName(tx, givenName, networkDomain) // __CYLONIX_MOD__
+	// Try with 1-128 with binary search before going with a random suffix.
+	// First check if base name is available
+	nodes, err := listNodesByGivenName(tx, givenName, networkDomain)
+	if err != nil {
+		return "", err
+	}
+	if len(nodes) == 0 {
+		return givenName, nil
+	}
+
+	// Binary search to find first available index
+	left, right := 1, 128
+	for left <= right {
+		mid := (left + right) / 2
+		testName := fmt.Sprintf("%s-%d", givenName, mid)
+		nodes, err := listNodesByGivenName(tx, testName, networkDomain)
 		if err != nil {
 			return "", err
 		}
-		if len(nodes) <= 0 {
-			nodeFound = false
-			break
+
+		if len(nodes) == 0 {
+			// Found an available slot, try to find a lower one
+			right = mid - 1
+		} else {
+			// Slot taken, try higher numbers
+			left = mid + 1
 		}
-		givenName = fmt.Sprintf("%s-%d", givenName, i)
 	}
+
+	// left now contains the first available index
+	if left <= 128 {
+		return fmt.Sprintf("%s-%d", givenName, left), nil
+	}
+
+	// If all slots are taken, generate a random suffix
+	return generateGivenName(suppliedName, true)
 	// __END_CYLONIX_MOD__
-
-	if nodeFound { // __CYLONIX_MOD__
-		postfixedName, err := generateGivenName(suppliedName, true)
-		if err != nil {
-			return "", err
-		}
-
-		givenName = postfixedName
-	}
-
-	return givenName, nil
 }
 
 func ExpireExpiredNodes(tx *gorm.DB,
@@ -1078,6 +1070,38 @@ func addCapabilityIDs(tx *gorm.DB, caps []types.Capability) error {
 			}
 		}
 	}
+	return nil
+}
+
+func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHandler) error {
+	if nodeHandler == nil {
+		return nil
+	}
+	if _, err := nodeHandler.PreAdd(node); err != nil {
+		return fmt.Errorf("failed register existing node in the database: %w", err)
+	}
+	// Regenerate the given name since we now have the node user information.
+	v, err := nodeHandler.NetworkDomain(&node.User)
+	if err != nil {
+		return err
+	}
+	networkDomain := string(v)
+	givenName, err := GenerateGivenName(
+		tx, node.MachineKey, node.Hostinfo.Hostname, networkDomain,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to generate given name: %w", err)
+	}
+	log.Info().
+		Str("machine_key", node.MachineKey.ShortString()).
+		Str("node_key", node.NodeKey.ShortString()).
+		Str("user", node.User.Name).
+		Str("given_name", givenName).
+		Str("network_domain", networkDomain).
+		Msg("Generated given name for node")
+
+	node.GivenName = givenName
+	node.NetworkDomain = networkDomain
 	return nil
 }
 

@@ -453,6 +453,7 @@ func (node *Node) Proto() *v1.Node {
 		Routes:        node.ProtoRouteSpecs(),
 		Capabilities:  node.ProtoCapabilities(),
 		CapVersion:    node.CapVersion,
+		NetworkDomain: node.NetworkDomain,
 		// __END_CYLONIX_MOD__
 	}
 
@@ -778,6 +779,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		Routes:          routes,
 		CapVersion:      p.CapVersion,
 		Capabilities:    ParseProtoCapabilities(p.Namespace, p.Capabilities),
+		NetworkDomain:   p.NetworkDomain,
 	}
 
 	if p.PreAuthKey != nil {
