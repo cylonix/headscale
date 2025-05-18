@@ -13,6 +13,8 @@ import (
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
 	"github.com/juanfont/headscale/hscontrol/policy/matcher"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -272,10 +274,6 @@ func (nodes Nodes) FilterByIP(ip netip.Addr) Nodes {
 
 // BeforeUpdate to make sure readonly fields are not updated
 func (node *Node) BeforeUpdate(tx *gorm.DB) error {
-	if tx.Statement.Changed("NodeKey") {
-		panic("node key not allowed to change")
-		//return errors.New("node key not allowed to change")
-	}
 	return nil
 }
 
@@ -814,6 +812,38 @@ func nodeRegisterMethodFromV1Enum(m v1.RegisterMethod) string {
 	default:
 		return ""
 	}
+}
+
+func (node *Node) InfoLog() *zerolog.Event {
+	if node == nil {
+		return nil
+	}
+	return node.addLogFields(log.Info())
+}
+func (node *Node) ErrorLog(err error) *zerolog.Event {
+	if node == nil {
+		return nil
+	}
+	return node.addLogFields(log.Error().Err(err))
+}
+func (node *Node) DebugLog() *zerolog.Event {
+	if node == nil {
+		return nil
+	}
+	return node.addLogFields(log.Debug())
+}
+func (node *Node) addLogFields(event *zerolog.Event) *zerolog.Event {
+	if node == nil {
+		return event
+	}
+	return event.
+		Str("machine-key", node.MachineKey.ShortString()).
+		Str("node-key", node.NodeKey.ShortString()).
+		Str("node", node.Hostname).
+		Str("given-name", node.GivenName).
+		Str("network-domain", node.NetworkDomain).
+		Str("namespace", node.Namespace).
+		Str("user", node.User.Name)
 }
 
 // __END_CYLONIX_MOD__

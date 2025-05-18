@@ -467,6 +467,19 @@ func RegisterNodeFromAuthCallback(
 				if nodeExpiry != nil {
 					node.Expiry = nodeExpiry
 				}
+				if nodeHandler != nil {
+					networDomain, err := nodeHandler.NetworkDomain(&node.User)
+					if err != nil {
+						return nil, fmt.Errorf("failed to get network domain: %w", err)
+					}
+					if node.NetworkDomain != string(networDomain) {
+						node.NetworkDomain = string(networDomain)
+						node.InfoLog().
+							Str("old-network-domain", node.NetworkDomain).
+							Str("new-network-domain", string(networDomain)).
+							Msg("Updated network domain for node")
+					}
+				}
 				if err := tx.Save(node).Error; err != nil {
 					return nil, fmt.Errorf("failed to update node key for %v of %v in the database: %w", node.Hostname, userName, err)
 				}
@@ -1092,13 +1105,7 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 	if err != nil {
 		return fmt.Errorf("failed to generate given name: %w", err)
 	}
-	log.Info().
-		Str("machine_key", node.MachineKey.ShortString()).
-		Str("node_key", node.NodeKey.ShortString()).
-		Str("user", node.User.Name).
-		Str("given_name", givenName).
-		Str("network_domain", networkDomain).
-		Msg("Generated given name for node")
+	node.InfoLog().Msg("Generated given name for node")
 
 	node.GivenName = givenName
 	node.NetworkDomain = networkDomain

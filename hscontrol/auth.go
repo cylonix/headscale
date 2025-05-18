@@ -1024,13 +1024,7 @@ func writeInternalError(writer http.ResponseWriter, err error) {
 	http.Error(writer, "Internal server error: "+err.Error(), http.StatusInternalServerError)
 }
 func logNodeError(node *types.Node, err error, msg string) {
-	log.Error().
-		Str("machine-key", node.MachineKey.ShortString()).
-		Str("node", node.Hostname).
-		Str("namespace", node.Namespace).
-		Str("user", node.User.Name).
-		Err(err).
-		Msg(msg)
+	node.ErrorLog(err).Msg(msg)
 }
 func (h *Headscale) validateRequestPreAuthKey(authKey string) (pak *types.PreAuthKey, code int, err error) {
 	if !h.cfg.RequirePreAuth {
