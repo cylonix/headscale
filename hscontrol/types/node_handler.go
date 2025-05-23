@@ -7,7 +7,7 @@ import (
 
 type NodeHandler interface {
 	// AuthURL is used to get the auth URL for a node.
-	AuthURL(key.NodePublic) (string, error)
+	AuthURL(*Node) (string, error)
 
 	// AuthStatus is used to get the auth status for a node base on AuthURL
 	AuthStatus(authURL string) (string, error)

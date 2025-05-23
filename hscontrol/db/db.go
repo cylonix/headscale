@@ -452,6 +452,21 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				ID: "2025051201000",
+				Migrate: func(tx *gorm.DB) error {
+					log.Info().Msg(`
+						Migrating database to add Network for network domain.
+						`)
+					return tx.AutoMigrate(
+						&types.User{},
+						&types.APIKey{},
+						&types.Route{},
+						&types.Policy{},
+					)
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 			// __END_CYLONIX_MOD__
 		},
 	)
@@ -728,7 +743,7 @@ func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
 }
 func ListWithOptions[T any](model T, rx *gorm.DB,
 	listFunc func(*gorm.DB) ([]T, error),
-	idList []uint64, namespace *string, username string,
+	idList []uint64, namespace *string, networkField, network, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool, page, pageSize int,
 ) ([]T, int64, error) {
 	var m interface{}
@@ -754,6 +769,11 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 	} else {
 		rx = rx.Model(m)
 	}
+
+	if networkField != "" && network != "" {
+		rx = rx.Where(networkField+" = ?", network)
+	}
+
 	if namespace != nil {
 		rx = rx.Where("namespace = ?", *namespace)
 	}

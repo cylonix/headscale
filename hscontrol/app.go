@@ -91,7 +91,7 @@ type Headscale struct {
 	DERPMap    *tailcfg.DERPMap
 	DERPServer *derpServer.DERPServer
 
-	ACLPolicy *policy.ACLPolicy
+	aclPolicy *policy.ACLPolicy // __CYLONIX_MOD__
 
 	mapper       *mapper.Mapper
 	nodeNotifier *notifier.Notifier
@@ -808,7 +808,7 @@ func (h *Headscale) Serve() error {
 					log.Error().Err(err).Msg("failed to reload ACL policy")
 				}
 
-				if h.ACLPolicy != nil {
+				if h.aclPolicy != nil { // __CYLONIX_MOD__
 					log.Info().
 						Msg("ACL policy successfully reloaded, notifying nodes of change")
 
@@ -1074,7 +1074,7 @@ func (h *Headscale) loadACLPolicy() error {
 		}
 
 	case types.PolicyModeDB:
-		p, err := h.db.GetPolicy()
+		p, err := h.db.GetPolicy(nil, nil) // __CYLONIX_MOD__
 		if err != nil {
 			if errors.Is(err, types.ErrPolicyNotFound) {
 				return nil
@@ -1087,13 +1087,48 @@ func (h *Headscale) loadACLPolicy() error {
 		if err != nil {
 			return fmt.Errorf("failed to parse policy: %w", err)
 		}
+	case types.PolicyModeMulti:
+		// No global policy, no problem. This is for multi-tenancy
+		return nil
 	default:
 		log.Fatal().
 			Str("mode", string(h.cfg.Policy.Mode)).
 			Msg("Unknown ACL policy mode")
 	}
 
-	h.ACLPolicy = pol
+	h.aclPolicy = pol // __CYLONIX_MOD__
 
 	return nil
 }
+
+// __BEGIN_CYLONIX_MOD__
+// ACLPolicy returns the current ACL policy.
+// TODO: cache the result instead of parsing it every time.
+func (h *Headscale) ACLPolicy(namespace, network *string) (*policy.ACLPolicy, error) {
+	if h.cfg.Policy.Mode != types.PolicyModeMulti {
+		return h.aclPolicy, nil
+	}
+	if namespace == nil || *namespace == "" || network == nil || *network == "" {
+		return nil, fmt.Errorf("namespace and network must be set for multi-tenancy deployments")
+	}
+	data, err := h.db.GetPolicy(namespace, network)
+	if err != nil {
+		if errors.Is(err, types.ErrPolicyNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get policy from database: %w", err)
+	}
+	pol, err := policy.LoadACLPolicyFromBytes([]byte(data.Data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse policy: %w", err)
+	}
+	return pol, nil
+}
+func (h *Headscale) SetACLPolicy(policy *policy.ACLPolicy) error {
+	if h.cfg.Policy.Mode == types.PolicyModeDB {
+		return fmt.Errorf("cannot set global policy in 'none' mode")
+	}
+	h.aclPolicy = policy
+	return nil
+}
+// __END_CYLONIX_MOD__

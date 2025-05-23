@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -12,9 +14,10 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"tailscale.com/control/controlbase"
-	"tailscale.com/control/controlhttp"
+	"tailscale.com/control/controlhttp/controlhttpserver"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/types/logger"
 )
 
 const (
@@ -46,6 +49,12 @@ type noiseServer struct {
 	protocolVersion int
 }
 
+// __BEGIN_CYLONIX_MOD__
+var (
+	quietLogf = logger.RateLimitedFn(log.Printf, 5*time.Minute, 5, 100)
+)
+// __END_CYLONIX_MOD__
+
 // NoiseUpgradeHandler is to upgrade the connection and hijack the net.Conn
 // in order to use the Noise-based TS2021 protocol. Listens in /ts2021.
 func (h *Headscale) NoiseUpgradeHandler(
@@ -72,16 +81,29 @@ func (h *Headscale) NoiseUpgradeHandler(
 		challenge: key.NewChallenge(),
 	}
 
-	noiseConn, err := controlhttp.AcceptHTTP(
+	noiseConn, err := controlhttpserver.AcceptHTTP(
 		req.Context(),
 		writer,
 		req,
 		*h.noisePrivateKey,
 		noiseServer.earlyNoise,
 	)
+	myKey := h.noisePrivateKey.Public().ShortString()
 	if err != nil {
-		log.Error().Err(err).Msg("noise upgrade failed")
-		//http.Error(writer, err.Error(), http.StatusInternalServerError) // __CYLONIX_MOD__
+		// __BEGIN_CYLONIX_MOD__
+		// Supress the error due to misconfigurations of the deloyment without
+		// persistenting the server private key. Or we simply have a bad client.
+		// Don't let the log flood with this.
+		v, _ := json.Marshal(req.Header)
+		if strings.Contains(err.Error(), "noise handshake failed: decrypting machine key") {
+			quietLogf("Noise upgrade failed: %v. Header=%v myKey=%v", err, string(v), myKey)
+			return
+		}
+		log.Debug().Err(err).Str("request", string(v)).Msg("Noise upgrade failed")
+		// Eventhough noise upgrade failed, the HTTP connection has been
+		// hijacked already. Donot write to the writer.
+		//http.Error(writer, err.Error(), http.StatusInternalServerError)
+		// __END_CYLONIX_MOD__
 
 		return
 	}
@@ -89,6 +111,11 @@ func (h *Headscale) NoiseUpgradeHandler(
 	noiseServer.conn = noiseConn
 	noiseServer.machineKey = noiseServer.conn.Peer()
 	noiseServer.protocolVersion = noiseServer.conn.ProtocolVersion()
+
+	log.Debug().
+		Str("machine-key", noiseServer.machineKey.ShortString()).
+		Str("my-key", myKey).
+		Msg("Noise connection accepted")
 
 	// This router is served only over the Noise connection, and exposes only the new API.
 	//
@@ -121,7 +148,18 @@ func (h *Headscale) NoiseUpgradeHandler(
 	)
 }
 
-func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) error {
+func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) (err error) {
+	// __BEGIN_CYLONIX_MOD__
+	defer func() {
+		if err != nil {
+			log.Error().
+				Caller().
+				Err(err).
+				Int("protocol_version", protocolVersion).
+				Msg("failed in earlyNoise")
+		}
+	}()
+	// __END_CYLONIX_MOD__
 	log.Trace().
 		Caller().
 		Int("protocol_version", protocolVersion).

@@ -74,17 +74,26 @@ func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, e
 	})
 }
 func (hsdb *HSDatabase) ListNodesWithOptions(
-	idList []uint64, namespace *string, username string,
+	idList []uint64, namespace *string, network, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool,
 	page, pageSize int,
 ) (int, types.Nodes, error) {
 	var total int64
+	log.Debug().
+		Str("network", network).
+		Str("username", username).
+		Msg("Listing nodes with options")
 	nodes, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
 		nodes, count, err := ListWithOptions(
 			&types.Node{}, rx, listNodes,
-			idList, namespace, username,
+			idList, namespace, "network_domain", network, username,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
+		log.Debug().
+		Str("network", network).
+		Str("username", username).
+		Int("count", int(count)).
+		Msg("Listed nodes with options")
 		total = count
 		return types.Nodes(nodes), err
 	})

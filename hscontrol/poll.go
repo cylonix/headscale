@@ -293,11 +293,20 @@ func (m *mapSession) serveLongPoll() {
 				return
 			}
 
+			// __BEGIN_CYLONIX_MOD__
+			pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
+			if err != nil {
+				m.infof("Could not get ACL policy: %v", err)
+				//return
+			}
+
+			// __END_CYLONIX_MOD__
+
 			updateType := "full"
 			switch update.Type {
 			case types.StateFullUpdate:
 				m.tracef("Sending Full MapResponse")
-				data, err = m.mapper.FullMapResponse(m.req, m.node, m.h.ACLPolicy, fmt.Sprintf("from mapSession: %p, stream: %t", m, m.isStreaming()))
+				data, err = m.mapper.FullMapResponse(m.req, m.node, pol, fmt.Sprintf("from mapSession: %p, stream: %t", m, m.isStreaming()))
 			case types.StatePeerChanged:
 				changed := make(map[types.NodeID]bool, len(update.ChangeNodes))
 
@@ -307,12 +316,12 @@ func (m *mapSession) serveLongPoll() {
 
 				lastMessage = update.Message
 				m.tracef(fmt.Sprintf("Sending Changed MapResponse: %v", lastMessage))
-				data, err = m.mapper.PeerChangedResponse(m.req, m.node, changed, update.ChangePatches, m.h.ACLPolicy, lastMessage)
+				data, err = m.mapper.PeerChangedResponse(m.req, m.node, changed, update.ChangePatches, pol, lastMessage)
 				updateType = "change"
 
 			case types.StatePeerChangedPatch:
 				m.tracef(fmt.Sprintf("Sending Changed Patch MapResponse: %v", lastMessage))
-				data, err = m.mapper.PeerChangedPatchResponse(m.req, m.node, update.ChangePatches, m.h.ACLPolicy)
+				data, err = m.mapper.PeerChangedPatchResponse(m.req, m.node, update.ChangePatches, pol)
 				updateType = "patch"
 			case types.StatePeerRemoved:
 				changed := make(map[types.NodeID]bool, len(update.Removed))
@@ -321,13 +330,13 @@ func (m *mapSession) serveLongPoll() {
 					changed[nodeID] = false
 				}
 				m.tracef(fmt.Sprintf("Sending Changed MapResponse: %v", lastMessage))
-				data, err = m.mapper.PeerChangedResponse(m.req, m.node, changed, update.ChangePatches, m.h.ACLPolicy, lastMessage)
+				data, err = m.mapper.PeerChangedResponse(m.req, m.node, changed, update.ChangePatches, pol, lastMessage)
 				updateType = "remove"
 			case types.StateSelfUpdate:
 				lastMessage = update.Message
 				m.tracef(fmt.Sprintf("Sending Changed MapResponse: %v", lastMessage))
 				// create the map so an empty (self) update is sent
-				data, err = m.mapper.PeerChangedResponse(m.req, m.node, make(map[types.NodeID]bool), update.ChangePatches, m.h.ACLPolicy, lastMessage)
+				data, err = m.mapper.PeerChangedResponse(m.req, m.node, make(map[types.NodeID]bool), update.ChangePatches, pol, lastMessage)
 				updateType = "remove"
 			case types.StateDERPUpdated:
 				m.tracef("Sending DERPUpdate MapResponse")
@@ -512,9 +521,17 @@ func (m *mapSession) handleEndpointUpdate() {
 			return
 		}
 
-		if m.h.ACLPolicy != nil {
+		// __BEGIN_CYLONIX_MOD__
+		pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
+		if err != nil {
+			m.errf(err, "Could not get ACL policy")
+			return
+		}
+		// __END_CYLONIX_MOD__
+
+		if pol != nil {
 			// update routes with peer information
-			err := m.h.db.EnableAutoApprovedRoutes(m.h.ACLPolicy, m.node)
+			err := m.h.db.EnableAutoApprovedRoutes(pol, m.node)
 			if err != nil {
 				m.errf(err, "Error running auto approved routes")
 				mapResponseEndpointUpdates.WithLabelValues("error").Inc()
@@ -598,9 +615,17 @@ func (m *mapSession) handleSaveNode() error {
 			return err
 		}
 
-		if m.h.ACLPolicy != nil {
+		// __BEGIN_CYLONIX_MOD__
+		pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
+		if err != nil {
+			m.errf(err, "Could not get ACL policy")
+			return err
+		}
+		// __END_CYLONIX_MOD__
+
+		if pol != nil {
 			// update routes with peer information
-			err := m.h.db.EnableAutoApprovedRoutes(m.h.ACLPolicy, m.node)
+			err := m.h.db.EnableAutoApprovedRoutes(pol, m.node)
 			if err != nil {
 				return err
 			}
@@ -627,7 +652,15 @@ func (m *mapSession) handleSaveNode() error {
 func (m *mapSession) handleReadOnlyRequest() {
 	m.tracef("Client asked for a lite update, responding without peers")
 
-	mapResp, err := m.mapper.ReadOnlyMapResponse(m.req, m.node, m.h.ACLPolicy)
+	// __BEGIN_CYLONIX_MOD__
+	pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
+	if err != nil {
+		m.errf(err, "Could not get ACL policy")
+		return
+	}
+
+	mapResp, err := m.mapper.ReadOnlyMapResponse(m.req, m.node, pol)
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		m.errf(err, "Failed to create MapResponse")
 		http.Error(m.w, "", http.StatusInternalServerError)
@@ -701,7 +734,7 @@ func logPollFunc(
 ) (func(string, ...any), func(string, ...any), func(string, ...any), func(error, string, ...any)) {
 	return func(msg string, a ...any) {
 			log.Warn().
-				Caller().
+				Caller(1).
 				Bool("readOnly", mapRequest.ReadOnly).
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
@@ -711,7 +744,7 @@ func logPollFunc(
 		},
 		func(msg string, a ...any) {
 			log.Info().
-				Caller().
+				Caller(1).
 				Bool("readOnly", mapRequest.ReadOnly).
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
@@ -721,7 +754,7 @@ func logPollFunc(
 		},
 		func(msg string, a ...any) {
 			log.Trace().
-				Caller().
+				Caller(1).
 				Bool("readOnly", mapRequest.ReadOnly).
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
@@ -731,14 +764,14 @@ func logPollFunc(
 		},
 		func(err error, msg string, a ...any) {
 			log.Error().
-				Caller().
+				Caller(1).
 				Bool("readOnly", mapRequest.ReadOnly).
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
 				Uint64("node.id", node.ID.Uint64()).
 				Str("node", node.Hostname).
 				Str("namespace", node.Namespace). // __CYLONIX_MOD__
-				Str("user", node.User.Name). // __CYLONIX_MOD__
+				Str("user", node.User.Name).      // __CYLONIX_MOD__
 				Err(err).
 				Msgf(msg, a...)
 		}

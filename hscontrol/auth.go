@@ -181,6 +181,7 @@ func (h *Headscale) handleRegister(
 		newNode := types.Node{
 			MachineKey: machineKey,
 			Hostname:   regReq.Hostinfo.Hostname,
+			Hostinfo:   regReq.Hostinfo,
 			GivenName:  givenName,
 			NodeKey:    regReq.NodeKey,
 			LastSeen:   &now,
@@ -718,7 +719,12 @@ func (h *Headscale) handleNewNode(
 	}
 	// __BEGIN_CYLONIX_MOD__
 	if h.cfg.NodeHandler != nil {
-		url, err := h.cfg.NodeHandler.AuthURL(registerRequest.NodeKey)
+		url, err := h.cfg.NodeHandler.AuthURL(&types.Node{
+			MachineKey:    machineKey,
+			NodeKey:       registerRequest.NodeKey,
+			Hostinfo:      registerRequest.Hostinfo,
+			NetworkDomain: registerRequest.Tailnet,
+		})
 		if err != nil {
 			logErr(err, "Failed to get auth url")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
@@ -976,7 +982,12 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 	}
 	// __BEGIN_CYLONIX_MOD__
 	if h.cfg.NodeHandler != nil {
-		url, err := h.cfg.NodeHandler.AuthURL(regReq.NodeKey)
+		url, err := h.cfg.NodeHandler.AuthURL(&types.Node{
+			MachineKey:    machineKey,
+			NodeKey:       regReq.NodeKey,
+			Hostinfo:      regReq.Hostinfo,
+			NetworkDomain: regReq.Tailnet,
+		})
 		if err != nil {
 			log.Error().
 				Caller().

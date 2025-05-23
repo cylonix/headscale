@@ -159,7 +159,7 @@ func (hsdb *HSDatabase) GetAndValidateAPIKey(keyStr string) (*types.APIKey, bool
 	return key, true, nil
 }
 func (hsdb *HSDatabase) ListAPIKeysWithOptions(
-	idList []uint64, namespace *string, username string,
+	idList []uint64, namespace *string, network, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool,
 	page, pageSize int,
 ) (int, []*types.APIKey, error) {
@@ -172,7 +172,7 @@ func (hsdb *HSDatabase) ListAPIKeysWithOptions(
 				err := rx.Preload("User").Find(&keys).Error
 				return keys, err
 			},
-			idList, namespace, username,
+			idList, namespace, "network", network, username,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

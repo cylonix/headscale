@@ -675,7 +675,7 @@ func EnableAutoApprovedRoutes(
 
 // __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ListRoutesWithOptions(
-	idList []uint64, namespace *string, username string,
+	idList []uint64, namespace *string, network, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool,
 	page, pageSize int,
 ) (int, types.Routes, error) {
@@ -686,7 +686,7 @@ func (hsdb *HSDatabase) ListRoutesWithOptions(
 	list, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Routes, error) {
 		v, count, err := ListWithOptions(
 			types.Route{}, rx, GetRoutes,
-			idList, namespace, username,
+			idList, namespace, "network", network, username,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

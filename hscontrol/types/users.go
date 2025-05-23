@@ -25,6 +25,7 @@ type User struct {
 	// LoginName field instead. LoginName is unique for a namespace/tenant.
 	LoginName *string `gorm:"uniqueIndex:users_namespace_login"`
 	Namespace *string `gorm:"uniqueIndex:users_namespace_login"`
+	Network   string
 	// __END_CYLONIX_MOD__
 }
 
@@ -44,10 +45,8 @@ func (u *User) TailscaleUser(cfg *Config) *tailcfg.User {
 	// __END_CYLONIX_MOD__
 	user := tailcfg.User{
 		ID:            tailcfg.UserID(u.ID),
-		LoginName:     u.Name,
 		DisplayName:   u.Name,
 		ProfilePicURL: u.profilePicURL(),
-		Logins:        []tailcfg.LoginID{},
 		Created:       u.CreatedAt,
 	}
 
@@ -108,6 +107,7 @@ func (n *User) Proto() *v1.User {
 		CreatedAt: timestamppb.New(n.CreatedAt),
 		LoginName: loginName, // __CYLONIX_MOD__
 		Namespace: namespace, // __CYLONIX_MOD__
+		Network:   n.Network,   // __CYLONIX_MOD__
 	}
 }
 
@@ -136,6 +136,7 @@ func (n *User) FromProto(v1User *v1.User) error {
 	n.CreatedAt = v1User.CreatedAt.AsTime()
 	n.Namespace = namespace
 	n.LoginName = loginName
+	n.Network = v1User.Network
 	return nil
 }
 // __END_CYLONIX_MOD__

@@ -44,6 +44,12 @@ service HeadscaleService {
             get: "/api/v1/user"
         };
     }
+
+    rpc UpdateUserNetworkDomain(UpdateUserNetworkDomainRequest) returns (UpdateUserNetworkDomainResponse) {
+        option (google.api.http) = {
+            put: "/api/v1/user/network"
+        };
+    }
     // --- User end ---
 
     // --- PreAuthKeys start ---

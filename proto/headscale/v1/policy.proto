@@ -7,8 +7,9 @@ import "google/protobuf/timestamp.proto";
 message SetPolicyRequest {
     string policy = 1;
 
-    optional string user      = 2; // __CYLONIX_MOD__
-    optional string namespace = 3; // __CYLONIX_MOD__
+    optional string user           = 2; // __CYLONIX_MOD__
+    optional string namespace      = 3; // __CYLONIX_MOD__
+    optional string network        = 4; // __CYLONIX_MOD__
 }
 
 message SetPolicyResponse {
@@ -18,6 +19,7 @@ message SetPolicyResponse {
 
 message GetPolicyRequest {
     optional string namespace = 1; // __CYLONIX_MOD__
+    optional string network   = 2; // __CYLONIX_MOD__
 }
 
 message GetPolicyResponse {

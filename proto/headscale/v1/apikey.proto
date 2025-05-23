@@ -13,6 +13,7 @@ message ApiKey {
     google.protobuf.Timestamp last_seen  = 5;
     User                      user       = 6; // __CYLONIX_MOD__
     string                    namespace  = 7; // __CYLONIX_MOD__
+    string                    network    = 8; // __CYLONIX_MOD__
 }
 
 message CreateApiKeyRequest {
@@ -20,8 +21,9 @@ message CreateApiKeyRequest {
 
     optional string namespace   = 2; // __CYLONIX_MOD__
     optional string user        = 3; // __CYLONIX_MOD__
-    optional string scope_type  = 4; // __CYLONIX_MOD__
-    optional string scope_value = 5; // __CYLONIX_MOD__
+    optional string network     = 4; // __CYLONIX_MOD__
+    optional string scope_type  = 5; // __CYLONIX_MOD__
+    optional string scope_value = 6; // __CYLONIX_MOD__
 }
 
 message CreateApiKeyResponse {
@@ -40,12 +42,13 @@ message ListApiKeysRequest {
     optional string user         = 1;
     repeated uint64 node_id_list = 2;
     optional string namespace    = 3;
-    optional string filter_by    = 4;
-    optional string filter_value = 5;
-    optional string sort_by      = 6;
-    optional bool   sort_desc    = 7;
-    optional uint32 page         = 8;
-    optional uint32 pageSize     = 9;
+    optional string network      = 4;
+    optional string filter_by    = 5;
+    optional string filter_value = 6;
+    optional string sort_by      = 7;
+    optional bool   sort_desc    = 8;
+    optional uint32 page         = 9;
+    optional uint32 pageSize     = 10;
     // __END_CYLONIX_MOD__
 }
 

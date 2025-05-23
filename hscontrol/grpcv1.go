@@ -43,7 +43,7 @@ func (api headscaleV1APIServer) GetUser(
 	request *v1.GetUserRequest,
 ) (*v1.GetUserResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName(), request.GetNetwork())); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -61,7 +61,7 @@ func (api headscaleV1APIServer) CreateUser(
 	request *v1.CreateUserRequest,
 ) (*v1.CreateUserResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName(), request.GetNetwork())); err != nil {
 		return nil, err
 	}
 	user, err := api.h.db.CreateNamespaceUser(request.GetName(), request.Namespace, request.LoginName)
@@ -78,7 +78,7 @@ func (api headscaleV1APIServer) RenameUser(
 	request *v1.RenameUserRequest,
 ) (*v1.RenameUserResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetOldName())); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetOldName(), request.GetNetwork())); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -100,7 +100,7 @@ func (api headscaleV1APIServer) DeleteUser(
 	request *v1.DeleteUserRequest,
 ) (*v1.DeleteUserResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName())); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName(), request.GetNetwork())); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -123,6 +123,7 @@ func (api headscaleV1APIServer) ListUsers(
 	total, users, err := api.h.db.ListUsersWithOptions(
 		request.GetIdList(),
 		request.Namespace,
+		request.GetNetwork(),
 		request.GetUser(),
 		request.GetFilterBy(),
 		request.GetFilterValue(),
@@ -177,7 +178,7 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 		request.GetUser(),
 		request.GetReusable(),
 		request.GetEphemeral(),
-		request.GetKey(), // __CYLONIX_MOD__
+		request.GetKey(),  // __CYLONIX_MOD__
 		request.GetIpv4(), // __CYLONIX_MOD__
 		request.GetIpv6(), // __CYLONIX_MOD__
 		&expiration,
@@ -201,7 +202,7 @@ func (api headscaleV1APIServer) ExpirePreAuthKey(
 		}
 
 		// __BEGIN_CYLONIX_MOD__
-		if err := api.auth(ctx, types.NewAuthScope(preAuthKey.Namespace, preAuthKey.User.Name)); err != nil {
+		if err := api.auth(ctx, types.NewAuthScope(preAuthKey.Namespace, preAuthKey.User.Name, "")); err != nil {
 			return err
 		}
 		// __END_CYLONIX_MOD__
@@ -226,6 +227,7 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 	total, preAuthKeys, err := api.h.db.ListPreAuthKeysWithOptions(
 		request.GetIdList(),
 		request.Namespace,
+		"", // network is not yet supported
 		request.GetUser(),
 		request.GetFilterBy(),
 		request.GetFilterValue(),
@@ -311,7 +313,7 @@ func (api headscaleV1APIServer) GetNode(
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -350,7 +352,7 @@ func (api headscaleV1APIServer) SetTags(
 		}, status.Error(codes.InvalidArgument, err.Error())
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -397,7 +399,7 @@ func (api headscaleV1APIServer) DeleteNode(
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -437,7 +439,7 @@ func (api headscaleV1APIServer) ExpireNode(
 		if err != nil {
 			return nil, err
 		}
-		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 			return nil, err
 		}
 	}
@@ -488,7 +490,7 @@ func (api headscaleV1APIServer) RenameNode(
 		if err != nil {
 			return nil, err
 		}
-		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 			return nil, err
 		}
 	}
@@ -536,6 +538,7 @@ func (api headscaleV1APIServer) ListNodes(
 	total, nodes, err := api.h.db.ListNodesWithOptions(
 		request.GetNodeIdList(),
 		request.Namespace,
+		request.GetNetwork(),
 		request.GetUser(),
 		request.GetFilterBy(),
 		request.GetFilterValue(),
@@ -554,6 +557,7 @@ func (api headscaleV1APIServer) ListNodes(
 	})
 
 	response := make([]*v1.Node, len(nodes))
+	pols := make(map[string]*policy.ACLPolicy)
 	for index, node := range nodes {
 		resp := node.Proto()
 
@@ -563,11 +567,36 @@ func (api headscaleV1APIServer) ListNodes(
 			resp.Online = true
 		}
 
-		validTags, invalidTags := api.h.ACLPolicy.TagsOfNode(
-			node,
+		// __BEGIN_CYLONIX_MOD__
+		var (
+			pol *policy.ACLPolicy
+			ok  = false
 		)
-		resp.InvalidTags = invalidTags
-		resp.ValidTags = validTags
+		if node.NetworkDomain == "" || node.Namespace != "" {
+			if api.h.cfg.Policy.Mode != types.PolicyModeMulti {
+				pol, err = api.h.ACLPolicy(nil, nil)
+				if err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			if pol, ok = pols[node.Namespace+node.NetworkDomain]; !ok {
+				pol, err = api.h.ACLPolicy(&node.Namespace, &node.NetworkDomain)
+				if err != nil {
+					//return nil, err
+				}
+				pols[node.Namespace+node.NetworkDomain] = pol
+			}
+		}
+
+		if pol != nil {
+			validTags, invalidTags := pol.TagsOfNode(
+				node,
+			)
+			resp.InvalidTags = invalidTags
+			resp.ValidTags = validTags
+		}
+		// __END_CYLONIX_MOD__
 		response[index] = resp
 	}
 
@@ -583,7 +612,7 @@ func (api headscaleV1APIServer) MoveNode(
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -630,6 +659,7 @@ func (api headscaleV1APIServer) GetRoutes(
 	_, routes, err := api.h.db.ListRoutesWithOptions(
 		request.GetIdList(),
 		request.Namespace,
+		request.GetNetwork(),
 		request.GetUser(),
 		request.GetFilterBy(),
 		request.GetFilterValue(),
@@ -659,7 +689,7 @@ func (api headscaleV1APIServer) EnableRoute(
 	if err != nil {
 		return nil, err
 	}
-	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name, route.Node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -690,7 +720,7 @@ func (api headscaleV1APIServer) DisableRoute(
 	if err != nil {
 		return nil, err
 	}
-	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name, route.Node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -721,7 +751,7 @@ func (api headscaleV1APIServer) GetNodeRoutes(
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -747,7 +777,7 @@ func (api headscaleV1APIServer) DeleteRoute(
 	if err != nil {
 		return nil, err
 	}
-	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name)); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name, route.Node.NetworkDomain)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -818,7 +848,7 @@ func (api headscaleV1APIServer) ExpireApiKey(
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, "")); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, "", "")); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -842,6 +872,7 @@ func (api headscaleV1APIServer) ListApiKeys(
 	total, apiKeys, err := api.h.db.ListAPIKeysWithOptions(
 		request.GetNodeIdList(),
 		request.Namespace,
+		request.GetNetwork(),
 		request.GetUser(),
 		request.GetFilterBy(),
 		request.GetFilterValue(),
@@ -896,7 +927,7 @@ func (api headscaleV1APIServer) DeleteApiKey(
 		return nil, err
 	}
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, apiKey.Username())); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(apiKey.Namespace, apiKey.Username(), apiKey.Network)); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -928,7 +959,7 @@ func (api headscaleV1APIServer) GetPolicy(
 
 	switch api.h.cfg.Policy.Mode {
 	case types.PolicyModeDB:
-		p, err := api.h.db.GetPolicy()
+		p, err := api.h.db.GetPolicy(request.Namespace, request.Network)
 		if err != nil {
 			return nil, err
 		}
@@ -967,7 +998,12 @@ func (api headscaleV1APIServer) SetPolicy(
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
-	if api.h.cfg.Policy.Mode != types.PolicyModeDB {
+	if api.h.cfg.Policy.Mode != types.PolicyModeMulti {
+		if request.Namespace != nil || request.Network != nil {
+			return nil, fmt.Errorf("namespace and network are not supported in this mode")
+		}
+	}
+	if api.h.cfg.Policy.Mode == types.PolicyModeFile { // __CYLONIX_MOD__
 		return nil, types.ErrPolicyUpdateIsDisabled
 	}
 
@@ -983,7 +1019,12 @@ func (api headscaleV1APIServer) SetPolicy(
 	// a scenario where they might be allowed if the server has no nodes
 	// yet, but it should help for the general case and for hot reloading
 	// configurations.
-	nodes, err := api.h.db.ListNodes()
+	// __BEGIN_CYLONIX_MOD__
+	_, nodes, err := api.h.db.ListNodesWithOptions(
+		nil, request.Namespace, request.GetNetwork(),
+		"", "", "", "", false, 0, 0,
+	)
+	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, fmt.Errorf("loading nodes from database to validate policy: %w", err)
 	}
@@ -1000,12 +1041,16 @@ func (api headscaleV1APIServer) SetPolicy(
 		}
 	}
 
-	updated, err := api.h.db.SetPolicy(p)
+	updated, err := api.h.db.SetPolicy(p, request.GetNamespace(), request.GetNetwork()) // __CYLONIX_MOD__
 	if err != nil {
 		return nil, err
 	}
 
-	api.h.ACLPolicy = pol
+	// __BEGIN_CYLONIX_MOD__
+	if api.h.cfg.Policy.Mode != types.PolicyModeMulti {
+		api.h.SetACLPolicy(pol)
+	}
+	// __END_CYLONIX_MOD__
 
 	ctx = types.NotifyCtx(context.Background(), "acl-update", "na") // __CYLONIX_MOD_-
 	api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
@@ -1165,7 +1210,7 @@ func (api headscaleV1APIServer) RefreshApiKey(
 	if !valid {
 		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("api key '%v' invalid", prefix))
 	}
-	if err := api.auth(ctx, types.NewAuthScope(key.Namespace, key.Username())); err != nil {
+	if err := api.auth(ctx, types.NewAuthScope(key.Namespace, key.Username(), key.Network)); err != nil {
 		return nil, err
 	}
 	expire := time.Now().Add(time.Minute * 30)
@@ -1257,4 +1302,35 @@ func (api headscaleV1APIServer) UpdateNode(
 
 	return &v1.UpdateNodeResponse{}, nil
 }
+
+func (api headscaleV1APIServer) UpdateUserNetworkDomain(
+	ctx context.Context,
+	request *v1.UpdateUserNetworkDomainRequest,
+) (*v1.UpdateUserNetworkDomainResponse, error) {
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+
+	logger := log.Error().
+		Str("namespace", request.Namespace).
+		Str("user", request.User).
+		Str("network-domain", request.Network)
+
+	if err := api.h.db.UpdateUserNetworkDomain(
+		request.User,
+		request.Network,
+	); err != nil {
+		logger.Err(err).Msg("Failed to update user")
+		return nil, err
+	}
+
+	log.Info().
+		Str("namespace", request.Namespace).
+		Str("user", request.User).
+		Str("network-domain", request.Network).
+		Msg("Updated user network domain")
+
+	return &v1.UpdateUserNetworkDomainResponse{}, nil
+}
+
 // __END_CYLONIX_MOD__

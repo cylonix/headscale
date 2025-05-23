@@ -17,6 +17,7 @@ type AuthScopeType string
 const (
 	AuthScopeTypeFull      = AuthScopeType("full")      // Full access
 	AuthScopeTypeNamespace = AuthScopeType("namespace") // matching a namespace
+	AuthScopeTypeNetwork   = AuthScopeType("network")   // matching a network
 	AuthScopeTypeUser      = AuthScopeType("user")      // Matching a username
 )
 
@@ -25,6 +26,10 @@ type AuthNamespaceScopedRequest interface {
 }
 type AuthUserScopedRequest interface {
 	GetUser() string
+}
+
+type AuthNetworkScopedRequest interface {
+	GetNetwork() string
 }
 
 type authScopeTypeContextKeyType struct{}
@@ -44,12 +49,14 @@ func IsWithFullAuthScope(ctx context.Context) bool {
 type AuthScope struct {
 	namespace string
 	user      string
+	network   string
 }
 
-func NewAuthScope(namespace, user string) *AuthScope {
+func NewAuthScope(namespace, user, network string) *AuthScope {
 	return &AuthScope{
 		namespace: namespace,
 		user:      user,
+		network:   network,
 	}
 }
 
@@ -59,6 +66,10 @@ func (s *AuthScope) GetNamespace() string {
 
 func (s *AuthScope) GetUser() string {
 	return s.user
+}
+
+func (s *AuthScope) GetNetwork() string {
+	return s.network
 }
 
 func (key *APIKey) Auth(r interface{}) bool {
@@ -81,6 +92,15 @@ func (key *APIKey) Auth(r interface{}) bool {
 				Msg("Auth Namespace Scope")
 		}
 		return ok && (s.GetNamespace() == key.ScopeValue)
+	case AuthScopeTypeNetwork:
+		s, ok := r.(AuthNetworkScopedRequest)
+		if ok {
+			log.Debug().
+				Str("authorized-scope", key.ScopeValue).
+				Str("requested-scope", s.GetNetwork()).
+				Msg("Auth network Scope")
+		}
+		return ok && (s.GetNetwork() == key.ScopeValue)
 	case AuthScopeTypeUser:
 		s, ok := r.(AuthUserScopedRequest)
 		if ok {
@@ -108,6 +128,7 @@ type APIKey struct {
 	ScopeValue string
 	UserID     *uint
 	User       *User
+	Network    string
 	Namespace  string
 	// __END_CYLONIX_MOD__
 
@@ -139,6 +160,7 @@ func (key *APIKey) Proto() *v1.ApiKey {
 		protoKey.User = key.User.Proto()
 	}
 	protoKey.Namespace = key.Namespace
+	protoKey.Network = key.Network
 	// __END_CYLONIX_MOD__
 
 	return &protoKey

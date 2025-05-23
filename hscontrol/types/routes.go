@@ -28,6 +28,7 @@ type Route struct {
 	IsPrimary  bool
 
 	Namespace string // __CYLONIX_MOD__
+	Network   string // __CYLONIX_MOD__
 }
 
 type Routes []Route
@@ -99,6 +100,7 @@ func (rs Routes) Proto() []*v1.Route {
 			CreatedAt:  timestamppb.New(route.CreatedAt),
 			UpdatedAt:  timestamppb.New(route.UpdatedAt),
 			Namespace:  route.Namespace, // __CYLONIX_MOD__
+			Network:    route.Network,   // __CYLONIX_MOD__
 		}
 
 		if route.DeletedAt.Valid {

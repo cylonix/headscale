@@ -42,8 +42,9 @@ const (
 type PolicyMode string
 
 const (
-	PolicyModeDB   = "database"
-	PolicyModeFile = "file"
+	PolicyModeDB    = "database"
+	PolicyModeFile  = "file"
+	PolicyModeMulti = "multi"
 )
 
 // Config contains the initial Headscale configuration.

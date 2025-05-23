@@ -30,7 +30,7 @@ func (hsdb *HSDatabase) CreateNamespaceUser(stableID string, namespace, loginNam
 }
 
 func (hsdb *HSDatabase) ListUsersWithOptions(
-	idList []uint64, namespace *string, username string,
+	idList []uint64, namespace *string, network, username string,
 	filterBy, filterValue, sortBy string, sortDesc bool,
 	page, pageSize int,
 ) (int, []*types.User, error) {
@@ -45,13 +45,73 @@ func (hsdb *HSDatabase) ListUsersWithOptions(
 	users, err := Read(hsdb.DB, func(rx *gorm.DB) ([]*types.User, error) {
 		users, count, err := ListWithOptions(
 			&types.User{}, rx, ListUsers,
-			idList, namespace, "",
+			idList, namespace, "network", network, "",
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count
 		return users, err
 	})
 	return int(total), users, err
+}
+
+func (hsdb *HSDatabase) UpdateUserNetworkDomain(
+	user, network string,
+) error {
+	return hsdb.Write(func(tx *gorm.DB) error {
+		return UpdateUserNetworkDomain(tx, user, network)
+	})
+}
+
+func UpdateUserNetworkDomain(tx *gorm.DB, username, network string) error {
+	user, err := GetUser(tx, username)
+	if err != nil {
+		return err
+	}
+	if user.Network == network {
+		return nil
+	}
+	if network == "" {
+		return fmt.Errorf("network domain cannot be empty")
+	}
+	if user.Network == "" {
+		if err := tx.Model(&types.Node{}).
+			Where("user_id = ?", user.ID).
+			Updates(types.Node{NetworkDomain: network}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&types.APIKey{}).
+			Where("user_id = ?", user.ID).
+			Updates(types.APIKey{Network: network}).Error; err != nil {
+			return err
+		}
+	} else {
+		if err := tx.Model(&types.Node{}).
+			Where("network_domain = ?", user.Network).
+			Updates(types.Node{NetworkDomain: network}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&types.Route{}).
+			Where("network = ?", user.Network).
+			Updates(types.Route{Network: network}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&types.Policy{}).
+			Where("network = ?", network).
+			Updates(types.Policy{Network: network}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&types.APIKey{}).
+			Where("network = ?", user.Network).
+			Updates(types.APIKey{Network: network}).Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.Model(&types.User{}).
+		Where("name = ?", username).
+		Updates(types.User{Network: network}).Error; err != nil {
+		return err
+	}
+	return nil
 }
 
 // __END_CYLONIX_MOD__

@@ -59,6 +59,12 @@
             "type": "string"
           },
           {
+            "name": "network",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "filterBy",
             "in": "query",
             "required": false,
@@ -302,6 +308,12 @@
             "type": "string"
           },
           {
+            "name": "network",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "filterBy",
             "in": "query",
             "required": false,
@@ -477,6 +489,13 @@
             "type": "string"
           },
           {
+            "name": "node.user.network",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "node.lastSeen",
             "in": "query",
             "required": false,
@@ -578,6 +597,13 @@
           },
           {
             "name": "node.preAuthKey.userDetail.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.userDetail.network",
             "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
@@ -766,6 +792,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "network",
+            "description": "__CYLONIX_MOD_",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -937,6 +970,13 @@
             "type": "string"
           },
           {
+            "name": "update.user.network",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "update.lastSeen",
             "in": "query",
             "required": false,
@@ -1038,6 +1078,13 @@
           },
           {
             "name": "update.preAuthKey.userDetail.namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "update.preAuthKey.userDetail.network",
             "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
@@ -1410,6 +1457,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "network",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -1641,6 +1695,12 @@
             "type": "string"
           },
           {
+            "name": "network",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "filterBy",
             "in": "query",
             "required": false,
@@ -1821,6 +1881,12 @@
             "type": "string"
           },
           {
+            "name": "network",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "filterBy",
             "in": "query",
             "required": false,
@@ -1895,6 +1961,48 @@
         ]
       }
     },
+    "/api/v1/user/network": {
+      "put": {
+        "operationId": "HeadscaleService_UpdateUserNetworkDomain",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateUserNetworkDomainResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "network",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/user/{name}": {
       "get": {
         "summary": "--- User start ---",
@@ -1922,6 +2030,13 @@
           },
           {
             "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "network",
             "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
@@ -1957,6 +2072,13 @@
           },
           {
             "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "network",
             "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
@@ -2000,6 +2122,13 @@
           },
           {
             "name": "namespace",
+            "description": "__CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "network",
             "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
@@ -2081,6 +2210,10 @@
         "namespace": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
+        },
+        "network": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -2107,6 +2240,10 @@
           "title": "__CYLONIX_MOD__"
         },
         "user": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "network": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
         },
@@ -2196,6 +2333,10 @@
           "title": "__CYLONIX_MOD__"
         },
         "loginName": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "network": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
         }
@@ -2662,6 +2803,10 @@
         "namespace": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
+        },
+        "network": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -2695,6 +2840,10 @@
         "namespace": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
+        },
+        "network": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },
@@ -2721,6 +2870,9 @@
     "v1UpdateNodeResponse": {
       "type": "object"
     },
+    "v1UpdateUserNetworkDomainResponse": {
+      "type": "object"
+    },
     "v1User": {
       "type": "object",
       "properties": {
@@ -2739,6 +2891,10 @@
           "title": "__CYLONIX_MOD__"
         },
         "namespace": {
+          "type": "string",
+          "title": "__CYLONIX_MOD__"
+        },
+        "network": {
           "type": "string",
           "title": "__CYLONIX_MOD__"
         }
