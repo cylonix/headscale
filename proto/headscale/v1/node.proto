@@ -2,6 +2,7 @@ syntax = "proto3";
 package headscale.v1;
 
 import "google/protobuf/timestamp.proto";
+import "headscale/v1/hostinfo.proto";
 import "headscale/v1/preauthkey.proto";
 import "headscale/v1/user.proto";
 
@@ -57,6 +58,7 @@ message Node {
     optional uint32    cap_version    = 28; // __CYLONIX_MOD__
     repeated string    capabilities   = 29; // __CYLONIX_MOD__
     string             network_domain = 30; // __CYLONIX_MOD__
+    optional Hostinfo  hostinfo       = 31; // __CYLONIX_MOD__
 }
 
 message RegisterNodeRequest {
@@ -183,4 +185,6 @@ message RouteSpec {
     bool   enabled    = 3;
     bool   is_primary = 4;
 }
+
+
 // __END_CYLONIX_MOD__

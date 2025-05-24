@@ -817,6 +817,7 @@ func (api headscaleV1APIServer) CreateApiKey(
 	apiKey, _, err := api.h.db.CreateAPIKey(
 		&expiration,
 		request.GetUser(),       // __CYLONIX_MOD__
+		request.GetNetwork(),    // __CYLONIX_MOD__
 		request.GetNamespace(),  // __CYLONIX_MOD__
 		request.GetScopeType(),  // __CYLONIX_MOD__
 		request.GetScopeValue(), // __CYLONIX_MOD__

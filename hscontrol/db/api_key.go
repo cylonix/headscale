@@ -22,9 +22,10 @@ var ErrAPIKeyFailedToParse = errors.New("failed to parse ApiKey")
 // CreateAPIKey creates a new ApiKey in a user, and returns it.
 func (hsdb *HSDatabase) CreateAPIKey(
 	expiration *time.Time,
-	username string,  // __CYLONIX_MOD__
-	namespace string, // __CYLONIX_MOD__
-	scopeType string, // __CYLONIX_MOD__
+	username string,   // __CYLONIX_MOD__
+	network  string,   // __CYLONIX_MOD__
+	namespace string,  // __CYLONIX_MOD__
+	scopeType string,  // __CYLONIX_MOD__
 	scopeValue string, // __CYLONIX_MOD__
 ) (string, *types.APIKey, error) {
 	prefix, err := util.GenerateRandomStringURLSafe(apiPrefixLength)
@@ -61,6 +62,7 @@ func (hsdb *HSDatabase) CreateAPIKey(
 		Hash:       hash,
 		Expiration: expiration,
 		UserID:     userID,                         // __CYLONIX_MOD__
+		Network:    network,					    // __CYLONIX_MOD__
 		Namespace:  namespace,                      // __CYLONIX_MOD__
 		ScopeType:  types.AuthScopeType(scopeType), // __CYLONIX_MOD__
 		ScopeValue: scopeValue,                     // __CYLONIX_MOD__
