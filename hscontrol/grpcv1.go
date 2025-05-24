@@ -957,8 +957,13 @@ func (api headscaleV1APIServer) GetPolicy(
 	}
 	// __END_CYLONIX_MOD__
 
+	log.Debug().
+		Str("namespace", request.GetNamespace()).
+		Str("network", request.GetNetwork()).
+		Str("policy-mode", string(api.h.cfg.Policy.Mode)).
+		Msg("GetPolicy")
 	switch api.h.cfg.Policy.Mode {
-	case types.PolicyModeDB:
+	case types.PolicyModeDB, types.PolicyModeMulti: // __CYLONIX_MOD__
 		p, err := api.h.db.GetPolicy(request.Namespace, request.Network)
 		if err != nil {
 			return nil, err

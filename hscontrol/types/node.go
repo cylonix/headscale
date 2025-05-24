@@ -837,6 +837,7 @@ func (node *Node) addLogFields(event *zerolog.Event) *zerolog.Event {
 		return event
 	}
 	return event.
+		Caller(2).
 		Str("machine-key", node.MachineKey.ShortString()).
 		Str("node-key", node.NodeKey.ShortString()).
 		Str("node", node.Hostname).

@@ -36,12 +36,21 @@ func (hsdb *HSDatabase) ListUsersWithOptions(
 ) (int, []*types.User, error) {
 	var total int64
 	if username != "" {
+		log.Debug().Str("username", username).Msg("getting user by username")
 		user, err := hsdb.GetUser(username)
 		if err != nil {
 			return 0, nil, err
 		}
 		idList = []uint64{uint64(user.ID)}
 	}
+	ns := "nil"
+	if namespace != nil {
+		ns = *namespace
+	}
+	log.Debug().
+		Str("namespace", ns).
+		Str("network", network).
+		Msg("listing users")
 	users, err := Read(hsdb.DB, func(rx *gorm.DB) ([]*types.User, error) {
 		users, count, err := ListWithOptions(
 			&types.User{}, rx, ListUsers,

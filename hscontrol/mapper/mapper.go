@@ -3,6 +3,7 @@ package mapper
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -18,12 +19,14 @@ import (
 	"github.com/aws/smithy-go/ptr"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/juanfont/headscale/hscontrol/db"
+	"github.com/juanfont/headscale/hscontrol/derp"
 	"github.com/juanfont/headscale/hscontrol/notifier"
 	"github.com/juanfont/headscale/hscontrol/policy"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/klauspost/compress/zstd"
 	"github.com/rs/zerolog/log"
+	"github.com/tailscale/hujson"
 	"tailscale.com/envknob"
 	"tailscale.com/smallzstd"
 	"tailscale.com/tailcfg"
@@ -192,10 +195,10 @@ func (m *Mapper) fullMapResponse(
 
 	log.Info().Caller().
 		Int("peers-count", len(peers)).
-		Str("namespace", node.Namespace). // __CYLONIX_MOD__
+		Str("namespace", node.Namespace).               // __CYLONIX_MOD__
 		Str("user", ptr.ToString(node.User.LoginName)). // __CYLONIX_MOD__
-		Str("node", node.Hostname). // __CYLONIX_MOD__
-		Msg("Peers listed for full map response") // __CYLONIX_MOD__
+		Str("node", node.Hostname).                     // __CYLONIX_MOD__
+		Msg("Peers listed for full map response")       // __CYLONIX_MOD__
 
 	err = m.appendPeerChanges( // __CYLONIX_MOD__
 		resp,
@@ -269,7 +272,12 @@ func (m *Mapper) DERPMapResponse(
 	m.derpMap = derpMap
 
 	resp := m.baseMapResponse()
-	resp.DERPMap = derpMap
+
+	// __ BEGIN_CYLONIX_MOD __
+	if err := m.setMapResponseDERPMap(&resp, node, derpMap); err != nil {
+		return nil, err
+	}
+	// __ END_CYLONIX_MOD __
 
 	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
 }
@@ -499,7 +507,11 @@ func (m *Mapper) baseWithConfigMapResponse(
 	}
 	resp.Node = tailnode
 
-	resp.DERPMap = m.derpMap
+	// __ BEGIN_CYLONIX_MOD __
+	if err := m.setMapResponseDERPMap(&resp, node, m.derpMap); err != nil {
+		return nil, err
+	}
+	// __ END_CYLONIX_MOD __
 
 	resp.Domain = m.cfg.BaseDomain
 
@@ -681,3 +693,57 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 
 	return nil
 }
+
+// __ BEGIN_CYLONIX_MOD __
+
+type DerpMapPolicy struct {
+	DerpMap *tailcfg.DERPMap `json:"derpMap"`
+}
+
+// GetNodeDERPMap returns the DERPMap for a node by merging the global derpmap
+// with the node specific derpmap based on the policy.
+func (m *Mapper) getNodeDERPMap(node *types.Node, derpMap *tailcfg.DERPMap) (*tailcfg.DERPMap, error) {
+	if node == nil || derpMap == nil {
+		return derpMap, nil
+	}
+	policy, err := m.db.GetPolicy(&node.Namespace, &node.NetworkDomain)
+	if err != nil {
+		if errors.Is(err, types.ErrPolicyNotFound) {
+			node.DebugLog().Msg("No policy found")
+			return derpMap, nil
+		}
+		node.ErrorLog(err).Msg("Could not get policy")
+		return nil, fmt.Errorf("could not get policy: %w", err)
+	}
+
+	v, err := hujson.Parse([]byte(policy.Data))
+	if err != nil {
+		return nil, fmt.Errorf("parsing hujson, err: %w", err)
+	}
+
+	v.Standardize()
+	jsonBytes := v.Pack()
+	derpMapPolicy := DerpMapPolicy{}
+
+	if err := json.Unmarshal(jsonBytes, &derpMapPolicy); err != nil {
+		return nil, fmt.Errorf("unmarshalling policy, err: %w", err)
+	}
+
+	if derpMapPolicy.DerpMap == nil {
+		node.DebugLog().Msg("No derp map found in policy")
+		return derpMap, nil
+	}
+	node.DebugLog().Msg("Merging derp maps")
+	return derp.MergeDERPMaps([]*tailcfg.DERPMap{derpMap, derpMapPolicy.DerpMap}), nil
+}
+
+func (m *Mapper) setMapResponseDERPMap(resp *tailcfg.MapResponse, node *types.Node, derpMap *tailcfg.DERPMap) error {
+	dm, err := m.getNodeDERPMap(node, derpMap)
+	if err != nil {
+		return err
+	}
+	resp.DERPMap = dm
+	return nil
+}
+
+// __ END_CYLONIX_MOD __
