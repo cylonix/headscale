@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -274,6 +275,7 @@ func (nodes Nodes) FilterByIP(ip netip.Addr) Nodes {
 }
 
 // BeforeUpdate to make sure readonly fields are not updated
+// Or for debugging node information changes.
 func (node *Node) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
@@ -329,6 +331,28 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 			}
 			c.Namespace = namespace
 		}
+	}
+	if node.Hostinfo == nil {
+		err = fmt.Errorf("nil hostinfo")
+	} else {
+		hasPeerAPI := false
+		for _, s := range node.Hostinfo.Services {
+			if s.Proto == tailcfg.PeerAPI4 {
+				hasPeerAPI = true
+				break
+			}
+		}
+		if !hasPeerAPI {
+			err = fmt.Errorf("hostinfo does not contain PeerAPI4 service")
+		}
+	}
+	if err != nil {
+		buf := make([]byte, 4096)
+		n := runtime.Stack(buf, false)
+		stack := string(buf[:n])
+		node.ErrorLog(err).
+			Str("stack", stack).
+			Msg("Node BeforeUpdate with invalid hostinfo")
 	}
 	// __END_CYLONIX_MOD__
 

@@ -3,6 +3,7 @@ package db
 import (
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -338,6 +339,9 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 			}
 
 			if changed {
+				v, _ := json.Marshal(node.Hostinfo)
+				node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
+
 				err := tx.Save(node).Error
 				if err != nil {
 					return fmt.Errorf("saving node(%d) after adding IPs: %w", node.ID, err)

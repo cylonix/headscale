@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -304,6 +305,9 @@ func AssignNodeToUser(tx *gorm.DB, node *types.Node, username string) error {
 		return err
 	}
 	node.User = *user
+	v, _ := json.Marshal(node.Hostinfo)
+	node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
+
 	if result := tx.Save(&node); result.Error != nil {
 		return result.Error
 	}

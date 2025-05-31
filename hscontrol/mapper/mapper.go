@@ -514,11 +514,7 @@ func (m *Mapper) baseWithConfigMapResponse(
 	// __ END_CYLONIX_MOD __
 
 	resp.Domain = m.cfg.BaseDomain
-
-	// Do not instruct clients to collect services we do not
-	// support or do anything with them
-	resp.CollectServices = "false"
-
+	resp.CollectServices = "true" // __CYLONIX_MOD__ For admin visibility
 	resp.KeepAlive = false
 
 	resp.Debug = &tailcfg.Debug{

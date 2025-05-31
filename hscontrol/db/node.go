@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -489,6 +490,8 @@ func RegisterNodeFromAuthCallback(
 							Msg("Updated network domain for node")
 					}
 				}
+				v, _ := json.Marshal(node.Hostinfo)
+				node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
 				if err := tx.Save(node).Error; err != nil {
 					return nil, fmt.Errorf("failed to update node key for %v of %v in the database: %w", node.Hostname, userName, err)
 				}
@@ -548,6 +551,8 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 		if err := registerNodePreAdd(tx, &node, nodeHandler); err != nil {
 			return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 		}
+		v, _ := json.Marshal(node.Hostinfo)
+		node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
 		// __END_CYLONIX_MOD__
 		if err := tx.Save(&node).Error; err != nil {
 			return nil, fmt.Errorf("failed register existing node in the database: %w", err)
@@ -578,6 +583,8 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 		return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
 	}
 	node.Namespace = node.User.GetNamespace()
+	v, _ := json.Marshal(node.Hostinfo)
+	node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
 	// __END_CYLONIX_MOD__
 
 	if err := tx.Save(&node).Error; err != nil {
@@ -631,6 +638,8 @@ func NodeSetMachineKey(
 // than this. It is intended to be used when we are changing or.
 // TODO(kradalby): Remove this func, just use Save.
 func NodeSave(tx *gorm.DB, node *types.Node) error {
+	v, _ := json.Marshal(node.Hostinfo)
+	node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
 	return tx.Save(node).Error
 }
 
