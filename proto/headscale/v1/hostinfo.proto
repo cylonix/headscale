@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package headscale.v1;
+
+option go_package = "github.com/juanfont/headscale/gen/go/v1";
+
+import "google/protobuf/wrappers.proto";
+
+// Hostinfo contains a summary of a Tailscale host.
+message Hostinfo {
+  string ipn_version = 1;              // version of this code (in version.Long format)
+  string frontend_log_id = 2;          // logtail ID of frontend instance
+  string backend_log_id = 3;           // logtail ID of backend instance
+  string os = 4;                       // operating system the client runs on (a version.OS value)
+  string os_version = 5;               // version of the OS, if available
+  google.protobuf.BoolValue container = 6;    // best-effort whether the client is running in a container
+  string env = 7;                      // a hostinfo.EnvType in string form
+  string distro = 8;                   // "debian", "ubuntu", "nixos", ...
+  string distro_version = 9;           // "20.04", ...
+  string distro_code_name = 10;        // "jammy", "bullseye", ...
+  string app = 11;                     // "k8s-operator", "golinks", ...
+  google.protobuf.BoolValue desktop = 12;     // if a desktop was detected on Linux
+  string package = 13;                 // Tailscale package to disambiguate ("choco", "appstore", etc; "" for unknown)
+  string device_model = 14;            // mobile phone model ("Pixel 3a", "iPhone12,3")
+  string push_device_token = 15;       // macOS/iOS APNs device token for notifications (and Android in the future)
+  string hostname = 16;                // name of the host the client runs on
+  bool shields_up = 17;                // indicates whether the host is blocking incoming connections
+  bool sharee_node = 18;               // indicates this node exists in netmap because it's owned by a shared-to user
+  bool no_logs_no_support = 19;        // indicates that the user has opted out of sending logs and support
+  bool wire_ingress = 20;              // indicates that the node would like to be wired up server-side
+  bool ingress_enabled = 21;           // if the node has any funnel endpoint enabled
+  bool allows_update = 22;             // indicates that the node has opted-in to admin-console-drive remote updates
+  string machine = 23;                 // the current host's machine type (uname -m)
+  string go_arch = 24;                 // GOARCH value (of the built binary)
+  string go_arch_var = 25;             // GOARM, GOAMD64, etc (of the built binary)
+  string go_version = 26;              // Go version binary was built with
+  repeated string routable_ips = 27;   // set of IP ranges this client can route (netip.Prefix as strings)
+  repeated string request_tags = 28;   // set of ACL tags this node wants to claim
+  repeated string wol_macs = 29;       // MAC address(es) to send Wake-on-LAN packets to wake this node
+  repeated Service services = 30;      // services advertised by this machine
+  NetInfo net_info = 31;               // network information
+  repeated string ssh_host_keys = 32;  // SSH host keys if advertised
+  string cloud = 33;                   // cloud provider
+  google.protobuf.BoolValue userspace = 34;         // if the client is running in userspace (netstack) mode
+  google.protobuf.BoolValue userspace_router = 35;  // if the client's subnet router is running in userspace mode
+  google.protobuf.BoolValue app_connector = 36;     // if the client is running the app-connector service
+  string services_hash = 37;           // opaque hash of the most recent list of tailnet services
+  Location location = 38;              // geographical location data about a Tailscale host
+}
+
+// Service represents a service running on a node.
+message Service {
+  string proto = 1;                    // ServiceProto (e.g., "tcp", "udp")
+  uint32 port = 2;                     // port number
+  string description = 3;              // description of the service
+}
+
+// NetInfo contains information about the host's network state
+message NetInfo {
+    google.protobuf.BoolValue mapping_varies_by_dest_ip = 1;  // whether the network mapping varies by destination IP
+    google.protobuf.BoolValue hair_pinning = 2;              // whether hair pinning works
+    google.protobuf.BoolValue working_ipv6 = 3;              // whether the host has IPv6 internet connectivity
+    google.protobuf.BoolValue os_has_ipv6 = 4;              // whether the OS supports IPv6 at all
+    google.protobuf.BoolValue working_udp = 5;              // whether the host has UDP internet connectivity
+    google.protobuf.BoolValue working_icmpv4 = 6;           // whether ICMPv4 works
+    bool have_port_map = 7;                                 // whether we have an existing portmap open
+    google.protobuf.BoolValue upnp = 8;                     // whether UPnP appears present on the LAN
+    google.protobuf.BoolValue pmp = 9;                      // whether NAT-PMP appears present on the LAN
+    google.protobuf.BoolValue pcp = 10;                     // whether PCP appears present on the LAN
+    int32 preferred_derp = 11;                              // preferred DERP region ID
+    string link_type = 12;                                  // current link type
+    map<string, double> derp_latency = 13;                  // DERP latency map
+    string firewall_mode = 14;                              // Linux-specific firewall mode
+}
+
+// Location represents geographical location data about a Tailscale host.
+message Location {
+  string country = 1;                  // country code
+  string country_code = 2;             // ISO country code
+  string city = 3;                     // city name
+  string city_code = 4;                // city code
+  double latitude = 5;                 // latitude coordinate
+  double longitude = 6;                // longitude coordinate
+  int32 priority = 7;                  // priority for location preference
+}
