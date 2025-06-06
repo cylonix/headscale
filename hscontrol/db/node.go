@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -91,10 +92,10 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		log.Debug().
-		Str("network", network).
-		Str("username", username).
-		Int("count", int(count)).
-		Msg("Listed nodes with options")
+			Str("network", network).
+			Str("username", username).
+			Int("count", int(count)).
+			Msg("Listed nodes with options")
 		total = count
 		return types.Nodes(nodes), err
 	})
@@ -827,18 +828,22 @@ func generateGivenName(suppliedName string, randomSuffix bool) (string, error) {
 func (hsdb *HSDatabase) GenerateGivenName(
 	mkey key.MachinePublic,
 	suppliedName string,
-	networkDomain string, // __CYLONIX_MOD__
+	networkDomain string, nodeID *types.NodeID, currentGivenName *string, // __CYLONIX_MOD__
 ) (string, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (string, error) {
-		return GenerateGivenName(rx, mkey, suppliedName, networkDomain) // __CYLONIX_MOD__
+		return GenerateGivenName(rx, mkey, suppliedName, networkDomain, nodeID, currentGivenName) // __CYLONIX_MOD__
 	})
 }
+
+var givenNamePattern = regexp.MustCompile(`^(.+?)(?:-([1-9][0-9]?|1[0-2][0-8])?)?$`)
 
 func GenerateGivenName(
 	tx *gorm.DB,
 	mkey key.MachinePublic,
 	suppliedName string,
 	networkDomain string, // __CYLONIX_MOD__
+	nodeID *types.NodeID, // __CYLONIX_MOD__
+	currentGivenName *string, // __CYLONIX_MOD__
 ) (string, error) {
 	givenName, err := generateGivenName(suppliedName, false)
 	if err != nil {
@@ -847,6 +852,21 @@ func GenerateGivenName(
 
 	// Tailscale rules (may differ) https://tailscale.com/kb/1098/machine-names/
 	// __BEGIN_CYLONIX_MOD__
+	// If the current given name is already the same as the generated one or
+	// has the same prefix before the -[digit], we can return it.
+	if currentGivenName != nil {
+		if *currentGivenName == givenName {
+			return *currentGivenName, nil
+		}
+
+		// Check if currentGivenName matches givenName-X where X is 1-128
+		matches := givenNamePattern.FindStringSubmatch(*currentGivenName)
+		if len(matches) == 3 && matches[1] == givenName {
+			if matches[2] != "" { // Has numeric suffix
+				return *currentGivenName, nil
+			}
+		}
+	}
 	// Try with 1-128 with binary search before going with a random suffix.
 	// First check if base name is available
 	nodes, err := listNodesByGivenName(tx, givenName, networkDomain)
@@ -854,6 +874,13 @@ func GenerateGivenName(
 		return "", err
 	}
 	if len(nodes) == 0 {
+		return givenName, nil
+	}
+	if len(nodes) != 1 {
+		return "", fmt.Errorf("multiple nodes with the same given name %s found in the database, this should not happen", givenName)
+	}
+	if nodeID != nil && nodes[0].ID == *nodeID {
+		// If the node is the same as the one we are updating, we can use the given name.
 		return givenName, nil
 	}
 
@@ -871,6 +898,13 @@ func GenerateGivenName(
 			// Found an available slot, try to find a lower one
 			right = mid - 1
 		} else {
+			if len(nodes) != 1 {
+				return "", fmt.Errorf("multiple nodes with the same given name %s found in the database, this should not happen", testName)
+			}
+			if nodeID != nil && nodes[0].ID == *nodeID {
+				// If the node is the same as the one we are updating, we can use the given name.
+				return testName, nil
+			}
 			// Slot taken, try higher numbers
 			left = mid + 1
 		}
@@ -1118,7 +1152,7 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 	}
 	networkDomain := string(v)
 	givenName, err := GenerateGivenName(
-		tx, node.MachineKey, node.Hostinfo.Hostname, networkDomain,
+		tx, node.MachineKey, node.Hostinfo.Hostname, networkDomain, nil, nil, // __CYLONIX_MOD__
 	)
 	if err != nil {
 		return fmt.Errorf("failed to generate given name: %w", err)
@@ -1127,6 +1161,37 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 
 	node.GivenName = givenName
 	node.NetworkDomain = networkDomain
+	return nil
+}
+
+func(hsdb *HSDatabase) MaybeUpdateNodeGivenName(
+	node *types.Node,
+	newHostname string,
+) error {
+	if node.Hostname == newHostname {
+		// No need to update the given name if the hostname is the same.
+		return nil
+	}
+	node.
+		DebugLog().
+		Str("old-hostname", node.Hostname).
+		Str("new-hostname", newHostname).
+		Str("given-name", node.GivenName).
+		Msg("Updating given name for node")
+	givenName, err := hsdb.GenerateGivenName(
+		node.MachineKey, newHostname,
+		node.NetworkDomain, &node.ID, &node.GivenName,
+	)
+	if err != nil {
+		return err
+	}
+	node.Hostname = newHostname
+	node.GivenName = givenName
+	update := &types.Node{GivenName: givenName, Hostname: newHostname}
+	if err := hsdb.UpdateNode(node.ID, node.Namespace, update, nil, nil); err != nil {
+		return fmt.Errorf("failed to update node given name: %w", err)
+	}
+	node.DebugLog().Msgf("updated hostname to %s and given name to %s", newHostname, givenName)
 	return nil
 }
 

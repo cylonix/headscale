@@ -62,6 +62,15 @@ func (h *Headscale) newMapSession(
 ) *mapSession {
 	warnf, infof, tracef, errf := logPollFunc(req, node)
 
+	// __BEGIN_CYLONIX_MOD__
+	if node != nil && req.Hostinfo != nil && node.Hostname != req.Hostinfo.Hostname {
+		if err := h.db.MaybeUpdateNodeGivenName(node, req.Hostinfo.Hostname); err != nil {
+			errf(err, "Could not update node given name from request")
+			return nil
+		}
+	}
+	// __END_CYLONIX_MOD__
+
 	var updateChan chan types.StateUpdate
 	if req.Stream {
 		// Use a buffered channel in case a node is not fully ready

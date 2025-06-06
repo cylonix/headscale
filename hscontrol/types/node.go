@@ -352,7 +352,7 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 		stack := string(buf[:n])
 		node.ErrorLog(err).
 			Str("stack", stack).
-			Msg("Node BeforeUpdate with invalid hostinfo")
+			Msg("Node saved with invalid hostinfo")
 	}
 	// __END_CYLONIX_MOD__
 

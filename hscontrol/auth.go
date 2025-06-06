@@ -166,7 +166,7 @@ func (h *Headscale) handleRegister(
 		givenName, err := h.db.GenerateGivenName(
 			machineKey,
 			regReq.Hostinfo.Hostname,
-			"", // __CYLONIX_MOD__
+			"", nil, nil, // __CYLONIX_MOD__
 		)
 		if err != nil {
 			logErr(err, "Failed to generate given name for node")
@@ -246,6 +246,14 @@ func (h *Headscale) handleRegister(
 				return
 			}
 			log.Debug().Str("node", node.Hostname).Msg("updated auth key")
+		}
+
+		// Check if we need to update the given name
+		if regReq.Hostinfo != nil && node.Hostname != regReq.Hostinfo.Hostname {
+			if err := h.db.MaybeUpdateNodeGivenName(node, regReq.Hostinfo.Hostname); err != nil {
+				logNodeError(node, err, "failed to update given name")
+				return
+			}
 		}
 		// __END_CYLONIX_MOD__
 
@@ -524,9 +532,11 @@ func (h *Headscale) handleAuthKey(
 			}
 			networkDomain = string(v)
 		}
-		// __END_CYLONIX_MOD__
 
-		givenName, err := h.db.GenerateGivenName(machineKey, registerRequest.Hostinfo.Hostname, networkDomain) // __CYLONIX_MOD__
+		givenName, err := h.db.GenerateGivenName(
+			machineKey, registerRequest.Hostinfo.Hostname, networkDomain, nil, nil,
+		)
+		// __END_CYLONIX_MOD__
 		if err != nil {
 			log.Error().
 				Caller().
