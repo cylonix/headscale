@@ -163,17 +163,6 @@ func (h *Headscale) handleRegister(
 
 		logInfo("Node not found in database, creating new")
 
-		givenName, err := h.db.GenerateGivenName(
-			machineKey,
-			regReq.Hostinfo.Hostname,
-			"", nil, nil, // __CYLONIX_MOD__
-		)
-		if err != nil {
-			logErr(err, "Failed to generate given name for node")
-
-			return
-		}
-
 		// The node did not have a key to authenticate, which means
 		// that we rely on a method that calls back some how (OpenID or CLI)
 		// We create the node and then keep it around until a callback
@@ -182,7 +171,6 @@ func (h *Headscale) handleRegister(
 			MachineKey: machineKey,
 			Hostname:   regReq.Hostinfo.Hostname,
 			Hostinfo:   regReq.Hostinfo,
-			GivenName:  givenName,
 			NodeKey:    regReq.NodeKey,
 			LastSeen:   &now,
 			Expiry:     &time.Time{},

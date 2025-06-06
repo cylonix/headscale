@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -331,28 +330,6 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 			}
 			c.Namespace = namespace
 		}
-	}
-	if node.Hostinfo == nil {
-		err = fmt.Errorf("nil hostinfo")
-	} else {
-		hasPeerAPI := false
-		for _, s := range node.Hostinfo.Services {
-			if s.Proto == tailcfg.PeerAPI4 {
-				hasPeerAPI = true
-				break
-			}
-		}
-		if !hasPeerAPI {
-			err = fmt.Errorf("hostinfo does not contain PeerAPI4 service")
-		}
-	}
-	if err != nil {
-		buf := make([]byte, 4096)
-		n := runtime.Stack(buf, false)
-		stack := string(buf[:n])
-		node.ErrorLog(err).
-			Str("stack", stack).
-			Msg("Node saved with invalid hostinfo")
 	}
 	// __END_CYLONIX_MOD__
 
