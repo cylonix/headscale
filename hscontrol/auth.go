@@ -28,7 +28,7 @@ func logAuthFunc(
 ) (func(string), func(string), func(error, string)) {
 	return func(msg string) {
 			log.Info().
-				Caller().
+				Caller(1).
 				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
@@ -40,7 +40,7 @@ func logAuthFunc(
 		},
 		func(msg string) {
 			log.Trace().
-				Caller().
+				Caller(1).
 				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
@@ -52,7 +52,7 @@ func logAuthFunc(
 		},
 		func(err error, msg string) {
 			log.Error().
-				Caller().
+				Caller(1).
 				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
@@ -115,36 +115,16 @@ func (h *Headscale) handleRegister(
 		if regReq.Followup != "" {
 			logTrace("register request is a followup")
 			// __BEGIN_CYLONIX_MOD__
-			if h.cfg.NodeHandler != nil {
-				userStableID, err := h.cfg.NodeHandler.AuthStatus(regReq.Followup)
-				if err != nil {
-					logErr(err, "Failed to get auth status")
-					return
-				}
-				if userStableID != "" {
-					logInfo("User logged in " + userStableID)
-					user, err := h.db.GetUser(userStableID)
-					if err != nil {
-						logErr(err, "Failed to get user")
-						return
-					}
-					expiry := time.Now().Add(time.Hour * 24 * 150)
-					if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
-						logErr(err, "Failed to register node after authorization")
-						return
-					}
-					logInfo("Node registered after authorization")
-					node, err = h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, key.NodePublic{})
-					if err != nil {
-						logErr(err, "Failed to get node after authorization")
-						return
-					}
-					h.handleNodeWithValidRegistration(writer, *node, machineKey)
-					return
-				}
-				logInfo("User not logged in yet url=" + regReq.Followup)
-				// Not yet approved. Force the client to wait.
+			node, err := h.checkAuthStatus(writer, machineKey, regReq.NodeKey, regReq.Followup, logInfo)
+			if err != nil {
+				logErr(err, "Failed to check auth status")
+				return
 			}
+			if node != nil {
+				logInfo("Node registered after authorization")
+				return
+			}
+			// Fall through to let node retry.
 			// __END_CYLONIX_MOD__
 
 			if _, ok := h.registrationCache.Get(machineKey.String()); ok {
@@ -154,10 +134,23 @@ func (h *Headscale) handleRegister(
 				case <-req.Context().Done():
 					return
 				case <-time.After(registrationHoldoff):
-					h.handleNewNode(req, writer, regReq, machineKey) // __CYLONIX_MOD__
+					logInfo("Waited for interactive login, checking auth status again")
+					node, err := h.checkAuthStatus(writer, machineKey, regReq.NodeKey, regReq.Followup, logInfo)
+					if err != nil {
+						logErr(err, "Failed to check auth status")
+						return
+					}
+					if node != nil {
+						logInfo("Node registered after authorization")
+						return
+					}
+					logInfo("Node is still not registered, send login URL again")
+					h.handleNewNode(req, writer, regReq, machineKey, regReq.Followup) // __CYLONIX_MOD__
 
 					return
 				}
+			} else {
+				logTrace("Node is not waiting for interactive login, proceeding with registration")
 			}
 		}
 
@@ -195,7 +188,7 @@ func (h *Headscale) handleRegister(
 			registerCacheExpiration,
 		)
 
-		h.handleNewNode(req, writer, regReq, machineKey) // __CYLONIX_MOD__
+		h.handleNewNode(req, writer, regReq, machineKey, regReq.Followup) // __CYLONIX_MOD__
 
 		return
 	}
@@ -238,7 +231,7 @@ func (h *Headscale) handleRegister(
 
 		// Check if we need to update the given name
 		if regReq.Hostinfo != nil && node.Hostname != regReq.Hostinfo.Hostname {
-			if err := h.db.MaybeUpdateNodeGivenName(node, regReq.Hostinfo.Hostname); err != nil {
+			if err := h.db.MaybeUpdateNodeGivenName(node, regReq.Hostinfo); err != nil {
 				logNodeError(node, err, "failed to update given name")
 				return
 			}
@@ -521,8 +514,13 @@ func (h *Headscale) handleAuthKey(
 			networkDomain = string(v)
 		}
 
+		hostname := registerRequest.Hostinfo.Hostname
+		if hostname == "localhost" || hostname == "" {
+			hostname = registerRequest.Hostinfo.DeviceModel
+		}
+
 		givenName, err := h.db.GenerateGivenName(
-			machineKey, registerRequest.Hostinfo.Hostname, networkDomain, nil, nil,
+			machineKey, hostname, networkDomain, nil, nil,
 		)
 		// __END_CYLONIX_MOD__
 		if err != nil {
@@ -696,6 +694,7 @@ func (h *Headscale) handleNewNode(
 	writer http.ResponseWriter,
 	registerRequest tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
+	followUp string, // __CYLONIX_MOD__
 ) {
 	logInfo, logTrace, logErr := logAuthFunc(req, registerRequest, machineKey) // __CYLONIX_MOD__
 
@@ -722,7 +721,7 @@ func (h *Headscale) handleNewNode(
 			NodeKey:       registerRequest.NodeKey,
 			Hostinfo:      registerRequest.Hostinfo,
 			NetworkDomain: registerRequest.Tailnet,
-		})
+		}, followUp) // __CYLONIX_MOD__
 		if err != nil {
 			logErr(err, "Failed to get auth url")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
@@ -841,7 +840,7 @@ func (h *Headscale) handleNodeWithValidRegistration(
 	resp := tailcfg.RegisterResponse{}
 
 	// The node registration is valid, respond with redirect to /map
-	log.Debug().
+	log.Info().
 		Caller().
 		Str("node", node.Hostname).
 		Msg("Client is registered and we have the current NodeKey. All clear to /map")
@@ -985,7 +984,7 @@ func (h *Headscale) handleNodeExpiredOrLoggedOut(
 			NodeKey:       regReq.NodeKey,
 			Hostinfo:      regReq.Hostinfo,
 			NetworkDomain: regReq.Tailnet,
-		})
+		}, "")
 		if err != nil {
 			log.Error().
 				Caller().
@@ -1053,6 +1052,42 @@ func (h *Headscale) validateRequestPreAuthKey(authKey string) (pak *types.PreAut
 		code = http.StatusInternalServerError
 	}
 	return
+}
+
+func (h *Headscale) checkAuthStatus(
+	writer http.ResponseWriter, machineKey key.MachinePublic,
+	nodeKey key.NodePublic, followup string, logInfo func(string),
+) (*types.Node, error) {
+	if h.cfg.NodeHandler == nil {
+		logInfo("NodeHandler is not configured, skipping auth status check")
+		return nil, nil
+	}
+	userStableID, err := h.cfg.NodeHandler.AuthStatus(followup)
+	if err != nil {
+		logInfo("Failed to get auth status: " + err.Error())
+		return nil, nil
+	}
+	if userStableID == "" {
+		logInfo("User not logged in yet url=" + followup)
+		// Not yet approved. Force the client to wait.
+		return nil, nil
+	}
+	user, err := h.db.GetUser(userStableID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	logInfo("User logged in " + userStableID)
+	expiry := time.Now().Add(time.Hour * 24 * 150)
+	if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
+		return nil, fmt.Errorf("failed to register node after authorization: %w", err)
+	}
+	node, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, nodeKey, key.NodePublic{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node after authorization: %w", err)
+	}
+	logInfo("Node registered after authorization")
+	h.handleNodeWithValidRegistration(writer, *node, machineKey)
+	return node, nil
 }
 
 // __END_CYLONIX_MOD__

@@ -3,6 +3,7 @@ package hscontrol
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"gorm.io/gorm"
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpserver"
 	"tailscale.com/tailcfg"
@@ -297,7 +299,8 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 
 		// __BEGIN_CYLONIX_MOD__
 		msg := "Internal error"
-		if ns.headscale.cfg.NodeHandler != nil {
+		code := http.StatusInternalServerError
+		if ns.headscale.cfg.NodeHandler != nil && errors.Is(err, gorm.ErrRecordNotFound) {
 			if err := ns.headscale.cfg.NodeHandler.Recover(ns.conn.Peer(), mapRequest.NodeKey); err != nil {
 				log.Error().Err(err).
 					Str("namespace", req.Header.Get("namespace")).
@@ -305,11 +308,13 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 					Str("node-key", mapRequest.NodeKey.ShortString()).
 					Str("hostname", hostname).
 					Msg("Failed to recover.")
+				msg = "Failed to find node"
 			} else {
 				msg = "Machine needs approval"
 			}
+			code = http.StatusUnauthorized
 		}
-		http.Error(writer, msg, http.StatusInternalServerError)
+		http.Error(writer, msg, code)
 		// __END_CYLONIX_MOD__
 		return
 	}

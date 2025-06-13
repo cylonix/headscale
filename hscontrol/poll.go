@@ -64,7 +64,7 @@ func (h *Headscale) newMapSession(
 
 	// __BEGIN_CYLONIX_MOD__
 	if node != nil && req.Hostinfo != nil && node.Hostname != req.Hostinfo.Hostname {
-		if err := h.db.MaybeUpdateNodeGivenName(node, req.Hostinfo.Hostname); err != nil {
+		if err := h.db.MaybeUpdateNodeGivenName(node, req.Hostinfo); err != nil {
 			errf(err, "Could not update node given name from request")
 			return nil
 		}

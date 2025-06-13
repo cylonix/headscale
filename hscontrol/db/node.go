@@ -1150,9 +1150,15 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 	if err != nil {
 		return err
 	}
+
+	hostname := node.Hostinfo.Hostname
+	if hostname == "localhost" || hostname == "" {
+		hostname = node.Hostinfo.DeviceModel
+	}
+
 	networkDomain := string(v)
 	givenName, err := GenerateGivenName(
-		tx, node.MachineKey, node.Hostinfo.Hostname, networkDomain, nil, nil, // __CYLONIX_MOD__
+		tx, node.MachineKey, hostname, networkDomain, nil, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to generate given name: %w", err)
@@ -1166,15 +1172,19 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 
 func(hsdb *HSDatabase) MaybeUpdateNodeGivenName(
 	node *types.Node,
-	newHostname string,
+	hostinfo *tailcfg.Hostinfo, // __CYLONIX_MOD__
 ) error {
-	if node.Hostname == newHostname {
+	if hostinfo == nil || node.Hostname == hostinfo.Hostname {
 		// No need to update the given name if the hostname is the same.
 		return nil
 	}
+	newHostname := hostinfo.Hostname
+	if newHostname == "localhost" || newHostname == "" {
+		newHostname = hostinfo.DeviceModel
+	}
+
 	node.
 		DebugLog().
-		Str("old-hostname", node.Hostname).
 		Str("new-hostname", newHostname).
 		Str("given-name", node.GivenName).
 		Msg("Updating given name for node")
