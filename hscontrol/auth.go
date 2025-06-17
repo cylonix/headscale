@@ -1068,7 +1068,7 @@ func (h *Headscale) checkAuthStatus(
 		return nil, nil
 	}
 	if userStableID == "" {
-		logInfo("User not logged in yet url=" + followup)
+		//logInfo("User not logged in yet url=" + followup)
 		// Not yet approved. Force the client to wait.
 		return nil, nil
 	}

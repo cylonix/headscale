@@ -967,6 +967,13 @@ func (api headscaleV1APIServer) GetPolicy(
 	case types.PolicyModeDB, types.PolicyModeMulti: // __CYLONIX_MOD__
 		p, err := api.h.db.GetPolicy(request.Namespace, request.Network)
 		if err != nil {
+			if errors.Is(err, types.ErrPolicyNotFound) {
+				// If the policy is not found, return an empty policy.
+				return &v1.GetPolicyResponse{
+					Policy:    "",
+					UpdatedAt: nil,
+				}, nil
+			}
 			return nil, err
 		}
 
