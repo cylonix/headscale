@@ -3919,6 +3919,10 @@
     "v1RouteSpec": {
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string",
+          "format": "uint64"
+        },
         "prefix": {
           "type": "string"
         },

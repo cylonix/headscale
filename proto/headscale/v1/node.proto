@@ -180,11 +180,11 @@ message UpdateNodeRequest {
 message UpdateNodeResponse {
 }
 message RouteSpec {
-    string prefix     = 1;
-    bool   advertised = 2;
-    bool   enabled    = 3;
-    bool   is_primary = 4;
+    uint64 id         = 1;
+    string prefix     = 2;
+    bool   advertised = 3;
+    bool   enabled    = 4;
+    bool   is_primary = 5;
 }
-
 
 // __END_CYLONIX_MOD__

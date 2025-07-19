@@ -817,6 +817,7 @@ func (node *Node) ProtoHostinfo() *v1.Hostinfo {
 func (node *Node) ProtoRouteSpecs() []*v1.RouteSpec {
 	list, _ := SliceMap(node.Routes, func(r Route) (*v1.RouteSpec, error) {
 		return &v1.RouteSpec{
+			Id:	        uint64(r.ID),
 			Prefix:     netip.Prefix(r.Prefix).String(),
 			Advertised: r.Advertised,
 			Enabled:    r.Enabled,
@@ -843,13 +844,17 @@ func ParseProtoRouteSpecs(nodeID uint64, userID *uint, namespace string, routes 
 		if err != nil {
 			return Route{}, err
 		}
-		return Route{
+		route := Route{
 			NodeID:     nodeID,
 			Prefix:     IPPrefix(prefix),
 			Advertised: r.Advertised,
 			Enabled:    r.Enabled,
 			IsPrimary:  r.IsPrimary,
-		}, nil
+		}
+		if (r.Id > 0) {
+			route.ID = uint(r.Id)
+		}
+		return route, nil
 	})
 }
 func ParseProtoNode(p *v1.Node) (*Node, error) {
