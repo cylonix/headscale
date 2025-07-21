@@ -250,7 +250,7 @@ func GetNodeByAnyKey(
 		Preload("User").
 		Preload("Routes")
 
-	// ___BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_MOD__
 	where := "node_key = ? OR node_key = ?"
 	if userID != nil {
 		where = "(machine_key = ? AND user_id = ?) OR " + where
@@ -331,43 +331,8 @@ func RenameNode(tx *gorm.DB,
 	return nil
 }
 
-// __BEGIN_CYLONIX_MOD__
-// Remove pre-auth key if node is expired.
-// TODO: add background process to glean and remove auth keys for nodes that
-// TODO: are expiring in the future.
-func DeleteExpiredNodeAuthKey(tx *gorm.DB,
-	nodeID types.NodeID, expiry time.Time,
-) error {
-	if expiry.UnixNano() > time.Now().UnixNano() {
-		return nil
-	}
-	node := &types.Node{}
-	if err := tx.
-		Model(&types.Node{}).
-		Where("id = ?", nodeID).
-		First(node).
-		Error; err != nil {
-		return fmt.Errorf("failed to find node (id=%v) to delete expired auth key: %w", nodeID, err)
-	}
-	return DeleteNodePreAuthKey(tx, node)
-}
-func DeleteNodePreAuthKey(tx *gorm.DB, node *types.Node) error {
-	if node.AuthKeyID == nil {
-		return nil
-	}
-	return tx.Delete(&types.PreAuthKey{}, "id = ?", *node.AuthKeyID).Error
-}
-
-// __END_CYLONIX_MOD__
-
 func (hsdb *HSDatabase) NodeSetExpiry(nodeID types.NodeID, expiry time.Time) error {
 	return hsdb.Write(func(tx *gorm.DB) error {
-		// __BEGIN_CYLONIX_MOD__
-		if err := DeleteExpiredNodeAuthKey(tx, nodeID, expiry); err != nil {
-			return err
-		}
-		// __END_CYLONIX_MOD__
-
 		return NodeSetExpiry(tx, nodeID, expiry)
 	})
 }
@@ -402,9 +367,6 @@ func DeleteNode(tx *gorm.DB,
 		if err := nodeHandler.Delete(node); err != nil {
 			return changed, err
 		}
-	}
-	if err := DeleteNodePreAuthKey(tx, node); err != nil {
-		return changed, err
 	}
 	// __END_CYLONIX_MOD__
 

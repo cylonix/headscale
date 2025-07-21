@@ -77,25 +77,19 @@ func (h *Headscale) handleRegister(
 	logTrace("handleRegister called, looking up machine in DB")
 
 	// __BEGIN_CYLONIX_MOD__
-	authKey := ""
-	if regReq.Auth != nil {
-		authKey = regReq.Auth.AuthKey
-	}
-	pak, code, err := h.validateRequestPreAuthKey(authKey)
-	if err != nil {
-		if code == http.StatusUnauthorized {
-			logInfo(err.Error())
-			http.Error(writer, "Unauthorized", code)
+	// Prioritize for auth key registering a new node instead of refreshing
+	// node keys. Lookup base on the new node key only first.
+	if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
+		_, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, key.NodePublic{})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.handleAuthKey(req, writer, regReq, machineKey)
 			return
 		}
-		logErr(err, "Failed to validate pre-auth key.")
-		http.Error(writer, "Internal error", code)
-		return
 	}
-	node, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey)
-	logInfo(fmt.Sprintf("handleRegister database lookup has returned: err=%v", err))
 	// __END_CYLONIX_MOD__
-	logTrace("handleRegister database lookup has returned")
+
+	node, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey) // __CYLONIX_MOD__
+	logTrace(fmt.Sprintf("handleRegister database lookup has returned: err=%v", err)) // __CYLONIX_MOD__
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// If the node has AuthKey set, handle registration via PreAuthKeys
 		if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
@@ -217,18 +211,6 @@ func (h *Headscale) handleRegister(
 		}
 
 		// __BEGIN_CYLONIX_MOD__
-		// Update auth-key in node if changed.
-		if node.AuthKeyID != nil && pak != nil && *node.AuthKeyID != pak.ID {
-			update := &types.Node{AuthKeyID: &pak.ID, AuthKey: pak}
-			if err := h.db.UpdateNode(node.ID, node.Namespace, update, nil, nil); err != nil {
-				msg := "failed to update node auth key"
-				logNodeError(node, err, msg)
-				http.Error(writer, msg, http.StatusInternalServerError)
-				return
-			}
-			log.Debug().Str("node", node.Hostname).Msg("updated auth key")
-		}
-
 		// Check if we need to update the given name
 		if regReq.Hostinfo != nil && node.Hostname != regReq.Hostinfo.Hostname {
 			if err := h.db.MaybeUpdateNodeGivenName(node, regReq.Hostinfo); err != nil {
@@ -539,6 +521,7 @@ func (h *Headscale) handleAuthKey(
 			Hostname:       registerRequest.Hostinfo.Hostname,
 			Hostinfo:       registerRequest.Hostinfo, // __CYLONIX_MOD__
 			NetworkDomain:  networkDomain,            // __CYLONIX_MOD__
+			Namespace:      pak.Namespace,            // __CYLONIX_MOD__
 			GivenName:      givenName,
 			UserID:         pak.User.ID,
 			User:           pak.User,
@@ -888,6 +871,8 @@ func (h *Headscale) handleNodeKeyRefresh(
 	log.Info().
 		Caller().
 		Str("node", node.Hostname).
+		Str("node_key", registerRequest.NodeKey.ShortString()).
+		Str("old_node_key", registerRequest.OldNodeKey.ShortString()).
 		Msg("We have the OldNodeKey in the database. This is a key refresh")
 
 	// __BEGIN_CYLONIX_MOD__
@@ -1033,25 +1018,6 @@ func writeInternalError(writer http.ResponseWriter, err error) {
 }
 func logNodeError(node *types.Node, err error, msg string) {
 	node.ErrorLog(err).Msg(msg)
-}
-func (h *Headscale) validateRequestPreAuthKey(authKey string) (pak *types.PreAuthKey, code int, err error) {
-	if !h.cfg.RequirePreAuth {
-		return
-	}
-	if authKey == "" {
-		err = errors.New("missing pre-auth key")
-		code = http.StatusUnauthorized
-		return
-	}
-	pak, err = h.db.ValidatePreAuthKey(authKey)
-	if err != nil {
-		if db.UnauthorizedPreAuthKeyError(err) {
-			code = http.StatusUnauthorized
-			return
-		}
-		code = http.StatusInternalServerError
-	}
-	return
 }
 
 func (h *Headscale) checkAuthStatus(

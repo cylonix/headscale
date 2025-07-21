@@ -156,7 +156,16 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 	request *v1.CreatePreAuthKeyRequest,
 ) (*v1.CreatePreAuthKeyResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, request); err != nil {
+	network := ""
+	if request.GetUser() != "" {
+		user, err := api.h.db.GetUser(request.GetUser())
+		if err != nil {
+			return nil, err
+		}
+		network = user.Network
+	}
+	r := types.NewAuthScope(request.GetNamespace(), request.GetUser(), network)
+	if err := api.auth(ctx, r); err != nil {
 		return nil, err
 	}
 	// __END_CYLONIX_MOD__
@@ -178,9 +187,9 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 		request.GetUser(),
 		request.GetReusable(),
 		request.GetEphemeral(),
-		request.GetKey(),  // __CYLONIX_MOD__
-		request.GetIpv4(), // __CYLONIX_MOD__
-		request.GetIpv6(), // __CYLONIX_MOD__
+		request.GetDescription(), // __CYLONIX_MOD__
+		request.GetIpv4(),        // __CYLONIX_MOD__
+		request.GetIpv6(),        // __CYLONIX_MOD__
 		&expiration,
 		request.AclTags,
 	)
@@ -190,6 +199,34 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 
 	return &v1.CreatePreAuthKeyResponse{PreAuthKey: preAuthKey.Proto()}, nil
 }
+
+// __BEGIN_CYLONIX_MOD__
+func (api headscaleV1APIServer) DeletePreAuthKey(
+	ctx context.Context,
+	request *v1.DeletePreAuthKeyRequest,
+) (*v1.DeletePreAuthKeyResponse, error) {
+	preAuthKey, err := api.h.db.GetPreAuthKeyByID(request.GetId())
+	if err != nil {
+		if errors.Is(err, db.ErrPreAuthKeyNotFound) {
+			return &v1.DeletePreAuthKeyResponse{}, nil
+		}
+		return nil, fmt.Errorf("failed to find the pre auth key: %w", err)
+	}
+
+	if err := api.auth(ctx, types.NewAuthScope(
+		preAuthKey.Namespace, preAuthKey.User.Name, preAuthKey.User.Network,
+	)); err != nil {
+		return nil, err
+	}
+
+	err = api.h.db.DeletePreAuthKey(*preAuthKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &v1.DeletePreAuthKeyResponse{}, nil
+}
+// __END_CYLONIX_MOD__
 
 func (api headscaleV1APIServer) ExpirePreAuthKey(
 	ctx context.Context,
@@ -202,7 +239,9 @@ func (api headscaleV1APIServer) ExpirePreAuthKey(
 		}
 
 		// __BEGIN_CYLONIX_MOD__
-		if err := api.auth(ctx, types.NewAuthScope(preAuthKey.Namespace, preAuthKey.User.Name, "")); err != nil {
+		if err := api.auth(ctx, types.NewAuthScope(
+			preAuthKey.Namespace, preAuthKey.User.Name, preAuthKey.User.Network,
+		)); err != nil {
 			return err
 		}
 		// __END_CYLONIX_MOD__
@@ -221,7 +260,16 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 	request *v1.ListPreAuthKeysRequest,
 ) (*v1.ListPreAuthKeysResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, request); err != nil {
+	network := ""
+	if request.GetUser() != "" {
+		user, err := api.h.db.GetUser(request.GetUser())
+		if err != nil {
+			return nil, err
+		}
+		network = user.Network
+	}
+	r := types.NewAuthScope(request.GetNamespace(), request.GetUser(), network)
+	if err := api.auth(ctx, r); err != nil {
 		return nil, err
 	}
 	total, preAuthKeys, err := api.h.db.ListPreAuthKeysWithOptions(
@@ -244,11 +292,17 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 	response := make([]*v1.PreAuthKey, len(preAuthKeys))
 	for index, key := range preAuthKeys {
 		response[index] = key.Proto()
+		response[index].Key = db.GetPreAuthKeyDisplayKey(key.Key) // __CYLONIX_MOD__
 	}
 
-	sort.Slice(response, func(i, j int) bool {
-		return response[i].Id < response[j].Id
-	})
+	// __BEGIN_CYLONIX_MOD__
+	// Only sort by ID if there is no sorting specified in the request.
+	if request.SortBy == nil {
+		sort.Slice(response, func(i, j int) bool {
+			return response[i].Id < response[j].Id
+		})
+	}
+	// __END_CYLONIX_MOD__
 
 	return &v1.ListPreAuthKeysResponse{Total: uint32(total), PreAuthKeys: response}, nil // __CYLONIX_MOD__
 }

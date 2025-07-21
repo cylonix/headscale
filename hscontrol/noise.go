@@ -264,24 +264,6 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	if mapRequest.Hostinfo != nil {
 		hostname = mapRequest.Hostinfo.Hostname
 	}
-	authKey := req.URL.Query().Get("auth-key")
-	pak, code, err := ns.headscale.validateRequestPreAuthKey(authKey)
-	if err != nil {
-		if code == http.StatusUnauthorized {
-			log.Info().Caller().
-				Str("hostname", hostname).
-				Str("auth-key", authKey).
-				Msg(err.Error())
-			http.Error(writer, "Unauthorized", code)
-			return
-		}
-		log.Error().Caller().Err(err).
-			Str("hostname", hostname).
-			Str("auth-key", authKey).
-			Msg("Failed to validate pre-auth key.")
-		http.Error(writer, "Internal error", code)
-		return
-	}
 	// __END_CYLONIX_MOD__
 
 	node, err := ns.headscale.db.GetNodeByAnyKey(
@@ -318,20 +300,6 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		// __END_CYLONIX_MOD__
 		return
 	}
-
-	// __BEGIN_CYLONIX_MOD__
-	// Update auth-key in node if changed.
-	if node.AuthKeyID != nil && pak != nil && *node.AuthKeyID != pak.ID {
-		update := &types.Node{AuthKeyID: &pak.ID, AuthKey: pak}
-		if err := ns.headscale.db.UpdateNode(node.ID, node.Namespace, update, nil, nil); err != nil {
-			msg := "failed to update node auth key"
-			logNodeError(node, err, msg)
-			http.Error(writer, msg, http.StatusInternalServerError)
-			return
-		}
-		log.Debug().Str("node", node.Hostname).Msg("updated auth key")
-	}
-	// __END_CYLONIX_MOD__
 
 	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, node)
 	sess.tracef("a node sending a MapRequest with Noise protocol")

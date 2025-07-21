@@ -2,7 +2,7 @@ package db
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,12 +25,12 @@ func (hsdb *HSDatabase) CreatePreAuthKey(
 	userName string,
 	reusable bool,
 	ephemeral bool,
-	keyStr, ipv4, ipv6 string, // __CYLONIX_MOD__
+	description, ipv4, ipv6 string, // __CYLONIX_MOD__
 	expiration *time.Time,
 	aclTags []string,
 ) (*types.PreAuthKey, error) {
 	return Write(hsdb.DB, func(tx *gorm.DB) (*types.PreAuthKey, error) {
-		return CreatePreAuthKey(tx, userName, reusable, ephemeral, keyStr, ipv4, ipv6, expiration, aclTags) // __CYLONIX_MOD__
+		return CreatePreAuthKey(tx, userName, reusable, ephemeral, description, ipv4, ipv6, expiration, aclTags) // __CYLONIX_MOD__
 	})
 }
 
@@ -40,7 +40,7 @@ func CreatePreAuthKey(
 	userName string,
 	reusable bool,
 	ephemeral bool,
-	keyStr, ipv4, ipv6 string, // __CYLONIX_MOD__
+	description, ipv4, ipv6 string, // __CYLONIX_MOD__
 	expiration *time.Time,
 	aclTags []string,
 ) (*types.PreAuthKey, error) {
@@ -60,26 +60,22 @@ func CreatePreAuthKey(
 	}
 
 	now := time.Now().UTC()
-	kstr, err := generateKey()
+	kstr, err := generatePreAuthKey()
 	if err != nil {
 		return nil, err
 	}
-	// __BEGIN_CYLONIX_MOD__
-	if keyStr != "" {
-		kstr = keyStr
-	}
-	// __END_CYLONIX_MOD__
 	key := types.PreAuthKey{
-		Key:        kstr,
-		UserID:     user.ID,
-		User:       *user,
-		Reusable:   reusable,
-		Ephemeral:  ephemeral,
-		CreatedAt:  &now,
-		Expiration: expiration,
-		Namespace:  user.GetNamespace(), // __CYLONIX_MOD__
-		IPv4:       ipv4, // __CYLONIX_MOD__
-		IPv6:       ipv6, // __CYLONIX_MDO__
+		Key:         kstr,
+		UserID:      user.ID,
+		User:        *user,
+		Reusable:    reusable,
+		Ephemeral:   ephemeral,
+		CreatedAt:   &now,
+		Expiration:  expiration,
+		Namespace:   user.GetNamespace(), // __CYLONIX_MOD__
+		IPv4:        ipv4,                // __CYLONIX_MOD__
+		IPv6:        ipv6,                // __CYLONIX_MDO__
+		Description: description,         // __CYLONIX_MOD__
 	}
 
 	if err := tx.Save(&key).Error; err != nil {
@@ -142,6 +138,32 @@ func UnauthorizedPreAuthKeyError(err error) bool {
 	return errors.Is(err, ErrSingleUseAuthKeyHasBeenUsed) ||
 		errors.Is(err, ErrPreAuthKeyNotFound) ||
 		errors.Is(err, ErrPreAuthKeyExpired)
+}
+
+func (hsdb *HSDatabase) GetPreAuthKeyByID(id uint64) (*types.PreAuthKey, error) {
+	return Read(hsdb.DB, func(rx *gorm.DB) (*types.PreAuthKey, error) {
+		return GetPreAuthKeyByID(rx, id)
+	})
+}
+
+func GetPreAuthKeyByID(tx *gorm.DB, id uint64) (*types.PreAuthKey, error) {
+	pak := types.PreAuthKey{}
+	err := tx.Preload("User").Preload("ACLTags").First(&pak, "id = ?", id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPreAuthKeyNotFound
+		}
+		return nil, err
+	}
+	return &pak, err
+}
+
+func (hsdb *HSDatabase) DeletePreAuthKey(key types.PreAuthKey) error {
+	if result := hsdb.DB.Unscoped().Delete(key); result.Error != nil {
+		return result.Error
+	}
+
+	return nil
 }
 // __END_CYLONIX_MOD__
 
@@ -255,12 +277,40 @@ func ValidatePreAuthKey(tx *gorm.DB, k string) (*types.PreAuthKey, error) {
 	return &pak, nil
 }
 
-func generateKey() (string, error) {
-	size := 24
-	bytes := make([]byte, size)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+// __BEGIN_CYLONIX_MOD__
+// Generate 32 bytes (256 bits) of random data
+// Use URL-safe base64 encoding with a prefix
+func generateRandomKey(size int) (string, error) {
+    bytes := make([]byte, size)
+    if _, err := rand.Read(bytes); err != nil {
+        return "", fmt.Errorf("failed to generate random bytes: %w", err)
+    }
+    return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+func generatePreAuthKey() (string, error) {
+    // Generate main key (24 bytes)
+    main, err := generateRandomKey(24)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate main key: %w", err)
 	}
 
-	return hex.EncodeToString(bytes), nil
+    // Generate short prefix
+    prefix, err := generateRandomKey(8)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate prefix: %w", err)
+	}
+
+    // Combine into final format: cy-auth-{prefix}-{main}
+    return fmt.Sprintf("cy-auth-%s-%s", prefix, main), nil
 }
+
+// Helper function to get displayable version of key
+func GetPreAuthKeyDisplayKey(key string) string {
+    if len(key) > 20 {
+		return key[:20] + "..." // Shorten to first 22 characters
+	}
+	return key // Return as is if already short enough
+}
+
+// __END_CYLONIX_MOD__

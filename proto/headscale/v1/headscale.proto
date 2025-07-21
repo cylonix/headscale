@@ -60,6 +60,12 @@ service HeadscaleService {
         };
     }
 
+   rpc DeletePreAuthKey(DeletePreAuthKeyRequest) returns (DeletePreAuthKeyResponse) {
+        option (google.api.http) = {
+            delete: "/api/v1/preauthkey/{id}"
+        };
+    }
+
     rpc ExpirePreAuthKey(ExpirePreAuthKeyRequest) returns (ExpirePreAuthKeyResponse) {
         option (google.api.http) = {
             post: "/api/v1/preauthkey/expire"

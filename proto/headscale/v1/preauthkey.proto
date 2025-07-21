@@ -6,35 +6,44 @@ import "google/protobuf/timestamp.proto";
 import "headscale/v1/user.proto"; // __CYLONIX_MOD__
 
 message PreAuthKey {
-    string                    user       = 1;
-    string                    id         = 2;
-    string                    key        = 3;
-    bool                      reusable   = 4;
-    bool                      ephemeral  = 5;
-    bool                      used       = 6;
-    google.protobuf.Timestamp expiration = 7;
-    google.protobuf.Timestamp created_at = 8;
-    repeated string           acl_tags   = 9;
-    User                      userDetail = 10; // __CYLONIX_MOD_
-    string                    namespace  = 11; // __CYLONIX_MOD__
-    string                    ipv4       = 12; // __CYLONIX_MOD__
-    string                    ipv6       = 13; // __CYLONIX_MOD__
+    string                    user        = 1;
+    string                    id          = 2;
+    string                    key         = 3;
+    bool                      reusable    = 4;
+    bool                      ephemeral   = 5;
+    bool                      used        = 6;
+    google.protobuf.Timestamp expiration  = 7;
+    google.protobuf.Timestamp created_at  = 8;
+    repeated string           acl_tags    = 9;
+    User                      userDetail  = 10; // __CYLONIX_MOD_
+    string                    namespace   = 11; // __CYLONIX_MOD__
+    string                    ipv4        = 12; // __CYLONIX_MOD__
+    string                    ipv6        = 13; // __CYLONIX_MOD__
+    string                    description = 14; // __CYLONIX_MOD_
 }
 
 message CreatePreAuthKeyRequest {
-    string                    user       = 1;
-    bool                      reusable   = 2;
-    bool                      ephemeral  = 3;
-    google.protobuf.Timestamp expiration = 4;
-    repeated string           acl_tags   = 5;
-    optional string           key        = 6; // __CYLONIX_MOD__
-    optional string           namespace  = 7; // __CYLONIX_MOD__
-    optional string           ipv4       = 8; // __CYLONIX_MOD__
-    optional string           ipv6       = 9; // __CYLONIX_MOD__
+    string                    user        = 1;
+    bool                      reusable    = 2;
+    bool                      ephemeral   = 3;
+    google.protobuf.Timestamp expiration  = 4;
+    repeated string           acl_tags    = 5;
+    optional string           key         = 6; // __CYLONIX_MOD__
+    optional string           namespace   = 7; // __CYLONIX_MOD__
+    optional string           ipv4        = 8; // __CYLONIX_MOD__
+    optional string           ipv6        = 9; // __CYLONIX_MOD__
+    optional string           description = 10; // __CYLONIX_MOD__
 }
 
 message CreatePreAuthKeyResponse {
     PreAuthKey pre_auth_key = 1;
+}
+
+message DeletePreAuthKeyRequest {
+    uint64 id  = 1;
+}
+
+message DeletePreAuthKeyResponse {
 }
 
 message ExpirePreAuthKeyRequest {

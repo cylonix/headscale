@@ -23,9 +23,10 @@ type PreAuthKey struct {
 	CreatedAt  *time.Time
 	Expiration *time.Time
 
-	Namespace string // __CYLONIX_MOD__
-	IPv4      string // __CYLONIX_MOD__ optional ipv4 address requested
-	IPv6      string // __CYLONIX_MOD__ optional ipv6 address requested
+	Namespace   string // __CYLONIX_MOD__
+	IPv4        string // __CYLONIX_MOD__ optional ipv4 address requested
+	IPv6        string // __CYLONIX_MOD__ optional ipv6 address requested
+	Description string // __CYLONIX_MOD__ optional description of the key
 }
 
 // PreAuthKeyACLTag describes an automatic tag applied to a node when registered with the associated PreAuthKey.
@@ -46,10 +47,11 @@ func (key *PreAuthKey) Proto() *v1.PreAuthKey {
 		AclTags:   make([]string, len(key.ACLTags)),
 
 		// __BEGIN_CYLONIX_MOD__
-		UserDetail: key.User.Proto(),
-		Namespace:  key.Namespace,
-		Ipv4:       key.IPv4,
-		Ipv6:       key.IPv6,
+		UserDetail:  key.User.Proto(),
+		Namespace:   key.Namespace,
+		Ipv4:        key.IPv4,
+		Ipv6:        key.IPv6,
+		Description: key.Description,
 		// __END_CYLONIX_MOD__
 	}
 
@@ -75,13 +77,16 @@ func (key *PreAuthKey) FromProto(p *v1.PreAuthKey) error {
 		return err
 	}
 	*key = PreAuthKey{
-		User:      User{Name: p.User},
-		ID:        id,
-		Key:       p.Key,
-		Ephemeral: p.Ephemeral,
-		Reusable:  p.Reusable,
-		Used:      p.Used,
-		Namespace: p.Namespace,
+		User:        User{Name: p.User},
+		ID:          id,
+		Key:         p.Key,
+		Ephemeral:   p.Ephemeral,
+		Reusable:    p.Reusable,
+		Used:        p.Used,
+		Namespace:   p.Namespace,
+		IPv4:        p.Ipv4,
+		IPv6:        p.Ipv6,
+		Description: p.Description,
 	}
 
 	if p.Expiration.IsValid() {
@@ -102,4 +107,5 @@ func (key *PreAuthKey) FromProto(p *v1.PreAuthKey) error {
 
 	return nil
 }
+
 // __END_CYLONIX_MOD__

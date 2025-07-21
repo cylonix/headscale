@@ -467,6 +467,18 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				ID: "202507211100",
+				Migrate: func(tx *gorm.DB) error {
+					log.Info().Msg(`
+						Migrating database to add pre auth key description.
+						`)
+					return tx.AutoMigrate(
+						&types.PreAuthKey{},
+					)
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 			// __END_CYLONIX_MOD__
 		},
 	)

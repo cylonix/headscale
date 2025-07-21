@@ -125,6 +125,12 @@ func generateDNSConfig(
 
 	dnsConfig := cfg.DNSConfig.Clone()
 
+	// __BEGIN_CYLONIX_MOD__
+	if !slices.Contains(dnsConfig.Domains, baseDomain) {
+		dnsConfig.Domains = append(dnsConfig.Domains, baseDomain)
+	}
+	// __END_CYLONIX_MOD__
+
 	// if MagicDNS is enabled
 	if dnsConfig.Proxied {
 		if cfg.DNSUserNameInMagicDNS {
@@ -511,9 +517,14 @@ func (m *Mapper) baseWithConfigMapResponse(
 	if err := m.setMapResponseDERPMap(&resp, node, m.derpMap); err != nil {
 		return nil, err
 	}
+	domain := node.NetworkDomain
+	if domain == "" {
+		domain = m.cfg.BaseDomain
+	}
+
+	resp.Domain = domain
 	// __ END_CYLONIX_MOD __
 
-	resp.Domain = m.cfg.BaseDomain
 	resp.CollectServices = "true" // __CYLONIX_MOD__ For admin visibility
 	resp.KeepAlive = false
 
@@ -628,11 +639,15 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 			return err
 		}
 	}
+	domain := node.NetworkDomain
+	if domain == "" {
+		domain = m.cfg.BaseDomain
+	}
 	// __END_CYLONIX_MOD__
 
 	dnsConfig := generateDNSConfig(
 		cfg,
-		cfg.BaseDomain,
+		domain, // __CYLONIX_MOD__
 		node,
 		peers,
 	)
