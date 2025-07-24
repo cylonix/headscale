@@ -3387,6 +3387,11 @@
             "type": "object",
             "$ref": "#/definitions/v1Route"
           }
+        },
+        "total": {
+          "type": "integer",
+          "format": "int64",
+          "title": "__CYLONIX_MOD__"
         }
       }
     },

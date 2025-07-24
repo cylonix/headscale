@@ -38,6 +38,7 @@ message GetRoutesRequest {
 
 message GetRoutesResponse {
     repeated Route routes = 1;
+    uint32          total = 2; // __CYLONIX_MOD__
 }
 
 message EnableRouteRequest {

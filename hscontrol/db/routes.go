@@ -43,13 +43,13 @@ func getAdvertisedAndEnabledRoutes(tx *gorm.DB, namespace string) (types.Routes,
 	return routes, nil
 }
 
-func getRoutesByPrefix(tx *gorm.DB, namespace string, pref netip.Prefix) (types.Routes, error) { // __CYLONIX_MOD__
+func getRoutesByPrefix(tx *gorm.DB, namespace, networkDomain string, pref netip.Prefix) (types.Routes, error) { // __CYLONIX_MOD__
 	var routes types.Routes
 	err := tx.
 		Debug().
 		Preload("Node").
 		Preload("Node.User").
-		Where("namespace = ? AND prefix = ?", namespace, types.IPPrefix(pref)). // __CYLONIX_MOD__
+		Where("namespace = ? AND network = ? AND prefix = ?", namespace, networkDomain, types.IPPrefix(pref)). // __CYLONIX_MOD__
 		Find(&routes).Error
 	if err != nil {
 		return nil, err
@@ -198,6 +198,12 @@ func DeleteRoute(
 ) ([]types.NodeID, error) {
 	route, err := GetRoute(tx, id)
 	if err != nil {
+		// __BEGIN_CYLONIX_MOD__
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// If the route does not exist, we do not need to do anything.
+			return nil, nil
+		}
+		// __END_CYLONIX_MOD__
 		return nil, err
 	}
 
@@ -358,6 +364,8 @@ func SaveNodeRoutes(tx *gorm.DB, node *types.Node) (bool, error) {
 
 	log.Trace().
 		Str("node", node.Hostname).
+		Str("namespace", node.Namespace). // __CYLONIX_MOD__
+		Str("network", node.NetworkDomain). // __CYLONIX_MOD__
 		Interface("advertisedRoutes", advertisedRoutes).
 		Interface("currentRoutes", currentRoutes).
 		Msg("updating routes")
@@ -396,6 +404,8 @@ func SaveNodeRoutes(tx *gorm.DB, node *types.Node) (bool, error) {
 				Prefix:     types.IPPrefix(prefix),
 				Advertised: true,
 				Enabled:    false,
+				Namespace:  node.Namespace,     // __CYLONIX_MOD__
+				Network:    node.NetworkDomain, // __CYLONIX_MOD__
 			}
 			err := tx.Create(&route).Error
 			if err != nil {
@@ -424,7 +434,7 @@ func FailoverNodeRoutesIfNecessary(
 
 nodeRouteLoop:
 	for _, nodeRoute := range nodeRoutes {
-		routes, err := getRoutesByPrefix(tx, node.Namespace, netip.Prefix(nodeRoute.Prefix)) // __CYLONIX_MOD__
+		routes, err := getRoutesByPrefix(tx, node.Namespace, node.NetworkDomain, netip.Prefix(nodeRoute.Prefix)) // __CYLONIX_MOD__
 		if err != nil {
 			return nil, fmt.Errorf("getting routes by prefix: %w", err)
 		}
@@ -498,7 +508,7 @@ func failoverRouteTx(
 		return nil, nil
 	}
 
-	routes, err := getRoutesByPrefix(tx, r.Namespace, netip.Prefix(r.Prefix)) // __CYLONIX_MOD__
+	routes, err := getRoutesByPrefix(tx, r.Namespace, r.Network, netip.Prefix(r.Prefix)) // __CYLONIX_MOD__
 	if err != nil {
 		return nil, fmt.Errorf("getting routes by prefix: %w", err)
 	}

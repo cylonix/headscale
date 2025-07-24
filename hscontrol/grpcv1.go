@@ -710,7 +710,7 @@ func (api headscaleV1APIServer) GetRoutes(
 	if err := api.auth(ctx, request); err != nil {
 		return nil, err
 	}
-	_, routes, err := api.h.db.ListRoutesWithOptions(
+	total, routes, err := api.h.db.ListRoutesWithOptions(
 		request.GetIdList(),
 		request.Namespace,
 		request.GetNetwork(),
@@ -728,6 +728,7 @@ func (api headscaleV1APIServer) GetRoutes(
 	}
 
 	return &v1.GetRoutesResponse{
+		Total:  uint32(total), // __CYLONIX_MOD__
 		Routes: types.Routes(routes).Proto(),
 	}, nil
 }
@@ -829,6 +830,10 @@ func (api headscaleV1APIServer) DeleteRoute(
 		return db.GetRoute(rx, request.GetRouteId())
 	})
 	if err != nil {
+		// __BEGIN_CYLONIX_MOD__
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &v1.DeleteRouteResponse{}, nil
+		}
 		return nil, err
 	}
 	if err := api.auth(ctx, types.NewAuthScope(route.Node.Namespace, route.Node.User.Name, route.Node.NetworkDomain)); err != nil {
