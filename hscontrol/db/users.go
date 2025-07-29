@@ -19,14 +19,14 @@ var (
 
 func (hsdb *HSDatabase) CreateUser(name string) (*types.User, error) {
 	return Write(hsdb.DB, func(tx *gorm.DB) (*types.User, error) {
-		return CreateUser(tx, name, nil, nil) // __CYLONIX_MOD__
+		return CreateUser(tx, name, nil, nil, "") // __CYLONIX_MOD__
 	})
 }
 
 // __BEGIN_CYLONIX_MOD__
-func (hsdb *HSDatabase) CreateNamespaceUser(stableID string, namespace, loginName *string) (*types.User, error) {
+func (hsdb *HSDatabase) CreateNamespaceUser(stableID string, namespace, loginName *string, networkDomain string) (*types.User, error) {
 	return Write(hsdb.DB, func(tx *gorm.DB) (*types.User, error) {
-		return CreateUser(tx, stableID, namespace, loginName)
+		return CreateUser(tx, stableID, namespace, loginName, networkDomain)
 	})
 }
 
@@ -128,7 +128,7 @@ func UpdateUserNetworkDomain(tx *gorm.DB, username, network string) error {
 
 // CreateUser creates a new User. Returns error if could not be created
 // or another user already exists.
-func CreateUser(tx *gorm.DB, name string, namespace, loginName *string) (*types.User, error) { // __CYLONIX_MOD__
+func CreateUser(tx *gorm.DB, name string, namespace, loginName *string, networkDomain string) (*types.User, error) { // __CYLONIX_MOD__
 	err := util.CheckForFQDNRules(name)
 	if err != nil {
 		return nil, err
@@ -140,6 +140,7 @@ func CreateUser(tx *gorm.DB, name string, namespace, loginName *string) (*types.
 	user.Name = name
 	user.Namespace = namespace // __CYLONIX_MOD__
 	user.LoginName = loginName // __CYLONIX_MOD__
+	user.Network = networkDomain // __CYLONIX_MOD__
 	if err := tx.Create(&user).Error; err != nil {
 		return nil, fmt.Errorf("creating user: %w", err)
 	}

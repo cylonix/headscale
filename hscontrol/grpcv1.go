@@ -64,7 +64,7 @@ func (api headscaleV1APIServer) CreateUser(
 	if err := api.auth(ctx, types.NewAuthScope(request.GetNamespace(), request.GetName(), request.GetNetwork())); err != nil {
 		return nil, err
 	}
-	user, err := api.h.db.CreateNamespaceUser(request.GetName(), request.Namespace, request.LoginName)
+	user, err := api.h.db.CreateNamespaceUser(request.GetName(), request.Namespace, request.LoginName, request.GetNetwork())
 	// __END_CYLONIX_MOD__
 	if err != nil {
 		return nil, err
