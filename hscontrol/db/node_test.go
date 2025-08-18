@@ -734,8 +734,12 @@ func TestUpdateNodeRoutes(t *testing.T) {
 		t.Fatalf("creating db: %s", err)
 	}
 
-	namespace, login := "test-update-node-namespace", "test-update-node-login"
-	user, err := db.CreateNamespaceUser("test", &namespace, &login)
+	var (
+		namespace = "test-update-node-namespace"
+		login     = "test-update-node-login"
+		network   = "test-update-node-network"
+	)
+	user, err := db.CreateNamespaceUser("test", &namespace, &login, network)
 	assert.NoError(t, err)
 
 	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", "", "", nil, nil) // __CYLONIX_MOD__
@@ -830,8 +834,10 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 		t.Fatalf("creating db: %s", err)
 	}
 
-	namespace, login := "test-namespace", "test"
-	user, err := db.CreateNamespaceUser("test-user-id", &namespace, &login)
+	var (
+		namespace, login, network = "test-namespace", "test", "test-network"
+	)
+	user, err := db.CreateNamespaceUser("test-user-id", &namespace, &login, network)
 	assert.NoError(t, err)
 
 	pak, err := db.CreatePreAuthKey(user.Name, false, false, "", "", "", nil, nil) // __CYLONIX_MOD__
