@@ -251,25 +251,60 @@ func GetNodeByAnyKey(
 		Preload("Routes")
 
 	// __BEGIN_CYLONIX_MOD__
-	where := "node_key = ? OR node_key = ?"
-	if userID != nil {
-		where = "(machine_key = ? AND user_id = ?) OR " + where
-		if result :=
-			tx.First(&node, where,
-				machineKey.String(),
-				*userID,
-				nodeKey.String(),
-				oldNodeKey.String()); result.Error != nil {
-			return nil, result.Error
+	if nodeKey.IsZero() && oldNodeKey.IsZero() {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	if userID != nil && !machineKey.IsZero() {
+		where := "(machine_key = ? AND user_id = ?) AND "
+		if nodeKey.IsZero() {
+			where += "node_key = ?"
+			if result :=
+				tx.First(&node, where,
+					machineKey.String(),
+					*userID,
+					oldNodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
+		} else if oldNodeKey.IsZero() {
+			where += "node_key = ?"
+			if result :=
+				tx.First(&node, where,
+					machineKey.String(),
+					*userID,
+					nodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
+		} else {
+			where += "(node_key = ? OR node_key = ?)"
+			if result :=
+				tx.First(&node, where,
+					machineKey.String(),
+					*userID,
+					nodeKey.String(),
+					oldNodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
 		}
 	} else {
-		if result :=
-			tx.First(&node, where,
-				nodeKey.String(),
-				oldNodeKey.String()); result.Error != nil {
-			return nil, result.Error
+		if nodeKey.IsZero() {
+			where := "node_key = ?"
+			if result := tx.First(&node, where, oldNodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
+		} else if oldNodeKey.IsZero() {
+			where := "node_key = ?"
+			if result := tx.First(&node, where, nodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
+		} else {
+			where := "node_key = ? OR node_key = ?"
+			if result := tx.First(&node, where, nodeKey.String(), oldNodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
 		}
 	}
+	// __END_CYLONIX_MOD__
 
 	return &node, nil
 }
@@ -1132,7 +1167,7 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 	return nil
 }
 
-func(hsdb *HSDatabase) MaybeUpdateNodeGivenName(
+func (hsdb *HSDatabase) MaybeUpdateNodeGivenName(
 	node *types.Node,
 	hostinfo *tailcfg.Hostinfo, // __CYLONIX_MOD__
 ) error {
