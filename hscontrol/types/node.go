@@ -46,6 +46,10 @@ func (id NodeID) Uint64() uint64 {
 	return uint64(id)
 }
 
+func (id NodeID) IsZero() bool {
+	return id == 0
+}
+
 func (id NodeID) String() string {
 	return strconv.FormatUint(id.Uint64(), util.Base10)
 }
@@ -287,12 +291,6 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 	node.MachineKeyDatabaseField = node.MachineKey.String()
 	node.NodeKeyDatabaseField = node.NodeKey.String()
 	node.DiscoKeyDatabaseField = node.DiscoKey.String()
-
-	// __BEFORE_CYLONIX_ADD__
-	if node.MachineKey.IsZero() || node.NodeKey.IsZero() {
-		return fmt.Errorf("machine or node keys are zero")
-	}
-	// __END_CYLONIX_ADD__
 
 	var endpoints StringList
 	for _, addrPort := range node.Endpoints {
