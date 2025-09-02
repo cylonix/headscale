@@ -28,7 +28,11 @@ func (i *IPPrefix) Scan(destination interface{}) error {
 	case string:
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil {
-			return err
+			// __BEGIN_CYLONIX_MOD__
+			//log.Warn().Err(err).Str("value", value).Msg("Failed to parse IP prefix.")
+			*i = IPPrefix{}
+			return nil
+			// __END_CYLONIX_MOD__
 		}
 		*i = IPPrefix(prefix)
 
@@ -40,6 +44,11 @@ func (i *IPPrefix) Scan(destination interface{}) error {
 
 // Value return json value, implement driver.Valuer interface.
 func (i IPPrefix) Value() (driver.Value, error) {
+	// __BEGIN_CYLONIX_ADD__
+	if !netip.Prefix(i).IsValid() {
+		return "", fmt.Errorf("%w: invalid IP prefix", ErrCannotParsePrefix)
+	}
+	// __END_CYLONIX_ADD__
 	prefixStr := netip.Prefix(i).String()
 
 	return prefixStr, nil

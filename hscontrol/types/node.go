@@ -288,6 +288,12 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 	node.NodeKeyDatabaseField = node.NodeKey.String()
 	node.DiscoKeyDatabaseField = node.DiscoKey.String()
 
+	// __BEFORE_CYLONIX_ADD__
+	if node.MachineKey.IsZero() || node.NodeKey.IsZero() {
+		return fmt.Errorf("machine or node keys are zero")
+	}
+	// __END_CYLONIX_ADD__
+
 	var endpoints StringList
 	for _, addrPort := range node.Endpoints {
 		endpoints = append(endpoints, addrPort.String())
