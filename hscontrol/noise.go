@@ -129,6 +129,21 @@ func (h *Headscale) NoiseUpgradeHandler(
 	router.HandleFunc("/machine/register", noiseServer.NoiseRegistrationHandler).
 		Methods(http.MethodPost)
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
+	router.HandleFunc("/machine/exit-node", noiseServer.NoiseExitNodeHandler)
+
+	// Default handler for debugging unmatched routes
+	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Debug().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Str("query", r.URL.RawQuery).
+			Str("remote_addr", r.RemoteAddr).
+			Interface("headers", r.Header).
+			Msg("Unhandled request received on Noise connection")
+
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("404 Not Found"))
+	})
 
 	server := http.Server{
 		ReadTimeout: types.HTTPTimeout,
@@ -307,5 +322,72 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		sess.serve()
 	} else {
 		sess.serveLongPoll()
+	}
+}
+
+// NoiseExitNodeHandler takes care of /machine/:id/exit-node using the Noise protocol
+func (ns *noiseServer) NoiseExitNodeHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	log.Debug().
+		Str("handler", "ExitNodeHandler").
+		Msg("ExitNodeHandler called")
+
+	log.Debug().
+		Any("headers", req.Header).
+		Caller().
+		Msg("Headers")
+
+
+	// Extract node key and exit node ID from query parameters
+	nodeKeyStr := req.URL.Query().Get("node_key")
+	exitNodeID := req.URL.Query().Get("exit_node_id")
+
+	var requestedNodeKey key.NodePublic
+	if nodeKeyStr != "" {
+		if err := requestedNodeKey.UnmarshalText([]byte(nodeKeyStr)); err != nil {
+			log.Warn().
+				Caller().
+				Str("node_key", nodeKeyStr).
+				Err(err).
+				Msg("Invalid node key in request parameters")
+			http.Error(writer, "Invalid node key", http.StatusBadRequest)
+			return
+		}
+	}
+	log.Debug().
+		Str("node_key", nodeKeyStr).
+		Str("exit_node_id", exitNodeID).
+		Msg("ExitNodeHandler parameters")
+
+	node, err := ns.headscale.db.GetNodeByAnyKey(
+		nil,
+		ns.conn.Peer(),
+		requestedNodeKey,
+		key.NodePublic{},
+	)
+	if err != nil {
+		log.Error().
+			Str("handler", "ExitNodeHandler").
+			Str("exit-node", exitNodeID).
+			Msgf("Failed to fetch node from the database with node key: %s", requestedNodeKey.String())
+		msg := "Internal error"
+		code := http.StatusInternalServerError
+		http.Error(writer, msg, code)
+		return
+	}
+	if ns.headscale.cfg.NodeHandler != nil {
+		if err := ns.headscale.cfg.NodeHandler.SetExitNode(node, exitNodeID); err != nil {
+			log.Error().
+				Str("handler", "ExitNodeHandler").
+				Str("exit-node", exitNodeID).
+				Err(err).
+				Msg("Failed to set exit node")
+			msg := "Failed to set exit node"
+			code := http.StatusInternalServerError
+			http.Error(writer, msg, code)
+			return
+		}
 	}
 }

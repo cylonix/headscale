@@ -651,6 +651,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 		node,
 		peers,
 	)
+	dnsConfig.Routes[m.cfg.BaseDomain] = nil // __CYLONIX_ADD__
 
 	tailPeers, err := tailNodes(changed, capVer, pol, cfg)
 	if err != nil {

@@ -47,6 +47,9 @@ type NodeHandler interface {
 	// Profiles gets the user profiles base on the node slice.
 	Profiles([]*Node)([]tailcfg.UserProfile, error)
 
+	// SetExitNode sets the exit node for a given node.
+	SetExitNode(*Node, string) error
+
 	// Tailscale user info.
 	User(*User) *tailcfg.User
 	UserLogin(*User) *tailcfg.Login
