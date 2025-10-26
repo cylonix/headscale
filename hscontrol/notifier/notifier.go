@@ -271,6 +271,24 @@ func (n *Notifier) String() string {
 	return b.String()
 }
 
+// __BEGIN_CYLONIX_ADD__
+func (n *Notifier) ConnectedNodeIDs() []types.NodeID {
+	notifierWaitersForLock.WithLabelValues("lock", "connected-node-ids").Inc()
+	n.l.Lock()
+	defer n.l.Unlock()
+	notifierWaitersForLock.WithLabelValues("lock", "connected-node-ids").Dec()
+
+	var nodeIDs []types.NodeID
+	n.connected.Range(func(key types.NodeID, value bool) bool {
+		if value {
+			nodeIDs = append(nodeIDs, key)
+		}
+		return true
+	})
+	return nodeIDs
+}
+// __END_CYLONIX_ADD__
+
 type batcher struct {
 	tick *time.Ticker
 

@@ -88,7 +88,33 @@ func (h *Headscale) handleRegister(
 	}
 	// __END_CYLONIX_MOD__
 
-	node, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, regReq.OldNodeKey) // __CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
+	var (
+		userID *uint
+	)
+	if regReq.Followup != "" {
+		if h.cfg.NodeHandler != nil {
+			logInfo("checking auth status for followup: " + regReq.Followup)
+			userStableID, err := h.cfg.NodeHandler.AuthStatus(regReq.Followup)
+			if err != nil {
+				logErr(err, "Failed to get auth status")
+				return
+			}
+			if userStableID != "" {
+				logInfo("User logged in " + userStableID)
+				user, err := h.db.GetUser(userStableID)
+				if err != nil {
+					logErr(err, "Failed to get user")
+					return
+				}
+				userID = &user.ID
+				logInfo("User found for followup: " + user.Name)
+			}
+		}
+	}
+	// __END_CYLONIX_ADD__
+
+	node, err := h.db.GetNodeByAnyKey(userID, machineKey, regReq.NodeKey, regReq.OldNodeKey) // __CYLONIX_MOD__
 	logTrace(fmt.Sprintf("handleRegister database lookup has returned: err=%v", err)) // __CYLONIX_MOD__
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// If the node has AuthKey set, handle registration via PreAuthKeys
@@ -109,7 +135,7 @@ func (h *Headscale) handleRegister(
 		if regReq.Followup != "" {
 			logTrace("register request is a followup")
 			// __BEGIN_CYLONIX_MOD__
-			node, err := h.checkAuthStatus(writer, machineKey, regReq.NodeKey, regReq.Followup, logInfo)
+			node, err := h.checkAuthStatus(writer, machineKey, regReq, logInfo)
 			if err != nil {
 				logErr(err, "Failed to check auth status")
 				return
@@ -129,7 +155,7 @@ func (h *Headscale) handleRegister(
 					return
 				case <-time.After(registrationHoldoff):
 					logInfo("Waited for interactive login, checking auth status again")
-					node, err := h.checkAuthStatus(writer, machineKey, regReq.NodeKey, regReq.Followup, logInfo)
+					node, err := h.checkAuthStatus(writer, machineKey, regReq, logInfo)
 					if err != nil {
 						logErr(err, "Failed to check auth status")
 						return
@@ -192,6 +218,18 @@ func (h *Headscale) handleRegister(
 	// - We are doing a key refresh
 	// - The node is logged out (or expired) and pending to be authorized. TODO(juan): We need to keep alive the connection here
 	if node != nil {
+		log.Debug().
+			Caller().
+			Str("node", node.Hostname).
+			Str("node_key", node.NodeKey.ShortString()).
+			Str("node_key_old", regReq.OldNodeKey.ShortString()).
+			Str("node_key_req", regReq.NodeKey.ShortString()).
+			Str("namespace", node.Namespace).
+			Str("user", node.User.Name).
+			Str("machine_key", machineKey.ShortString()).
+			Bool("node-expired", node.IsExpired()).
+			Msg("Node found in database but we are in register again")
+
 		// (juan): For a while we had a bug where we were not storing the MachineKey for the nodes using the TS2021,
 		// due to a misunderstanding of the protocol https://github.com/juanfont/headscale/issues/1054
 		// So if we have a not valid MachineKey (but we were able to fetch the node with the NodeKeys), we update it.
@@ -272,36 +310,17 @@ func (h *Headscale) handleRegister(
 
 		if regReq.Followup != "" {
 			// __BEGIN_CYLONIX_MOD__
-			if h.cfg.NodeHandler != nil {
-				userStableID, err := h.cfg.NodeHandler.AuthStatus(regReq.Followup)
-				if err != nil {
-					logErr(err, "Failed to get auth status")
-					return
-				}
-				if userStableID != "" {
-					logInfo("User logged in " + userStableID)
-					user, err := h.db.GetUser(userStableID)
-					if err != nil {
-						logErr(err, "Failed to get user")
-						return
-					}
-					expiry := time.Now().Add(time.Hour * 24 * 150)
-					if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
-						logErr(err, "Failed to register node after authorization")
-						return
-					}
-					logInfo("Node registered after authorization")
-					node, err = h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, regReq.NodeKey, key.NodePublic{})
-					if err != nil {
-						logErr(err, "Failed to get node after authorization")
-						return
-					}
-					h.handleNodeWithValidRegistration(writer, *node, machineKey)
-					return
-				}
-				logInfo("User not logged in yet url=" + regReq.Followup)
-				// Not yet approved. Force the client to wait.
+			node, err := h.checkAuthStatus(writer, machineKey, regReq, logInfo)
+			if err != nil {
+				logErr(err, "Failed to check auth status")
+				return
 			}
+			if node != nil {
+				logInfo("Node registered after authorization")
+				return
+			}
+			logInfo("User not logged in yet url=" + regReq.Followup)
+			// Not yet approved. Force the client to wait.
 			// __END_CYLONIX_MOD__
 
 			select {
@@ -868,35 +887,15 @@ func (h *Headscale) handleNodeKeyRefresh(
 ) {
 	resp := tailcfg.RegisterResponse{}
 
-	log.Info().
-		Caller().
-		Str("node", node.Hostname).
-		Str("node_key", registerRequest.NodeKey.ShortString()).
-		Str("old_node_key", registerRequest.OldNodeKey.ShortString()).
-		Msg("We have the OldNodeKey in the database. This is a key refresh")
-
 	// __BEGIN_CYLONIX_MOD__
-	if h.cfg.NodeHandler != nil {
-		if err := h.cfg.NodeHandler.RotateNodeKey(&node, registerRequest.NodeKey); err != nil {
-			logNodeError(&node, err, "failed to rotate node key")
-			writeInternalError(writer, fmt.Errorf("failed to rotate node key: %w", err))
-			return
-		}
-	}
-	// __END_CYLONIX_MOD__
-
-	err := h.db.Write(func(tx *gorm.DB) error {
-		return db.NodeSetNodeKey(tx, &node, registerRequest.NodeKey)
-	})
+	err := h.refreshNodeKeyAndExpiry(&node, registerRequest.NodeKey, registerRequest.OldNodeKey, nil)
 	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to update machine key in the database")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
+		writeInternalError(writer, fmt.Errorf("failed to refresh node key and/or expiry: %w", err))
 		return
 	}
+	resp.MachineAuthorized = !node.IsExpired()
+	resp.Login = *node.User.TailscaleLogin(h.cfg)
+	// __END_CYLONIX_MOD__
 
 	resp.AuthURL = ""
 	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
@@ -1020,14 +1019,54 @@ func logNodeError(node *types.Node, err error, msg string) {
 	node.ErrorLog(err).Msg(msg)
 }
 
+func (h *Headscale) refreshNodeKeyAndExpiry(node *types.Node, newKey key.NodePublic, oldKey key.NodePublic, newExpiry *time.Time) error {
+	log.Info().
+		Str("user", node.User.Name).
+		Str("namespace", node.Namespace).
+		Str("machine", node.MachineKey.ShortString()).
+		Str("node", node.Hostname).
+		Uint64("node_id", node.ID.Uint64()).
+		Bool("refresh_expiry", newExpiry != nil).
+		Str("node_key", node.NodeKey.ShortString()).
+		Str("new_node_key", newKey.ShortString()).
+		Str("old_node_key", oldKey.ShortString()).
+		Msg("node key and expiry refresh")
+
+	if h.cfg.NodeHandler != nil {
+		if err := h.cfg.NodeHandler.RotateNodeKey(node, newKey); err != nil {
+			logNodeError(node, err, "failed to rotate node key")
+			return err
+		}
+	}
+
+	err := h.db.Write(func(tx *gorm.DB) error {
+		return db.NodeSetNodeKey(tx, node, newKey)
+	})
+	if err != nil {
+		logNodeError(node, err, "failed to update node key in the database")
+		return err
+	}
+	if newExpiry != nil {
+		err = h.db.NodeSetExpiry(node.ID, *newExpiry)
+		if err != nil {
+			logNodeError(node, err, "failed to update expiry in the database")
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *Headscale) checkAuthStatus(
 	writer http.ResponseWriter, machineKey key.MachinePublic,
-	nodeKey key.NodePublic, followup string, logInfo func(string),
+	regReq tailcfg.RegisterRequest, logInfo func(string),
 ) (*types.Node, error) {
 	if h.cfg.NodeHandler == nil {
 		logInfo("NodeHandler is not configured, skipping auth status check")
 		return nil, nil
 	}
+	followup := regReq.Followup
+	nodeKey := regReq.NodeKey
+
 	userStableID, err := h.cfg.NodeHandler.AuthStatus(followup)
 	if err != nil {
 		logInfo("Failed to get auth status: " + err.Error())
@@ -1044,10 +1083,26 @@ func (h *Headscale) checkAuthStatus(
 	}
 	logInfo("User logged in " + userStableID)
 	expiry := time.Now().Add(time.Hour * 24 * 150)
-	if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
-		return nil, fmt.Errorf("failed to register node after authorization: %w", err)
+
+	// Check if the node is already registered
+	node, err := h.db.GetNodeByAnyKey(&user.ID, machineKey, nodeKey, key.NodePublic{})
+	if err == nil {
+		logInfo("Node already registered")
+		err = h.refreshNodeKeyAndExpiry(node, nodeKey, key.NodePublic{}, &expiry)
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh node key and/or expiry: %w", err)
+		}
+	} else {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("failed to get node before authorization: %w", err)
+		}
+
+		if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
+			return nil, fmt.Errorf("failed to register node after authorization: %w", err)
+		}
 	}
-	node, err := h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, nodeKey, key.NodePublic{})
+
+	node, err = h.db.GetNodeByAnyKey(nil, key.MachinePublic{}, nodeKey, key.NodePublic{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node after authorization: %w", err)
 	}

@@ -19,6 +19,7 @@ const (
 	AuthScopeTypeNamespace = AuthScopeType("namespace") // matching a namespace
 	AuthScopeTypeNetwork   = AuthScopeType("network")   // matching a network
 	AuthScopeTypeUser      = AuthScopeType("user")      // Matching a username
+	AuthScopeTypeNone      = AuthScopeType("none")      // No access
 )
 
 type AuthNamespaceScopedRequest interface {
@@ -72,9 +73,9 @@ func (s *AuthScope) GetNetwork() string {
 	return s.network
 }
 
-func (key *APIKey) Auth(r interface{}) bool {
+func (key *APIKey) Auth(r interface{}) (AuthScopeType, bool) {
 	if key == nil {
-		return false
+		return AuthScopeTypeNone, false
 	}
 	log.Debug().
 		Str("scope-type", string(key.ScopeType)).
@@ -82,7 +83,7 @@ func (key *APIKey) Auth(r interface{}) bool {
 		Msg("Auth Scope")
 	switch key.ScopeType {
 	case AuthScopeTypeFull:
-		return true
+		return AuthScopeTypeFull, true
 	case AuthScopeTypeNamespace:
 		s, ok := r.(AuthNamespaceScopedRequest)
 		if ok {
@@ -91,7 +92,7 @@ func (key *APIKey) Auth(r interface{}) bool {
 				Str("requested-scope", s.GetNamespace()).
 				Msg("Auth Namespace Scope")
 		}
-		return ok && (s.GetNamespace() == key.ScopeValue)
+		return AuthScopeTypeNamespace, ok && (s.GetNamespace() == key.ScopeValue)
 	case AuthScopeTypeNetwork:
 		s, ok := r.(AuthNetworkScopedRequest)
 		if ok {
@@ -100,7 +101,7 @@ func (key *APIKey) Auth(r interface{}) bool {
 				Str("requested-scope", s.GetNetwork()).
 				Msg("Auth network Scope")
 		}
-		return ok && (s.GetNetwork() == key.ScopeValue)
+		return AuthScopeTypeNetwork, ok && (s.GetNetwork() == key.ScopeValue)
 	case AuthScopeTypeUser:
 		s, ok := r.(AuthUserScopedRequest)
 		if ok {
@@ -109,9 +110,9 @@ func (key *APIKey) Auth(r interface{}) bool {
 				Str("requested-scope", s.GetUser()).
 				Msg("Auth User Scope")
 		}
-		return ok && (s.GetUser() == key.ScopeValue)
+		return AuthScopeTypeUser, ok && (s.GetUser() == key.ScopeValue)
 	}
-	return false
+	return AuthScopeTypeNone, false
 }
 
 // __END_CYLONIX_MOD__

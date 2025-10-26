@@ -828,6 +828,55 @@ func TestUpdateNodeRoutes(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeKey(t *testing.T) {
+	db, err := newTestDB()
+	if err != nil {
+		t.Fatalf("creating db: %s", err)
+	}
+
+	var (
+		namespace = "test-update-node-key-namespace"
+		login     = "test-update-node-key-login"
+		network   = "test-update-node-key-network"
+	)
+	user, err := db.CreateNamespaceUser("test", &namespace, &login, network)
+	assert.NoError(t, err)
+
+	node := &types.Node{
+		Namespace:      namespace,
+		MachineKey:     key.NewMachine().Public(),
+		NodeKey:        key.NewNode().Public(),
+		Hostname:       "test",
+		UserID:         user.ID,
+		RegisterMethod: util.RegisterMethodOIDC,
+	}
+
+	err = db.DB.Create(node).Error
+	if !assert.NoError(t, err) {
+		return
+	}
+	nodeFromDB, err := db.GetNodeByID(node.ID)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Equal(t, node.NodeKey.String(), nodeFromDB.NodeKey.String())
+	t.Logf("old node key: %s", node.NodeKey.String())
+
+	newNodeKey := key.NewNode().Public()
+	err = NodeSetNodeKey(db.DB, node, newNodeKey)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	nodeFromDB, err = db.GetNodeByID(node.ID)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Equal(t, newNodeKey.String(), nodeFromDB.NodeKey.String())
+}
+
 func TestUpdateNodeCapabilities(t *testing.T) {
 	db, err := newTestDB()
 	if err != nil {

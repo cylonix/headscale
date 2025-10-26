@@ -130,6 +130,8 @@ func (h *Headscale) NoiseUpgradeHandler(
 		Methods(http.MethodPost)
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
 	router.HandleFunc("/machine/exit-node", noiseServer.NoiseExitNodeHandler)
+	router.HandleFunc("/machine/update-health", noiseServer.NoiseUpdateHealthHandler)
+	router.HandleFunc("/machine/cap", noiseServer.NoiseCapHandler)
 
 	// Default handler for debugging unmatched routes
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +327,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	}
 }
 
+// __BEGIN_CYLONIX_ADD__
 // NoiseExitNodeHandler takes care of /machine/:id/exit-node using the Noise protocol
 func (ns *noiseServer) NoiseExitNodeHandler(
 	writer http.ResponseWriter,
@@ -391,3 +394,152 @@ func (ns *noiseServer) NoiseExitNodeHandler(
 		}
 	}
 }
+
+// NoiseUpdateHealthHandler takes care of /machine/:id/update-health using the Noise protocol
+func (ns *noiseServer) NoiseUpdateHealthHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	log.Debug().
+		Str("handler", "UpdateHealthHandler").
+		Msg("UpdateHealthHandler called")
+
+	log.Debug().
+		Any("headers", req.Header).
+		Caller().
+		Msg("Headers")
+
+
+	// Extract node key and health status from json body
+	var update tailcfg.HealthChangeRequest
+	if err := json.NewDecoder(req.Body).Decode(&update); err != nil {
+		log.Warn().
+			Caller().
+			Err(err).
+			Msg("Failed to decode request body")
+		http.Error(writer, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if update.NodeKey.IsZero() {
+		log.Warn().
+			Caller().
+			Msg("Missing node key in request body")
+		http.Error(writer, "Missing node key", http.StatusBadRequest)
+		return
+	}
+	log.Debug().
+		Str("node", update.NodeKey.ShortString()).
+		Str("subsys", update.Subsys).
+		Str("error", update.Error).
+		Msg("UpdateHealthHandler parameters")
+
+	_, err := ns.headscale.db.GetNodeByAnyKey(
+		nil,
+		key.MachinePublic{},
+		update.NodeKey,
+		key.NodePublic{},
+	)
+	if err != nil {
+		log.Error().
+			Str("handler", "UpdateHealthHandler").
+			Str("node", update.NodeKey.ShortString()).
+			Msg("Failed to fetch node from the database")
+		msg := "Internal error"
+		code := http.StatusInternalServerError
+		http.Error(writer, msg, code)
+		return
+	}
+}
+
+// NoiseCapHandler takes care of /machine/cap using the Noise protocol
+func (ns *noiseServer) NoiseCapHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	cap := req.URL.Query().Get("cap")
+	op := req.URL.Query().Get("op")
+	nodeKeyStr := req.URL.Query().Get("node_key")
+	log.Debug().
+		Str("handler", "CapHandler").
+		Str("cap", cap).
+		Str("op", op).
+		Str("node_key", nodeKeyStr).
+		Msg("CapHandler called")
+
+	log.Debug().
+		Any("headers", req.Header).
+		Caller().
+		Msg("Headers")
+
+	if nodeKeyStr == "" || cap == "" || (op != "add" && op != "del") {
+		log.Warn().
+			Caller().
+			Msg("Invalid node key, cap or op in request parameters")
+		http.Error(writer, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	var requestedNodeKey key.NodePublic
+	if err := requestedNodeKey.UnmarshalText([]byte(nodeKeyStr)); err != nil {
+			log.Warn().
+				Caller().
+				Str("node_key", nodeKeyStr).
+				Err(err).
+				Msg("Invalid node key in request parameters")
+			http.Error(writer, "Invalid node key", http.StatusBadRequest)
+			return
+		}
+	log.Debug().
+		Str("node", requestedNodeKey.ShortString()).
+		Str("cap", cap).
+		Str("op", op).
+		Msg("CapHandler parameters")
+
+	node, err := ns.headscale.db.GetNodeByAnyKey(
+		nil,
+		key.MachinePublic{},
+		requestedNodeKey,
+		key.NodePublic{},
+	)
+	if err != nil {
+		log.Error().
+			Str("handler", "CapHandler").
+			Str("node", requestedNodeKey.ShortString()).
+			Msg("Failed to fetch node from the database")
+		msg := "Internal error"
+		code := http.StatusInternalServerError
+		http.Error(writer, msg, code)
+		return
+	}
+	var addCapabilities []string
+	var delCapabilities []string
+	if op == "add" {
+		addCapabilities = append(addCapabilities, cap)
+	} else {
+		delCapabilities = append(delCapabilities, cap)
+	}
+	err = ns.headscale.db.UpdateNode(
+		node.ID,
+		node.Namespace,
+		&types.Node{},
+		addCapabilities,
+		delCapabilities,
+	)
+	if err != nil {
+		log.Error().
+			Str("handler", "CapHandler").
+			Str("node", requestedNodeKey.ShortString()).
+			Err(err).
+			Msg("Failed to update node capabilities")
+		msg := "Internal error"
+		code := http.StatusInternalServerError
+		http.Error(writer, msg, code)
+		return
+	}
+	log.Info().
+		Str("node", requestedNodeKey.ShortString()).
+		Str("cap", cap).
+		Str("op", op).
+		Msg("Node capabilities updated successfully")
+}
+// __END_CYLONIX_ADD__

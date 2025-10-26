@@ -548,7 +548,9 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 			if err != nil {
 				return nil, err
 			}
-			log.Debug().Int("peers", len(list)).
+			log.Debug().
+				Int("peers", len(list)).
+				Int("online_peers", len(onlineIDs)).
 				Msg("Peers-by-id listed by node handler")
 			if len(onlineIDs) > 0 {
 				for _, v := range list {
@@ -576,9 +578,17 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 
 	for _, peer := range peers {
 		// __BEGIN_CYLONIX_MOD__
-		if peer.IsOnline != nil && *peer.IsOnline &&
-			((peer.IsWireguardOnly != nil && *peer.IsWireguardOnly) ||
-				peer.DiscoKey.IsZero()) {
+		if (peer.IsWireguardOnly != nil && *peer.IsWireguardOnly) ||
+			peer.DiscoKey.IsZero() {
+			if peer.IsOnline == nil || !*peer.IsOnline {
+				// Assume online if last seen is missing or within last 2 minutes
+				// If node is offline, last seen will be non-nil.
+				online := true
+				if peer.LastSeen != nil {
+					online = time.Since(*peer.LastSeen) < 2*time.Minute
+				}
+				peer.IsOnline = &online
+			}
 			continue
 		}
 		// __END_CYLONIX_MOD__

@@ -226,6 +226,7 @@ func (api headscaleV1APIServer) DeletePreAuthKey(
 
 	return &v1.DeletePreAuthKeyResponse{}, nil
 }
+
 // __END_CYLONIX_MOD__
 
 func (api headscaleV1APIServer) ExpirePreAuthKey(
@@ -377,6 +378,14 @@ func (api headscaleV1APIServer) GetNode(
 	// Populate the online field based on
 	// currently connected nodes.
 	resp.Online = api.h.nodeNotifier.IsConnected(node.ID)
+
+	// __BEGIN_CYLONIX_ADD__
+	if node.IsWireguardOnly != nil && *node.IsWireguardOnly {
+		if node.LastSeen == nil {
+			resp.Online = true
+		}
+	}
+	// __END_CYLONIX_ADD__
 
 	return &v1.GetNodeResponse{Node: resp}, nil
 }
@@ -586,14 +595,26 @@ func (api headscaleV1APIServer) ListNodes(
 ) (*v1.ListNodesResponse, error) {
 	isLikelyConnected := api.h.nodeNotifier.LikelyConnectedMap()
 	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, request); err != nil {
+	scope, err := api.authAndScope(ctx, request)
+	if err != nil {
 		return nil, err
+	}
+	var onlineIDs []uint64
+	if request.GetOnlineOnly() {
+		list := api.h.nodeNotifier.ConnectedNodeIDs()
+		onlineIDs = make([]uint64, 0, len(list))
+		for id := range list {
+			onlineIDs = append(onlineIDs, uint64(id))
+		}
 	}
 	total, nodes, err := api.h.db.ListNodesWithOptions(
 		request.GetNodeIdList(),
 		request.Namespace,
 		request.GetNetwork(),
 		request.GetUser(),
+		request.GetOnlineOnly(),
+		scope == types.AuthScopeTypeFull,
+		onlineIDs,
 		request.GetFilterBy(),
 		request.GetFilterValue(),
 		request.GetSortBy(),
@@ -603,6 +624,7 @@ func (api headscaleV1APIServer) ListNodes(
 	)
 	// __END_CYLONIX_MOD__
 	if err != nil {
+		log.Warn().Err(err).Msg("Failed to list nodes")
 		return nil, err
 	}
 
@@ -619,6 +641,14 @@ func (api headscaleV1APIServer) ListNodes(
 		// currently connected nodes.
 		if val, ok := isLikelyConnected.Load(node.ID); ok && val {
 			resp.Online = true
+		} else {
+			// __BEGIN_CYLONIX_ADD__
+			if node.IsWireguardOnly != nil && *node.IsWireguardOnly {
+				if node.LastSeen == nil {
+					resp.Online = true
+				}
+			}
+			// __END_CYLONIX_ADD__
 		}
 
 		// __BEGIN_CYLONIX_MOD__
@@ -1093,8 +1123,8 @@ func (api headscaleV1APIServer) SetPolicy(
 	// configurations.
 	// __BEGIN_CYLONIX_MOD__
 	_, nodes, err := api.h.db.ListNodesWithOptions(
-		nil, request.Namespace, request.GetNetwork(),
-		"", "", "", "", false, 0, 0,
+		nil, request.Namespace, request.GetNetwork(), "", false, false, nil,
+		"", "", "", false, 0, 0,
 	)
 	// __END_CYLONIX_MOD__
 	if err != nil {
@@ -1237,24 +1267,25 @@ func (api headscaleV1APIServer) getAPIKeyFromIncomingContext(ctx context.Context
 	}
 	return key, err
 }
-func (api headscaleV1APIServer) authNoLog(ctx context.Context, request interface{}) error {
+func (api headscaleV1APIServer) authNoLog(ctx context.Context, request interface{}) (types.AuthScopeType, error) {
 	// Local native GRPC access will set the ctx with full scope. Skip auth
 	// check if it has been set with full access scope.
 	if types.IsWithFullAuthScope(ctx) {
-		return nil
+		return types.AuthScopeTypeFull, nil
 	}
 	key, err := api.getAPIKeyFromIncomingContext(ctx)
 	if err != nil {
-		return err
+		return types.AuthScopeTypeNone, err
 	}
-	if !key.Auth(request) {
-		return status.Error(codes.PermissionDenied, "unauthorized scope")
+	scope, ok := key.Auth(request)
+	if !ok {
+		return types.AuthScopeTypeNone, status.Error(codes.PermissionDenied, "unauthorized scope")
 	}
-	return nil
+	return scope, nil
 }
 
-func (api headscaleV1APIServer) auth(ctx context.Context, request interface{}) error {
-	err := api.authNoLog(ctx, request)
+func (api headscaleV1APIServer) authAndScope(ctx context.Context, request interface{}) (types.AuthScopeType, error) {
+	scope, err := api.authNoLog(ctx, request)
 	if err != nil {
 		path := ""
 		if meta, ok := metadata.FromIncomingContext(ctx); ok {
@@ -1264,8 +1295,14 @@ func (api headscaleV1APIServer) auth(ctx context.Context, request interface{}) e
 		}
 		log.Debug().Err(err).Str("path", path).Msg("request authorization failed")
 	}
+	return scope, err
+}
+
+func (api headscaleV1APIServer) auth(ctx context.Context, request interface{}) error {
+	_, err := api.authAndScope(ctx, request)
 	return err
 }
+
 func (api headscaleV1APIServer) RefreshApiKey(
 	ctx context.Context,
 	request *v1.RefreshApiKeyRequest,
@@ -1290,14 +1327,12 @@ func (api headscaleV1APIServer) RefreshApiKey(
 		return &v1.RefreshApiKeyResponse{}, nil
 	}
 	if err := api.h.db.RefreshAPIKey(key.ID, expire); err != nil {
-		// __BEGIN_CYLONIX_MOD__
 		log.Error().
 			Err(err).
 			Str("prefix", prefix).
 			Str("namespace", key.Namespace).
 			Str("user", key.Username()).
 			Msg("Failed to refresh")
-		// __END_CYLONIX_MOD__
 		return nil, err
 	}
 	return &v1.RefreshApiKeyResponse{}, nil
@@ -1346,15 +1381,31 @@ func (api headscaleV1APIServer) UpdateNode(
 		return nil, err
 	}
 
-	n := request.Update
-	logger := log.Error().
-		Str("namespace", request.Namespace).
-		Str("name", n.Name).
-		Str("machine-key", n.MachineKey)
-	update, err := types.ParseProtoNode(n)
-	if err != nil {
-		logger.Err(err).Msg("Failed to parse node")
-		return nil, err
+	var (
+		err    error
+		n      = request.Update
+		update = &types.Node{}
+		logger = log.Error().
+			Str("namespace", request.Namespace).
+			Uint64("node-id", request.NodeId)
+	)
+	if n != nil {
+		if n.Capabilities != nil && len(n.Capabilities) == 0 {
+			log.Warn().
+				Caller().
+				Str("namespace", request.Namespace).
+				Uint64("node-id", request.NodeId).
+				Str("node-name", n.Name).
+				Msg("Capabilities field is not-nil but empty. This will remove all existing capabilities.")
+		}
+		update, err = types.ParseProtoNode(n)
+		if err != nil {
+			logger.Err(err).Msg("Failed to parse node")
+			return nil, err
+		}
+		logger = logger.
+			Str("name", update.GivenName).
+			Str("machine-key", update.MachineKey.ShortString())
 	}
 
 	if err = api.h.db.UpdateNode(
@@ -1368,8 +1419,11 @@ func (api headscaleV1APIServer) UpdateNode(
 		return nil, err
 	}
 
-	log.Info().Str("namespace", n.Namespace).Str("name", n.Name).
-		Str("machine-key", n.MachineKey).
+	log.Info().
+		Str("namespace", request.Namespace).
+		Uint64("node-id", request.NodeId).
+		Str("name", update.GivenName).
+		Str("machine-key", update.MachineKey.ShortString()).
 		Msg("Updated node")
 
 	return &v1.UpdateNodeResponse{}, nil

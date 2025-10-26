@@ -362,6 +362,13 @@ func (m *mapSession) serveLongPoll() {
 				startWrite := time.Now()
 				_, err = m.w.Write(data)
 				if err != nil {
+					// __BEGIN_CYLONIX_ADD__
+					// Suppress logging stream closed by client
+					if strings.Contains(err.Error(), "http2: stream closed") {
+						m.tracef("stream closed by client, stopping mapSession: %p", m)
+						return
+					}
+					// __END_CYLONIX_ADD__
 					mapResponseSent.WithLabelValues("error", updateType).Inc()
 					m.errf(err, "could not write the map response(%s), for mapSession: %p", update.Type.String(), m)
 					return

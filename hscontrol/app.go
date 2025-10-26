@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gorilla/mux"
 	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpcRecovery "github.com/grpc-ecosystem/go-grpc-middleware/recovery"
 	grpcRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/juanfont/headscale"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
@@ -638,6 +640,13 @@ func (h *Headscale) Serve() error {
 		// __BEGIN_CYLONIX_MOD__
 		grpc.UnaryInterceptor(
 			grpcMiddleware.ChainUnaryServer(
+				grpcRecovery.UnaryServerInterceptor(grpcRecovery.WithRecoveryHandler(func(p interface{}) (err error) {
+					log.Error().
+						Interface("panic", p).
+						Str("stack", string(debug.Stack())).
+						Msg("gRPC panic recovered")
+					return status.Errorf(codes.Internal, "internal server error")
+				})),
 				h.grpcLocalInterceptor,
 				// Uncomment to debug grpc communication.
 				// zerolog.NewUnaryServerInterceptor(),

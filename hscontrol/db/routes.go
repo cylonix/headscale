@@ -696,7 +696,8 @@ func (hsdb *HSDatabase) ListRoutesWithOptions(
 	list, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Routes, error) {
 		v, count, err := ListWithOptions(
 			types.Route{}, rx, GetRoutes,
-			idList, namespace, "network", network, username,
+			idList, namespace, "network", network, username, false, false,
+			"routes", nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

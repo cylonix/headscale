@@ -125,7 +125,8 @@ func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
 				}
 				return keys, nil
 			},
-			idList, namespace, "network", network, username,
+			idList, namespace, "network", network, username, false, false,
+			"pre_auth_keys", nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

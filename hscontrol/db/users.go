@@ -55,7 +55,8 @@ func (hsdb *HSDatabase) ListUsersWithOptions(
 	users, err := Read(hsdb.DB, func(rx *gorm.DB) ([]*types.User, error) {
 		users, count, err := ListWithOptions(
 			&types.User{}, rx, ListUsers,
-			idList, namespace, "network", network, "",
+			idList, namespace, "network", network, "", false, false,
+			"users", nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

@@ -292,6 +292,8 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 	node.NodeKeyDatabaseField = node.NodeKey.String()
 	node.DiscoKeyDatabaseField = node.DiscoKey.String()
 
+	log.Debug().Int("node-id", int(node.ID)).
+		Msgf("new node key: %s", node.NodeKey.String())
 	var endpoints StringList
 	for _, addrPort := range node.Endpoints {
 		endpoints = append(endpoints, addrPort.String())
@@ -651,6 +653,9 @@ func (nodes Nodes) IDMap() map[NodeID]*Node {
 
 // __BEGIN_CYLONIX_MOD__
 func SliceMap[T1 any, T2 any](from []T1, mapFn func(T1) (T2, error)) ([]T2, error) {
+	if from == nil {
+		return nil, nil
+	}
 	list := make([]T2, 0, len(from))
 	for _, v := range from {
 		to, err := mapFn(v)
@@ -677,6 +682,148 @@ func (node *Node) EndpointStringSlice() []string {
 		return ep.String(), nil
 	})
 	return ss
+}
+
+func ParseProtoHostinfo(protoHostinfo *v1.Hostinfo) (*tailcfg.Hostinfo, error) {
+    if protoHostinfo == nil {
+        return nil, nil
+    }
+
+    hi := &tailcfg.Hostinfo{
+        IPNVersion:      protoHostinfo.IpnVersion,
+        FrontendLogID:   protoHostinfo.FrontendLogId,
+        BackendLogID:    protoHostinfo.BackendLogId,
+        OS:              protoHostinfo.Os,
+        OSVersion:       protoHostinfo.OsVersion,
+        Hostname:        protoHostinfo.Hostname,
+        ShieldsUp:       protoHostinfo.ShieldsUp,
+        ShareeNode:      protoHostinfo.ShareeNode,
+        NoLogsNoSupport: protoHostinfo.NoLogsNoSupport,
+        WireIngress:     protoHostinfo.WireIngress,
+        IngressEnabled:  protoHostinfo.IngressEnabled,
+        AllowsUpdate:    protoHostinfo.AllowsUpdate,
+        Machine:         protoHostinfo.Machine,
+        GoArch:          protoHostinfo.GoArch,
+        GoArchVar:       protoHostinfo.GoArchVar,
+        GoVersion:       protoHostinfo.GoVersion,
+        Cloud:           protoHostinfo.Cloud,
+        Package:         protoHostinfo.Package,
+        DeviceModel:     protoHostinfo.DeviceModel,
+        PushDeviceToken: protoHostinfo.PushDeviceToken,
+        Distro:          protoHostinfo.Distro,
+        DistroVersion:   protoHostinfo.DistroVersion,
+        DistroCodeName:  protoHostinfo.DistroCodeName,
+        App:             protoHostinfo.App,
+        ServicesHash:    protoHostinfo.ServicesHash,
+    }
+
+    // Parse optional boolean fields
+    if protoHostinfo.Container != nil {
+        hi.Container.Set(protoHostinfo.Container.Value)
+    }
+    if protoHostinfo.Desktop != nil {
+        hi.Desktop.Set(protoHostinfo.Desktop.Value)
+    }
+    if protoHostinfo.Userspace != nil {
+        hi.Userspace.Set(protoHostinfo.Userspace.Value)
+    }
+    if protoHostinfo.UserspaceRouter != nil {
+        hi.UserspaceRouter.Set(protoHostinfo.UserspaceRouter.Value)
+    }
+    if protoHostinfo.AppConnector != nil {
+        hi.AppConnector.Set(protoHostinfo.AppConnector.Value)
+    }
+
+    // Copy string slices
+    hi.RequestTags = append([]string(nil), protoHostinfo.RequestTags...)
+    hi.WoLMACs = append([]string(nil), protoHostinfo.WolMacs...)
+    hi.SSH_HostKeys = append([]string(nil), protoHostinfo.SshHostKeys...)
+
+    // Parse RoutableIPs
+    if len(protoHostinfo.RoutableIps) > 0 {
+        hi.RoutableIPs = make([]netip.Prefix, len(protoHostinfo.RoutableIps))
+        for i, prefixStr := range protoHostinfo.RoutableIps {
+            prefix, err := netip.ParsePrefix(prefixStr)
+            if err != nil {
+                return nil, fmt.Errorf("failed to parse routable IP prefix %q: %w", prefixStr, err)
+            }
+            hi.RoutableIPs[i] = prefix
+        }
+    }
+
+    // Parse Services
+    if len(protoHostinfo.Services) > 0 {
+        hi.Services = make([]tailcfg.Service, len(protoHostinfo.Services))
+        for i, protoSvc := range protoHostinfo.Services {
+            hi.Services[i] = tailcfg.Service{
+                Proto:       tailcfg.ServiceProto(protoSvc.Proto),
+                Port:        uint16(protoSvc.Port),
+                Description: protoSvc.Description,
+            }
+        }
+    }
+
+    // Parse NetInfo
+    if protoHostinfo.NetInfo != nil {
+        hi.NetInfo = &tailcfg.NetInfo{
+            PreferredDERP: int(protoHostinfo.NetInfo.PreferredDerp),
+            LinkType:      protoHostinfo.NetInfo.LinkType,
+            FirewallMode:  protoHostinfo.NetInfo.FirewallMode,
+            HavePortMap:   protoHostinfo.NetInfo.HavePortMap,
+        }
+
+        // Parse optional boolean fields
+        if protoHostinfo.NetInfo.MappingVariesByDestIp != nil {
+            hi.NetInfo.MappingVariesByDestIP.Set(protoHostinfo.NetInfo.MappingVariesByDestIp.Value)
+        }
+        if protoHostinfo.NetInfo.HairPinning != nil {
+            hi.NetInfo.HairPinning.Set(protoHostinfo.NetInfo.HairPinning.Value)
+        }
+        if protoHostinfo.NetInfo.WorkingIpv6 != nil {
+            hi.NetInfo.WorkingIPv6.Set(protoHostinfo.NetInfo.WorkingIpv6.Value)
+        }
+        if protoHostinfo.NetInfo.OsHasIpv6 != nil {
+            hi.NetInfo.OSHasIPv6.Set(protoHostinfo.NetInfo.OsHasIpv6.Value)
+        }
+        if protoHostinfo.NetInfo.WorkingUdp != nil {
+            hi.NetInfo.WorkingUDP.Set(protoHostinfo.NetInfo.WorkingUdp.Value)
+        }
+        if protoHostinfo.NetInfo.WorkingIcmpv4 != nil {
+            hi.NetInfo.WorkingICMPv4.Set(protoHostinfo.NetInfo.WorkingIcmpv4.Value)
+        }
+        if protoHostinfo.NetInfo.Upnp != nil {
+            hi.NetInfo.UPnP.Set(protoHostinfo.NetInfo.Upnp.Value)
+        }
+        if protoHostinfo.NetInfo.Pmp != nil {
+            hi.NetInfo.PMP.Set(protoHostinfo.NetInfo.Pmp.Value)
+        }
+        if protoHostinfo.NetInfo.Pcp != nil {
+            hi.NetInfo.PCP.Set(protoHostinfo.NetInfo.Pcp.Value)
+        }
+
+        // Parse DERP latency map
+        if len(protoHostinfo.NetInfo.DerpLatency) > 0 {
+            hi.NetInfo.DERPLatency = make(map[string]float64)
+            for region, latency := range protoHostinfo.NetInfo.DerpLatency {
+                hi.NetInfo.DERPLatency[region] = latency
+            }
+        }
+    }
+
+    // Parse Location
+    if protoHostinfo.Location != nil {
+        hi.Location = &tailcfg.Location{
+            Country:     protoHostinfo.Location.Country,
+            CountryCode: protoHostinfo.Location.CountryCode,
+            City:        protoHostinfo.Location.City,
+            CityCode:    protoHostinfo.Location.CityCode,
+            Latitude:    protoHostinfo.Location.Latitude,
+            Longitude:   protoHostinfo.Location.Longitude,
+            Priority:    int(protoHostinfo.Location.Priority),
+        }
+    }
+
+    return hi, nil
 }
 
 func (node *Node) ProtoHostinfo() *v1.Hostinfo {
@@ -870,6 +1017,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		ipv6       *netip.Addr
 		user       User
 		endpoints  []netip.AddrPort
+		online     bool = p.Online
 	)
 	if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
 		return nil, fmt.Errorf("failed to parse machine key %v: %w", p.MachineKey, err)
@@ -909,6 +1057,14 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		return nil, fmt.Errorf("failed to parse route specs: %w", err)
 	}
 
+	hi, err := ParseProtoHostinfo(p.Hostinfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse hostinfo: %w", err)
+	}
+	if hi == nil {
+		hi = &tailcfg.Hostinfo{Hostname: p.Name}
+	}
+
 	n := &Node{
 		ID:              NodeID(p.Id),
 		MachineKey:      machineKey,
@@ -917,7 +1073,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		IPv4:            ipv4,
 		IPv6:            ipv6,
 		Hostname:        p.Name,
-		Hostinfo:        &tailcfg.Hostinfo{Hostname: p.Name},
+		Hostinfo:        hi,
 		GivenName:       p.GivenName,
 		User:            user,
 		ForcedTags:      p.ForcedTags,
@@ -930,6 +1086,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		CapVersion:      p.CapVersion,
 		Capabilities:    ParseProtoCapabilities(p.Namespace, p.Capabilities),
 		NetworkDomain:   p.NetworkDomain,
+		IsOnline:        &online,
 	}
 
 	if p.PreAuthKey != nil {
@@ -943,6 +1100,11 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 	if p.LastSeen.IsValid() {
 		t := p.LastSeen.AsTime()
 		n.LastSeen = &t
+	}
+
+	// Online node overrides LastSeen field.
+	if p.Online {
+		n.LastSeen = nil
 	}
 
 	if p.Expiry.IsValid() {

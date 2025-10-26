@@ -174,7 +174,8 @@ func (hsdb *HSDatabase) ListAPIKeysWithOptions(
 				err := rx.Preload("User").Find(&keys).Error
 				return keys, err
 			},
-			idList, namespace, "network", network, username,
+			idList, namespace, "network", network, username, false, false,
+			"api_keys", nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

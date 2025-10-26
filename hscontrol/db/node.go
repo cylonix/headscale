@@ -77,11 +77,12 @@ func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, e
 }
 func (hsdb *HSDatabase) ListNodesWithOptions(
 	idList []uint64, namespace *string, network, username string,
+	onlineOnly, namespaceLike bool, onlineIDs []uint64,
 	filterBy, filterValue, sortBy string, sortDesc bool,
 	page, pageSize int,
 ) (int, types.Nodes, error) {
 	var total int64
-	log.Debug().
+	log.Trace().
 		Str("network", network).
 		Str("username", username).
 		Msg("Listing nodes with options")
@@ -89,9 +90,10 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 		nodes, count, err := ListWithOptions(
 			&types.Node{}, rx, listNodes,
 			idList, namespace, "network_domain", network, username,
+			onlineOnly, namespaceLike, "nodes", onlineIDs,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
-		log.Debug().
+		log.Trace().
 			Str("network", network).
 			Str("username", username).
 			Int("count", int(count)).
@@ -181,6 +183,7 @@ func GetNodeByID(tx *gorm.DB, id types.NodeID) (*types.Node, error) {
 		Preload("AuthKey.User").
 		Preload("User").
 		Preload("Routes").
+		Preload("Capabilities"). // __CYLONIX_MOD__
 		Find(&types.Node{ID: id}).First(&mach).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			err = ErrNodeNotFound
@@ -251,38 +254,31 @@ func GetNodeByAnyKey(
 		Preload("Routes")
 
 	// __BEGIN_CYLONIX_MOD__
-	if nodeKey.IsZero() && oldNodeKey.IsZero() {
+	if nodeKey.IsZero() && oldNodeKey.IsZero() && machineKey.IsZero() {
 		return nil, gorm.ErrRecordNotFound
 	}
 
 	if userID != nil && !machineKey.IsZero() {
-		where := "(machine_key = ? AND user_id = ?) AND "
-		if nodeKey.IsZero() {
-			where += "node_key = ?"
-			if result :=
-				tx.First(&node, where,
-					machineKey.String(),
-					*userID,
-					oldNodeKey.String()); result.Error != nil {
+		where := "(machine_key = ? AND user_id = ?) "
+		switch {
+		case nodeKey.IsZero() && oldNodeKey.IsZero():
+			// Nothing more to add
+			if result := tx.First(&node, where, machineKey.String(), *userID); result.Error != nil {
 				return nil, result.Error
 			}
-		} else if oldNodeKey.IsZero() {
-			where += "node_key = ?"
-			if result :=
-				tx.First(&node, where,
-					machineKey.String(),
-					*userID,
-					nodeKey.String()); result.Error != nil {
+		case !nodeKey.IsZero() && oldNodeKey.IsZero():
+			where += "OR node_key = ?"
+			if result := tx.First(&node, where, machineKey.String(), *userID, nodeKey.String()); result.Error != nil {
 				return nil, result.Error
 			}
-		} else {
-			where += "(node_key = ? OR node_key = ?)"
-			if result :=
-				tx.First(&node, where,
-					machineKey.String(),
-					*userID,
-					nodeKey.String(),
-					oldNodeKey.String()); result.Error != nil {
+		case nodeKey.IsZero() && !oldNodeKey.IsZero():
+			where += "OR node_key = ?"
+			if result := tx.First(&node, where, machineKey.String(), *userID, oldNodeKey.String()); result.Error != nil {
+				return nil, result.Error
+			}
+		case !nodeKey.IsZero() && !oldNodeKey.IsZero():
+			where += "OR node_key = ? OR node_key = ?"
+			if result := tx.First(&node, where, machineKey.String(), *userID, nodeKey.String(), oldNodeKey.String()); result.Error != nil {
 				return nil, result.Error
 			}
 		}
@@ -578,7 +574,7 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 
 	// __BEGIN_CYLONIX_MOD__
 	if err := registerNodePreAdd(tx, &node, nodeHandler); err != nil {
-		return nil, fmt.Errorf("failed register(save) node in the database: %w", err)
+		return nil, fmt.Errorf("failed register(pre-add) node in the database: %w", err)
 	}
 	node.Namespace = node.User.GetNamespace()
 	v, _ := json.Marshal(node.Hostinfo)
@@ -607,7 +603,9 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 
 // NodeSetNodeKey sets the node key of a node and saves it to the database.
 func NodeSetNodeKey(tx *gorm.DB, node *types.Node, nodeKey key.NodePublic) error {
+	node.NodeKey = nodeKey // __CYLONIX_ADD__
 	return tx.Model(node).Updates(types.Node{
+		NodeKeyDatabaseField: nodeKey.String(), // __CYLONIX_ADD__
 		NodeKey: nodeKey,
 	}).Error
 }
@@ -627,7 +625,9 @@ func NodeSetMachineKey(
 	node *types.Node,
 	machineKey key.MachinePublic,
 ) error {
+	node.MachineKey = machineKey // __CYLONIX_ADD__
 	return tx.Model(node).Updates(types.Node{
+		MachineKeyDatabaseField: machineKey.String(), // __CYLONIX_ADD__
 		MachineKey: machineKey,
 	}).Error
 }
@@ -1036,8 +1036,8 @@ func (hsdb *HSDatabase) UpdateNode(
 	defer tx.Rollback()
 
 	// Preload the 'BeforeSave()' hook changed fields.
-	node := &types.Node{}
-	if err := tx.Find(node, "id = ?", id).Error; err != nil {
+	node, err := GetNodeByID(tx, id)
+	if err != nil {
 		return err
 	}
 	node.PreloadUpdate(update)
@@ -1062,6 +1062,14 @@ func (hsdb *HSDatabase) UpdateNode(
 	// Typically request should use the specific 'addCapabilities' and
 	// 'delCapabilities' parameters instead.
 	if update.Capabilities != nil {
+		if len(update.Capabilities) == 0 {
+			log.Debug().
+				Caller().
+				Str("namespace", namespace).
+				Uint64("node_id", uint64(node.ID)).
+				Str("node", node.GivenName).
+				Msg("Clearing capabilities with not-nil but empty capabilities field")
+		}
 		// ID fields need to be pre-populated for existing caps.
 		if err := tx.Model(m).Association("Capabilities").Clear(); err != nil {
 			return err
@@ -1071,27 +1079,89 @@ func (hsdb *HSDatabase) UpdateNode(
 		}
 	}
 	if len(addCapabilities) > 0 {
-		caps := types.ParseProtoCapabilities(namespace, addCapabilities)
-		if err := addCapabilityIDs(tx, caps); err != nil {
-			return err
+		var add []string
+		for _, c := range addCapabilities {
+			found := false
+			for _, nc := range node.Capabilities {
+				if c == nc.Name {
+					// Already has the capability, skip adding it again.
+					log.Debug().
+						Str("namespace", namespace).
+						Uint64("node_id", uint64(node.ID)).
+						Str("node", node.GivenName).
+						Str("capability", c).
+						Msg("Node already has capability, skipping adding it again")
+					found = true
+					break
+				}
+			}
+			if !found {
+				add = append(add, c)
+			}
 		}
-		if err := tx.Model(m).Association("Capabilities").Append(caps); err != nil {
-			return err
+		if len(add) > 0 {
+			caps := types.ParseProtoCapabilities(namespace, add)
+			if err := addCapabilityIDs(tx, caps); err != nil {
+				return err
+			}
+			if err := tx.Model(m).
+				Association("Capabilities").
+				Append(caps); err != nil {
+				return err
+			}
 		}
 	}
 	if len(delCapabilities) > 0 {
-		caps := types.ParseProtoCapabilities(namespace, delCapabilities)
-		if err := addCapabilityIDs(tx, caps); err != nil {
-			return err
+		var del []string
+		for _, c := range delCapabilities {
+			found := false
+			for _, nc := range node.Capabilities {
+				if c == nc.Name {
+					// Has the capability, can be deleted.
+					found = true
+					break
+				}
+			}
+			if found {
+				del = append(del, c)
+			}
 		}
-		if err := tx.Model(m).Association("Capabilities").Delete(caps); err != nil {
-			return err
+		if len(del) > 0 {
+			caps := types.ParseProtoCapabilities(namespace, del)
+			if err := addCapabilityIDs(tx, caps); err != nil {
+				return err
+			}
+			if err := tx.Model(m).
+				Association("Capabilities").
+				Delete(caps); err != nil {
+				return err
+			}
 		}
 	}
 
 	if err := tx.Updates(update).Error; err != nil {
 		return err
 	}
+
+    nullableUpdates := make(map[string]interface{})
+
+    // Check if we need to explicitly set any nullable fields to NULL
+
+	// For updating online status to true and last_seen to NULL
+    if update.LastSeen == nil && (update.IsOnline != nil && *update.IsOnline) {
+        nullableUpdates["last_seen"] = nil
+    }
+    // Add other nullable pointer fields as needed...
+
+    // Apply nullable field updates if any
+    if len(nullableUpdates) > 0 {
+        if err := tx.Model(&types.Node{}).
+			Where("id = ?", id).
+			Updates(nullableUpdates).Error; err != nil {
+            return err
+        }
+    }
+
 	return tx.Commit().Error
 }
 

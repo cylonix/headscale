@@ -115,7 +115,7 @@ func NewHeadscaleDatabase(
 									Str("node", node.Hostname).
 									Str("machine_key", node.MachineKey.ShortString()).
 									Str("namespace", node.Namespace). // __CYLONIX_MOD__
-									Str("user", node.User.Name). // __CYLONIX_MOD__
+									Str("user", node.User.Name).      // __CYLONIX_MOD__
 									Msg("Error deleting unregistered node")
 							}
 						}
@@ -267,7 +267,7 @@ func NewHeadscaleDatabase(
 										Caller().
 										Str("hostname", node.Hostname).
 										Str("namespace", node.Namespace). // __CYLONIX_MOD__
-										Str("user", node.User.Name). // __CYLONIX_MOD__
+										Str("user", node.User.Name).      // __CYLONIX_MOD__
 										Err(err).
 										Msg("Failed to normalize node hostname in DB migration")
 								}
@@ -280,7 +280,7 @@ func NewHeadscaleDatabase(
 										Caller().
 										Str("hostname", node.Hostname).
 										Str("namespace", node.Namespace). // __CYLONIX_MOD__
-										Str("user", node.User.Name). // __CYLONIX_MOD__
+										Str("user", node.User.Name).      // __CYLONIX_MOD__
 										Err(err).
 										Msg("Failed to save normalized node name in DB migration")
 								}
@@ -742,7 +742,7 @@ func Sort(db *gorm.DB, sortBy string, sortDesc bool) *gorm.DB {
 }
 func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
 	if page > 0 && pageSize > 0 {
-		limit := int(total) - (page - 1) * pageSize
+		limit := int(total) - (page-1)*pageSize
 		if limit < 0 {
 			limit = 0
 		}
@@ -756,6 +756,7 @@ func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
 func ListWithOptions[T any](model T, rx *gorm.DB,
 	listFunc func(*gorm.DB) ([]T, error),
 	idList []uint64, namespace *string, networkField, network, username string,
+	onlineOnly bool, namespaceLike bool, tableName string, onlineIDs []uint64,
 	filterBy, filterValue, sortBy string, sortDesc bool, page, pageSize int,
 ) ([]T, int64, error) {
 	var m interface{}
@@ -787,13 +788,30 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 	}
 
 	if namespace != nil {
-		rx = rx.Where("namespace = ?", *namespace)
+		if namespaceLike {
+			rx = rx.Where("namespace LIKE ?", "%"+*namespace+"%")
+		} else {
+			rx = rx.Where("namespace = ?", *namespace)
+		}
 	}
 	if len(idList) > 0 {
 		rx = rx.Where("id in ?", idList)
 	}
 	if filterBy != "" && filterValue != "" {
-		rx = rx.Where(filterBy+" like ?", "%"+filterValue+"%")
+		like := "%"+filterValue+"%"
+		if filterBy == "username" {
+			if tableName == "users" {
+				rx = rx.Where("name like ? OR login_name like ?", like, like)
+			} else {
+				rx = rx.Joins("JOIN users ON users.id = " + tableName + ".user_id")
+				rx = rx.Where("users.name like ? OR users.login_name like ?", like, like)
+			}
+		} else {
+			rx = rx.Where(filterBy+" like ?", like)
+		}
+	}
+	if onlineOnly {
+		rx = rx.Where("last_seen IS NULL OR id in ?", onlineIDs)
 	}
 	if err := rx.Count(&total).Error; err != nil {
 		return nil, 0, err

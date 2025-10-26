@@ -118,12 +118,13 @@ message ListNodesRequest {
     repeated uint64 node_id_list = 2;
     optional string namespace    = 3;
     optional string network      = 4;
-    optional string filter_by    = 5;
-    optional string filter_value = 6;
-    optional string sort_by      = 7;
-    optional bool sort_desc      = 8;
-    optional uint32 page         = 9;
-    optional uint32 pageSize     = 10;
+    optional bool   online_only  = 5;
+    optional string filter_by    = 6;
+    optional string filter_value = 7;
+    optional string sort_by      = 8;
+    optional bool   sort_desc    = 9;
+    optional uint32 page         = 10;
+    optional uint32 pageSize     = 11;
     // __END_CYLONIX_MOD__
 }
 
