@@ -74,7 +74,8 @@ message ListUsersResponse {
     uint32        total = 2; // __CYLONIX_MOD__
 }
 
-// __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
+// Update user's network domain setting.
 message UpdateUserNetworkDomainRequest {
     string user      = 1;
     string namespace = 2;
@@ -83,4 +84,14 @@ message UpdateUserNetworkDomainRequest {
 
 message UpdateUserNetworkDomainResponse {
 }
-// __END_CYLONIX_MOD__
+
+// Update the peers for the nodes of the user.
+message UpdateUserPeersRequest {
+    string user      = 1;
+    string namespace = 2;
+}
+
+message UpdateUserPeersResponse {
+}
+
+// __END_CYLONIX_ADD__

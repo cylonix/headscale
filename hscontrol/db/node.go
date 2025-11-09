@@ -793,6 +793,9 @@ func enableRoutes(tx *gorm.DB,
 		Type:        types.StatePeerChanged,
 		ChangeNodes: []types.NodeID{node.ID},
 		Message:     "created in db.enableRoutes",
+
+		Namespace:     node.Namespace,     // __CYLONIX_ADD__
+		NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 	}, nil
 }
 
@@ -917,6 +920,7 @@ func GenerateGivenName(
 	// __END_CYLONIX_MOD__
 }
 
+// TODO: (randy) Make this per network domain or namespace __CYLONIX_ADD__
 func ExpireExpiredNodes(tx *gorm.DB,
 	lastCheck time.Time,
 ) (time.Time, types.StateUpdate, bool) {

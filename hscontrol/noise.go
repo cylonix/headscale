@@ -49,6 +49,11 @@ type noiseServer struct {
 	// EarlyNoise-related stuff
 	challenge       key.ChallengePrivate
 	protocolVersion int
+
+	// __BEGIN_CYLONIX_ADD__
+	namespace     string
+	networkDomain string
+	// __END_CYLONIX_ADD__
 }
 
 // __BEGIN_CYLONIX_MOD__
@@ -129,6 +134,8 @@ func (h *Headscale) NoiseUpgradeHandler(
 	router.HandleFunc("/machine/register", noiseServer.NoiseRegistrationHandler).
 		Methods(http.MethodPost)
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
+
+	// __BEGIN_CYLONIX_ADD__
 	router.HandleFunc("/machine/exit-node", noiseServer.NoiseExitNodeHandler)
 	router.HandleFunc("/machine/update-health", noiseServer.NoiseUpdateHealthHandler)
 	router.HandleFunc("/machine/cap", noiseServer.NoiseCapHandler)
@@ -146,6 +153,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("404 Not Found"))
 	})
+	// __END_CYLONIX_ADD__
 
 	server := http.Server{
 		ReadTimeout: types.HTTPTimeout,
@@ -250,12 +258,20 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 
 	body, _ := io.ReadAll(req.Body)
 
+	// __BEGIN_CYLONIX_ADD__
+	namespace := ns.namespace
+	if namespace == "" {
+		namespace = req.Header.Get("namespace")
+	}
+	// __END_CYLONIX_ADD__
+
 	mapRequest := tailcfg.MapRequest{}
 	if err := json.Unmarshal(body, &mapRequest); err != nil {
 		log.Error().
 			Caller().
 			Err(err).
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+			Str("namespace", namespace). // __CYLONIX_ADD__
+			Str("network_domain", ns.networkDomain). // __CYLONIX_ADD__
 			Msg("Cannot parse MapRequest")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
 
@@ -317,6 +333,9 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		// __END_CYLONIX_MOD__
 		return
 	}
+
+	ns.networkDomain = node.NetworkDomain // __CYLONIX_ADD__
+	ns.namespace = node.Namespace         // __CYLONIX_ADD__
 
 	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, node)
 	sess.tracef("a node sending a MapRequest with Noise protocol")

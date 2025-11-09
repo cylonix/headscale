@@ -425,6 +425,9 @@ func (api headscaleV1APIServer) SetTags(
 		Type:        types.StatePeerChanged,
 		ChangeNodes: []types.NodeID{node.ID},
 		Message:     "called from api.SetTags",
+
+		Namespace:     node.Namespace,     // __CYLONIX_ADD__
+		NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 	}, node.ID)
 
 	log.Trace().
@@ -486,6 +489,9 @@ func (api headscaleV1APIServer) DeleteNode(
 		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
 			Type:        types.StatePeerChanged,
 			ChangeNodes: changedNodes,
+
+			Namespace:     node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 		})
 	}
 
@@ -529,6 +535,9 @@ func (api headscaleV1APIServer) ExpireNode(
 		types.StateUpdate{
 			Type:        types.StateSelfUpdate,
 			ChangeNodes: []types.NodeID{node.ID},
+
+			Namespace:     node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 		},
 		node.ID)
 
@@ -579,6 +588,9 @@ func (api headscaleV1APIServer) RenameNode(
 		Type:        types.StatePeerChanged,
 		ChangeNodes: []types.NodeID{node.ID},
 		Message:     "called from api.RenameNode",
+
+		Namespace:     node.Namespace,     // __CYLONIX_ADD__
+		NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 	}, node.ID)
 
 	log.Trace().
@@ -821,6 +833,9 @@ func (api headscaleV1APIServer) DisableRoute(
 		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
 			Type:        types.StatePeerChanged,
 			ChangeNodes: update,
+
+			Namespace:     route.Node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: route.Node.NetworkDomain, // __CYLONIX_ADD__
 		})
 	}
 
@@ -883,6 +898,9 @@ func (api headscaleV1APIServer) DeleteRoute(
 		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
 			Type:        types.StatePeerChanged,
 			ChangeNodes: update,
+
+			Namespace:     route.Node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: route.Node.NetworkDomain, // __CYLONIX_ADD__
 		})
 	}
 
@@ -1157,6 +1175,9 @@ func (api headscaleV1APIServer) SetPolicy(
 	ctx = types.NotifyCtx(context.Background(), "acl-update", "na") // __CYLONIX_MOD_-
 	api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
 		Type: types.StateFullUpdate,
+
+		Namespace:     request.GetNamespace(), // __CYLONIX_ADD__
+		NetworkDomain: request.GetNetwork(),   // __CYLONIX_ADD__
 	})
 
 	response := &v1.SetPolicyResponse{
@@ -1457,6 +1478,46 @@ func (api headscaleV1APIServer) UpdateUserNetworkDomain(
 		Msg("Updated user network domain")
 
 	return &v1.UpdateUserNetworkDomainResponse{}, nil
+}
+
+func (api headscaleV1APIServer) UpdateUserPeers(
+	ctx context.Context,
+	request *v1.UpdateUserPeersRequest,
+) (*v1.UpdateUserPeersResponse, error) {
+	if err := api.auth(ctx, request); err != nil {
+		return nil, err
+	}
+	user, err := api.h.db.GetUser(request.User)
+	if err != nil {
+		return nil, err
+	}
+
+	namespace := ""
+	if user.Namespace != nil {
+		namespace = *user.Namespace
+	}
+	logger := log.Error().
+		Str("namespace", request.Namespace).
+		Str("user", request.User)
+
+	if err := api.h.mapper.NotifyPeers(
+		types.StateUpdate{
+			Type:          types.StateFullUpdate,
+			Message:       "User peers update requested via API",
+			Namespace:     namespace,
+			NetworkDomain: user.Network,
+		},
+	); err != nil {
+		logger.Err(err).Msg("Failed to update user peers")
+		return nil, err
+	}
+
+	log.Info().
+		Str("namespace", request.Namespace).
+		Str("user", request.User).
+		Msg("Updated user peers")
+
+	return &v1.UpdateUserPeersResponse{}, nil
 }
 
 // __END_CYLONIX_MOD__

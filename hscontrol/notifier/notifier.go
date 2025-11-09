@@ -173,7 +173,7 @@ func (n *Notifier) NotifyByNodeID(
 	if c, ok := n.nodes[nodeID]; ok {
 		select {
 		case <-ctx.Done():
-			log.Error().
+			log.Warn(). // __CYLONIX_MOD__ This is a normal occurrence, so log as a warning
 				Err(ctx.Err()).
 				Uint64("node.id", nodeID.Uint64()).
 				Any("origin", types.NotifyOriginKey.Value(ctx)).
@@ -217,7 +217,7 @@ func (n *Notifier) sendAll(update types.StateUpdate) {
 		defer cancel()
 		select {
 		case <-ctx.Done():
-			log.Error().
+			log.Warn(). // __CYLONIX_MOD__ This is a normal occurrence, so log as a warning
 				Err(ctx.Err()).
 				Uint64("node.id", id.Uint64()).
 				Msgf("update not sent, context cancelled")
@@ -350,6 +350,7 @@ func (b *batcher) addOrPassthrough(update types.StateUpdate) {
 
 // flush sends all the accumulated patches to all
 // nodes in the notifier.
+// TODO: make batcher per network domain or namespace __CYLONIX_ADD__
 func (b *batcher) flush() {
 	notifierBatcherWaitersForLock.WithLabelValues("lock", "flush").Inc()
 	b.mu.Lock()

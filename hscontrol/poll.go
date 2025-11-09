@@ -79,6 +79,9 @@ func (h *Headscale) newMapSession(
 		updateChan = make(chan types.StateUpdate, h.cfg.Tuning.NodeMapSessionBufferedChanSize)
 		updateChan <- types.StateUpdate{
 			Type: types.StateFullUpdate,
+
+			Namespace:     node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 		}
 	}
 
@@ -368,6 +371,10 @@ func (m *mapSession) serveLongPoll() {
 						m.tracef("stream closed by client, stopping mapSession: %p", m)
 						return
 					}
+					if strings.Contains(err.Error(), "client disconnected") {
+						m.tracef("client disconnected, stopping mapSession: %p", m)
+						return
+					}
 					// __END_CYLONIX_ADD__
 					mapResponseSent.WithLabelValues("error", updateType).Inc()
 					m.errf(err, "could not write the map response(%s), for mapSession: %p", update.Type.String(), m)
@@ -467,6 +474,9 @@ func (h *Headscale) updateNodeOnlineStatus(online bool, node *types.Node) {
 		ChangePatches: []*tailcfg.PeerChange{
 			change,
 		},
+
+		Namespace: node.Namespace,         // __CYLONIX_ADD__
+		NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 	}, node.ID)
 }
 
@@ -548,6 +558,9 @@ func (m *mapSession) handleEndpointUpdate() {
 			types.StateUpdate{
 				Type:        types.StateSelfUpdate,
 				ChangeNodes: []types.NodeID{m.node.ID},
+
+				Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
+				NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
 			},
 			m.node.ID)
 	}
@@ -567,6 +580,9 @@ func (m *mapSession) handleEndpointUpdate() {
 			Type:        types.StatePeerChanged,
 			ChangeNodes: []types.NodeID{m.node.ID},
 			Message:     "called from handlePoll -> update",
+
+			Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
 		},
 		m.node.ID)
 
@@ -644,6 +660,9 @@ func (m *mapSession) handleSaveNode() error {
 			Type:        types.StatePeerChanged,
 			ChangeNodes: []types.NodeID{m.node.ID},
 			Message:     "called from handlePoll -> pre-68-update-while-stream",
+
+			Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
 		},
 		m.node.ID)
 

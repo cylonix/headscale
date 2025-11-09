@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -640,7 +641,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 
 	profiles := generateUserProfiles(node, changed)
 
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	if m.cfg != nil && m.cfg.NodeHandler != nil {
 		nodes := []*types.Node{node}
 		nodes = append(nodes, changed...)
@@ -653,7 +654,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	if domain == "" {
 		domain = m.cfg.BaseDomain
 	}
-	// __END_CYLONIX_MOD__
+	// __END_CYLONIX_ADD__
 
 	dnsConfig := generateDNSConfig(
 		cfg,
@@ -667,6 +668,20 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	if err != nil {
 		return err
 	}
+
+	// __BEGIN_CYLONIX_ADD__
+	if m.cfg != nil && m.cfg.NodeHandler != nil {
+		err = m.cfg.NodeHandler.PeersPostProcessing(node, tailPeers, profiles)
+		if err != nil {
+			log.Error().Caller().Err(err).
+				Str("namespace", node.Namespace).
+				Str("user", ptr.ToString(node.User.LoginName)).
+				Str("node", node.GivenName).
+				Msg("PeersPostProcessing failed")
+			return err
+		}
+	}
+	// __END_CYLONIX_ADD__
 
 	// Peers is always returned sorted by Node.ID.
 	sort.SliceStable(tailPeers, func(x, y int) bool {
@@ -768,4 +783,9 @@ func (m *Mapper) setMapResponseDERPMap(resp *tailcfg.MapResponse, node *types.No
 	return nil
 }
 
+// TODO: only notify the peers of the user instead of the while world.
+func (m *Mapper) NotifyPeers(update types.StateUpdate) error {
+	m.notif.NotifyAll(context.Background(), update)
+	return nil
+}
 // __ END_CYLONIX_MOD __

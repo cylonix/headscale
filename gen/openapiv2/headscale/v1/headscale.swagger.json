@@ -2065,6 +2065,7 @@
     },
     "/api/v1/user/network": {
       "put": {
+        "summary": "__BEGIN_CYLONIX_ADD__",
         "operationId": "HeadscaleService_UpdateUserNetworkDomain",
         "responses": {
           "200": {
@@ -2095,6 +2096,42 @@
           },
           {
             "name": "network",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/user/peers": {
+      "put": {
+        "operationId": "HeadscaleService_UpdateUserPeers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateUserPeersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "namespace",
             "in": "query",
             "required": false,
             "type": "string"
@@ -3318,6 +3355,9 @@
       "type": "object"
     },
     "v1UpdateUserNetworkDomainResponse": {
+      "type": "object"
+    },
+    "v1UpdateUserPeersResponse": {
       "type": "object"
     },
     "v1User": {

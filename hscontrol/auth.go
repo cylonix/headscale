@@ -493,7 +493,14 @@ func (h *Headscale) handleAuthKey(
 		}
 
 		ctx := types.NotifyCtx(context.Background(), "handle-authkey", "na")
-		h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{Type: types.StatePeerChanged, ChangeNodes: []types.NodeID{node.ID}})
+		// __BEGIN_CYLONIX_MOD__
+		h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
+			Type:          types.StatePeerChanged,
+			ChangeNodes:   []types.NodeID{node.ID},
+			Namespace:     node.Namespace,
+			NetworkDomain: node.NetworkDomain,
+		})
+		// __END_CYLONIX_MOD__
 	} else {
 		now := time.Now().UTC()
 
@@ -822,6 +829,9 @@ func (h *Headscale) handleNodeLogOut(
 			h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
 				Type:        types.StatePeerChanged,
 				ChangeNodes: changedNodes,
+
+				Namespace:     node.Namespace,     // __CYLONIX_ADD__
+				NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 			})
 		}
 

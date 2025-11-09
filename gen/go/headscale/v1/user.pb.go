@@ -698,7 +698,8 @@ func (x *ListUsersResponse) GetTotal() uint32 {
 	return 0
 }
 
-// __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
+// Update user's network domain setting.
 type UpdateUserNetworkDomainRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	User          string                 `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
@@ -793,6 +794,95 @@ func (x *UpdateUserNetworkDomainResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateUserNetworkDomainResponse.ProtoReflect.Descriptor instead.
 func (*UpdateUserNetworkDomainResponse) Descriptor() ([]byte, []int) {
 	return file_headscale_v1_user_proto_rawDescGZIP(), []int{12}
+}
+
+// Update the peers for the nodes of the user.
+type UpdateUserPeersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	User          string                 `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
+	Namespace     string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateUserPeersRequest) Reset() {
+	*x = UpdateUserPeersRequest{}
+	mi := &file_headscale_v1_user_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateUserPeersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateUserPeersRequest) ProtoMessage() {}
+
+func (x *UpdateUserPeersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_headscale_v1_user_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateUserPeersRequest.ProtoReflect.Descriptor instead.
+func (*UpdateUserPeersRequest) Descriptor() ([]byte, []int) {
+	return file_headscale_v1_user_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UpdateUserPeersRequest) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *UpdateUserPeersRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+type UpdateUserPeersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateUserPeersResponse) Reset() {
+	*x = UpdateUserPeersResponse{}
+	mi := &file_headscale_v1_user_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateUserPeersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateUserPeersResponse) ProtoMessage() {}
+
+func (x *UpdateUserPeersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_headscale_v1_user_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateUserPeersResponse.ProtoReflect.Descriptor instead.
+func (*UpdateUserPeersResponse) Descriptor() ([]byte, []int) {
+	return file_headscale_v1_user_proto_rawDescGZIP(), []int{14}
 }
 
 var File_headscale_v1_user_proto protoreflect.FileDescriptor
@@ -908,10 +998,16 @@ var file_headscale_v1_user_proto_rawDesc = []byte{
 	0x6b, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b,
 	0x22, 0x21, 0x0a, 0x1f, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x55, 0x73, 0x65, 0x72, 0x4e, 0x65,
 	0x74, 0x77, 0x6f, 0x72, 0x6b, 0x44, 0x6f, 0x6d, 0x61, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x42, 0x29, 0x5a, 0x27, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f,
-	0x6d, 0x2f, 0x6a, 0x75, 0x61, 0x6e, 0x66, 0x6f, 0x6e, 0x74, 0x2f, 0x68, 0x65, 0x61, 0x64, 0x73,
-	0x63, 0x61, 0x6c, 0x65, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f, 0x2f, 0x76, 0x31, 0x62, 0x06,
-	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6e, 0x73, 0x65, 0x22, 0x4a, 0x0a, 0x16, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x55, 0x73, 0x65,
+	0x72, 0x50, 0x65, 0x65, 0x72, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x12, 0x0a,
+	0x04, 0x75, 0x73, 0x65, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x75, 0x73, 0x65,
+	0x72, 0x12, 0x1c, 0x0a, 0x09, 0x6e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x6e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x22,
+	0x19, 0x0a, 0x17, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x55, 0x73, 0x65, 0x72, 0x50, 0x65, 0x65,
+	0x72, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x42, 0x29, 0x5a, 0x27, 0x67, 0x69,
+	0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6a, 0x75, 0x61, 0x6e, 0x66, 0x6f, 0x6e,
+	0x74, 0x2f, 0x68, 0x65, 0x61, 0x64, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x2f, 0x67, 0x65, 0x6e, 0x2f,
+	0x67, 0x6f, 0x2f, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -926,7 +1022,7 @@ func file_headscale_v1_user_proto_rawDescGZIP() []byte {
 	return file_headscale_v1_user_proto_rawDescData
 }
 
-var file_headscale_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_headscale_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_headscale_v1_user_proto_goTypes = []any{
 	(*User)(nil),                            // 0: headscale.v1.User
 	(*GetUserRequest)(nil),                  // 1: headscale.v1.GetUserRequest
@@ -941,10 +1037,12 @@ var file_headscale_v1_user_proto_goTypes = []any{
 	(*ListUsersResponse)(nil),               // 10: headscale.v1.ListUsersResponse
 	(*UpdateUserNetworkDomainRequest)(nil),  // 11: headscale.v1.UpdateUserNetworkDomainRequest
 	(*UpdateUserNetworkDomainResponse)(nil), // 12: headscale.v1.UpdateUserNetworkDomainResponse
-	(*timestamppb.Timestamp)(nil),           // 13: google.protobuf.Timestamp
+	(*UpdateUserPeersRequest)(nil),          // 13: headscale.v1.UpdateUserPeersRequest
+	(*UpdateUserPeersResponse)(nil),         // 14: headscale.v1.UpdateUserPeersResponse
+	(*timestamppb.Timestamp)(nil),           // 15: google.protobuf.Timestamp
 }
 var file_headscale_v1_user_proto_depIdxs = []int32{
-	13, // 0: headscale.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	15, // 0: headscale.v1.User.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 1: headscale.v1.GetUserResponse.user:type_name -> headscale.v1.User
 	0,  // 2: headscale.v1.CreateUserResponse.user:type_name -> headscale.v1.User
 	0,  // 3: headscale.v1.RenameUserResponse.user:type_name -> headscale.v1.User
@@ -972,7 +1070,7 @@ func file_headscale_v1_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_headscale_v1_user_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

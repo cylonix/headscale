@@ -474,6 +474,9 @@ nodeRouteLoop:
 			Type:        types.StatePeerChanged,
 			ChangeNodes: chng,
 			Message:     "called from db.FailoverNodeRoutesIfNecessary",
+
+			Namespace:     node.Namespace,     // __CYLONIX_ADD__
+			NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 		}, nil
 	}
 

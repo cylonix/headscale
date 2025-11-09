@@ -39,7 +39,7 @@ func tailNodes(
 // tailNode converts a Node into a Tailscale Node.
 func tailNode(
 	node *types.Node,
-	capVer tailcfg.CapabilityVersion,
+	clientCapVer tailcfg.CapabilityVersion, // client's capability version __CYLONIX_MOD__
 	pol *policy.ACLPolicy,
 	cfg *types.Config,
 ) (*tailcfg.Node, error) {
@@ -84,21 +84,26 @@ func tailNode(
 	tags, _ := pol.TagsOfNode(node)
 	tags = lo.Uniq(append(tags, node.ForcedTags...))
 
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	stableID := node.ID.StableID()
 	if node.StableID != nil {
 		stableID = tailcfg.StableNodeID(*node.StableID)
 	}
+	nodeCapVer := tailcfg.CapabilityVersion(0)
 	if node.CapVersion != nil {
-		capVer = tailcfg.CapabilityVersion(*node.CapVersion)
+		nodeCapVer = tailcfg.CapabilityVersion(*node.CapVersion)
 	}
-	// __END_CYLONIX_MOD__
+	isWireguardOnly := node.DiscoKey.IsZero()
+	if !isWireguardOnly && node.IsWireguardOnly != nil {
+		isWireguardOnly = *node.IsWireguardOnly
+	}
+	// __END_CYLONIX_ADD__
 
 	tNode := tailcfg.Node{
 		ID:       tailcfg.NodeID(node.ID), // this is the actual ID
 		StableID: stableID, // __CYLONIX_MOD__
 		Name:     hostname,
-		Cap:      capVer,
+		Cap:      nodeCapVer, // __CYLONIX_MOD__
 
 		User: tailcfg.UserID(node.UserID),
 
@@ -123,11 +128,11 @@ func tailNode(
 		MachineAuthorized: !node.IsExpired(),
 		Expired:           node.IsExpired(),
 
-		IsWireGuardOnly: node.DiscoKey.IsZero(), // __CYLONIX_MOD__
+		IsWireGuardOnly: isWireguardOnly, // __CYLONIX_MOD__
 	}
 
 	//   - 74: 2023-09-18: Client understands NodeCapMap
-	if capVer >= 74 {
+	if clientCapVer >= 74 { // __CYLONIX_MOD__
 		tNode.CapMap = tailcfg.NodeCapMap{
 			tailcfg.CapabilityFileSharing: []tailcfg.RawMessage{},
 			tailcfg.CapabilityAdmin:       []tailcfg.RawMessage{},
@@ -137,6 +142,15 @@ func tailNode(
 		if cfg.RandomizeClientPort {
 			tNode.CapMap[tailcfg.NodeAttrRandomizeClientPort] = []tailcfg.RawMessage{}
 		}
+		// __BEGIN_CYLONIX_ADD__
+		if isWireguardOnly {
+			// WireGuard-only nodes do not support default capabilities
+			tNode.CapMap = tailcfg.NodeCapMap{}
+		}
+		for _, cap := range node.Capabilities {
+			tNode.CapMap[tailcfg.NodeCapability(cap.Name)] = []tailcfg.RawMessage{}
+		}
+		// __END_CYLONIX_ADD__
 	} else {
 		tNode.Capabilities = []tailcfg.NodeCapability{
 			tailcfg.CapabilityFileSharing,
@@ -150,7 +164,7 @@ func tailNode(
 	}
 
 	//   - 72: 2023-08-23: TS-2023-006 UPnP issue fixed; UPnP can now be used again
-	if capVer < 72 {
+	if nodeCapVer < 72 { // __CYLONIX_MOD__
 		tNode.Capabilities = append(tNode.Capabilities, tailcfg.NodeAttrDisableUPnP)
 	}
 

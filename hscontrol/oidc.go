@@ -538,6 +538,9 @@ func (h *Headscale) validateNodeForOIDCCallback(
 			types.StateUpdate{
 				Type:        types.StateSelfUpdate,
 				ChangeNodes: []types.NodeID{node.ID},
+
+				Namespace:     node.Namespace,     // __CYLONIX_ADD__
+				NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
 			},
 			node.ID,
 		)

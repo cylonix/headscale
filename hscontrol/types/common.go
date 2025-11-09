@@ -174,6 +174,14 @@ type StateUpdate struct {
 	// Additional message for tracking origin or what being
 	// updated, useful for ambiguous updates like StatePeerChanged.
 	Message string
+
+	// __Begin_Cylonix_Add__
+	// Namespace indicates what namespace of this update belongs to.
+	Namespace string
+
+	// NetworkDomain indicates what network domain this update belongs to.
+	NetworkDomain string
+	// __END_CYLONIX_ADD__
 }
 
 // Empty reports if there are any updates in the StateUpdate.

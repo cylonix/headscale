@@ -50,6 +50,10 @@ type NodeHandler interface {
 	// SetExitNode sets the exit node for a given node.
 	SetExitNode(*Node, string) error
 
+	// PeersPostProcessing is called after peers are gathered, to allow
+	// further processing of the peer list.
+	PeersPostProcessing(*Node, []*tailcfg.Node, []tailcfg.UserProfile) error
+
 	// Tailscale user info.
 	User(*User) *tailcfg.User
 	UserLogin(*User) *tailcfg.Login

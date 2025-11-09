@@ -45,11 +45,19 @@ service HeadscaleService {
         };
     }
 
+    // __BEGIN_CYLONIX_ADD__
     rpc UpdateUserNetworkDomain(UpdateUserNetworkDomainRequest) returns (UpdateUserNetworkDomainResponse) {
         option (google.api.http) = {
             put: "/api/v1/user/network"
         };
     }
+
+    rpc UpdateUserPeers(UpdateUserPeersRequest) returns (UpdateUserPeersResponse) {
+        option (google.api.http) = {
+            put: "/api/v1/user/peers"
+        };
+    }
+    // __END_CYLONIX_ADD__
     // --- User end ---
 
     // --- PreAuthKeys start ---

@@ -25,6 +25,7 @@ const (
 	HeadscaleService_DeleteUser_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteUser"
 	HeadscaleService_ListUsers_FullMethodName               = "/headscale.v1.HeadscaleService/ListUsers"
 	HeadscaleService_UpdateUserNetworkDomain_FullMethodName = "/headscale.v1.HeadscaleService/UpdateUserNetworkDomain"
+	HeadscaleService_UpdateUserPeers_FullMethodName         = "/headscale.v1.HeadscaleService/UpdateUserPeers"
 	HeadscaleService_CreatePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
 	HeadscaleService_DeletePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/DeletePreAuthKey"
 	HeadscaleService_ExpirePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
@@ -65,7 +66,9 @@ type HeadscaleServiceClient interface {
 	RenameUser(ctx context.Context, in *RenameUserRequest, opts ...grpc.CallOption) (*RenameUserResponse, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// __BEGIN_CYLONIX_ADD__
 	UpdateUserNetworkDomain(ctx context.Context, in *UpdateUserNetworkDomainRequest, opts ...grpc.CallOption) (*UpdateUserNetworkDomainResponse, error)
+	UpdateUserPeers(ctx context.Context, in *UpdateUserPeersRequest, opts ...grpc.CallOption) (*UpdateUserPeersResponse, error)
 	// --- PreAuthKeys start ---
 	CreatePreAuthKey(ctx context.Context, in *CreatePreAuthKeyRequest, opts ...grpc.CallOption) (*CreatePreAuthKeyResponse, error)
 	DeletePreAuthKey(ctx context.Context, in *DeletePreAuthKeyRequest, opts ...grpc.CallOption) (*DeletePreAuthKeyResponse, error)
@@ -158,6 +161,15 @@ func (c *headscaleServiceClient) ListUsers(ctx context.Context, in *ListUsersReq
 func (c *headscaleServiceClient) UpdateUserNetworkDomain(ctx context.Context, in *UpdateUserNetworkDomainRequest, opts ...grpc.CallOption) (*UpdateUserNetworkDomainResponse, error) {
 	out := new(UpdateUserNetworkDomainResponse)
 	err := c.cc.Invoke(ctx, HeadscaleService_UpdateUserNetworkDomain_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) UpdateUserPeers(ctx context.Context, in *UpdateUserPeersRequest, opts ...grpc.CallOption) (*UpdateUserPeersResponse, error) {
+	out := new(UpdateUserPeersResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_UpdateUserPeers_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +438,9 @@ type HeadscaleServiceServer interface {
 	RenameUser(context.Context, *RenameUserRequest) (*RenameUserResponse, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
+	// __BEGIN_CYLONIX_ADD__
 	UpdateUserNetworkDomain(context.Context, *UpdateUserNetworkDomainRequest) (*UpdateUserNetworkDomainResponse, error)
+	UpdateUserPeers(context.Context, *UpdateUserPeersRequest) (*UpdateUserPeersResponse, error)
 	// --- PreAuthKeys start ---
 	CreatePreAuthKey(context.Context, *CreatePreAuthKeyRequest) (*CreatePreAuthKeyResponse, error)
 	DeletePreAuthKey(context.Context, *DeletePreAuthKeyRequest) (*DeletePreAuthKeyResponse, error)
@@ -485,6 +499,9 @@ func (UnimplementedHeadscaleServiceServer) ListUsers(context.Context, *ListUsers
 }
 func (UnimplementedHeadscaleServiceServer) UpdateUserNetworkDomain(context.Context, *UpdateUserNetworkDomainRequest) (*UpdateUserNetworkDomainResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateUserNetworkDomain not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) UpdateUserPeers(context.Context, *UpdateUserPeersRequest) (*UpdateUserPeersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateUserPeers not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) CreatePreAuthKey(context.Context, *CreatePreAuthKeyRequest) (*CreatePreAuthKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreatePreAuthKey not implemented")
@@ -687,6 +704,24 @@ func _HeadscaleService_UpdateUserNetworkDomain_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HeadscaleServiceServer).UpdateUserNetworkDomain(ctx, req.(*UpdateUserNetworkDomainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_UpdateUserPeers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateUserPeersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).UpdateUserPeers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_UpdateUserPeers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).UpdateUserPeers(ctx, req.(*UpdateUserPeersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1225,6 +1260,10 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateUserNetworkDomain",
 			Handler:    _HeadscaleService_UpdateUserNetworkDomain_Handler,
+		},
+		{
+			MethodName: "UpdateUserPeers",
+			Handler:    _HeadscaleService_UpdateUserPeers_Handler,
 		},
 		{
 			MethodName: "CreatePreAuthKey",
