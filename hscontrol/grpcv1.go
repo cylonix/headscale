@@ -156,6 +156,10 @@ func (api headscaleV1APIServer) CreatePreAuthKey(
 	request *v1.CreatePreAuthKeyRequest,
 ) (*v1.CreatePreAuthKeyResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	network := ""
 	if request.GetUser() != "" {
 		user, err := api.h.db.GetUser(request.GetUser())
@@ -205,6 +209,11 @@ func (api headscaleV1APIServer) DeletePreAuthKey(
 	ctx context.Context,
 	request *v1.DeletePreAuthKeyRequest,
 ) (*v1.DeletePreAuthKeyResponse, error) {
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+
 	preAuthKey, err := api.h.db.GetPreAuthKeyByID(request.GetId())
 	if err != nil {
 		if errors.Is(err, db.ErrPreAuthKeyNotFound) {
@@ -234,6 +243,13 @@ func (api headscaleV1APIServer) ExpirePreAuthKey(
 	request *v1.ExpirePreAuthKeyRequest,
 ) (*v1.ExpirePreAuthKeyResponse, error) {
 	err := api.h.db.Write(func(tx *gorm.DB) error {
+		// __BEGIN_CYLONIX_ADD__
+		// First check if auth token exists.
+		if err := api.auth(ctx, nil); err != nil {
+			return err
+		}
+		// __END_CYLONIX_ADD__
+
 		preAuthKey, err := db.GetPreAuthKey(tx, request.GetUser(), request.Key)
 		if err != nil {
 			return err
@@ -261,6 +277,10 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 	request *v1.ListPreAuthKeysRequest,
 ) (*v1.ListPreAuthKeysResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	network := ""
 	if request.GetUser() != "" {
 		user, err := api.h.db.GetUser(request.GetUser())
@@ -363,6 +383,13 @@ func (api headscaleV1APIServer) GetNode(
 	ctx context.Context,
 	request *v1.GetNodeRequest,
 ) (*v1.GetNodeResponse, error) {
+	// __BEGIN_CYLONIX_ADD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_ADD__
+
 	node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 	if err != nil {
 		return nil, err
@@ -394,6 +421,23 @@ func (api headscaleV1APIServer) SetTags(
 	ctx context.Context,
 	request *v1.SetTagsRequest,
 ) (*v1.SetTagsResponse, error) {
+	// __BEGIN_CYLONIX_ADD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+	// Further check permissions for the specific node.
+	{
+		node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
+		if err != nil {
+			return nil, err
+		}
+		if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
+			return nil, err
+		}
+	}
+	// __END_CYLONIX_ADD__
+
 	for _, tag := range request.GetTags() {
 		err := validateTag(tag)
 		if err != nil {
@@ -414,11 +458,6 @@ func (api headscaleV1APIServer) SetTags(
 			Node: nil,
 		}, status.Error(codes.InvalidArgument, err.Error())
 	}
-	// __BEGIN_CYLONIX_MOD__
-	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
-		return nil, err
-	}
-	// __END_CYLONIX_MOD__
 
 	ctx = types.NotifyCtx(ctx, "cli-settags", node.Hostname)
 	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
@@ -455,6 +494,13 @@ func (api headscaleV1APIServer) DeleteNode(
 	ctx context.Context,
 	request *v1.DeleteNodeRequest,
 ) (*v1.DeleteNodeResponse, error) {
+	// __BEGIN_CYLONIX_ADD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_ADD__
+
 	node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 	if err != nil {
 		// __BEGIN_CYLONIX_MOD__
@@ -502,8 +548,12 @@ func (api headscaleV1APIServer) ExpireNode(
 	ctx context.Context,
 	request *v1.ExpireNodeRequest,
 ) (*v1.ExpireNodeResponse, error) {
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	{
+		// First check if auth token exists.
+		if err := api.auth(ctx, nil); err != nil {
+			return nil, err
+		}
 		node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 		if err != nil {
 			return nil, err
@@ -512,8 +562,7 @@ func (api headscaleV1APIServer) ExpireNode(
 			return nil, err
 		}
 	}
-	// __END_CYLONIX_MOD__
-
+	// __END_CYLONIX_ADD__
 	now := time.Now()
 
 	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
@@ -556,8 +605,12 @@ func (api headscaleV1APIServer) RenameNode(
 	ctx context.Context,
 	request *v1.RenameNodeRequest,
 ) (*v1.RenameNodeResponse, error) {
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	{
+		// First check if auth token exists.
+		if err := api.auth(ctx, nil); err != nil {
+			return nil, err
+		}
 		node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 		if err != nil {
 			return nil, err
@@ -566,7 +619,7 @@ func (api headscaleV1APIServer) RenameNode(
 			return nil, err
 		}
 	}
-	// __END_CYLONIX_MOD__
+	// __END_CYLONIX_ADD__
 	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
 		err := db.RenameNode(
 			tx,
@@ -703,15 +756,21 @@ func (api headscaleV1APIServer) MoveNode(
 	ctx context.Context,
 	request *v1.MoveNodeRequest,
 ) (*v1.MoveNodeResponse, error) {
+	// __BEGIN_CYLONIX_ADD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_ADD__
 	node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 	if err != nil {
 		return nil, err
 	}
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
-	// __END_CYLONIX_MOD__
+	// __END_CYLONIX_ADD__
 
 	err = api.h.db.AssignNodeToUser(node, request.GetUser())
 	if err != nil {
@@ -780,6 +839,10 @@ func (api headscaleV1APIServer) EnableRoute(
 	request *v1.EnableRouteRequest,
 ) (*v1.EnableRouteResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	route, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (*types.Route, error) {
 		return db.GetRoute(rx, request.GetRouteId())
 	})
@@ -811,6 +874,10 @@ func (api headscaleV1APIServer) DisableRoute(
 	request *v1.DisableRouteRequest,
 ) (*v1.DisableRouteResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	route, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (*types.Route, error) {
 		return db.GetRoute(rx, request.GetRouteId())
 	})
@@ -846,15 +913,21 @@ func (api headscaleV1APIServer) GetNodeRoutes(
 	ctx context.Context,
 	request *v1.GetNodeRoutesRequest,
 ) (*v1.GetNodeRoutesResponse, error) {
+	// __BEGIN_CYLONIX_ADD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+	// __END_CYLONIX_ADD__
 	node, err := api.h.db.GetNodeByID(types.NodeID(request.GetNodeId()))
 	if err != nil {
 		return nil, err
 	}
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	if err := api.auth(ctx, types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)); err != nil {
 		return nil, err
 	}
-	// __END_CYLONIX_MOD__
+	// __END_CYLONIX_ADD__
 
 	routes, err := api.h.db.GetNodeRoutes(node)
 	if err != nil {
@@ -871,11 +944,14 @@ func (api headscaleV1APIServer) DeleteRoute(
 	request *v1.DeleteRouteRequest,
 ) (*v1.DeleteRouteResponse, error) {
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	route, err := db.Read(api.h.db.DB, func(rx *gorm.DB) (*types.Route, error) {
 		return db.GetRoute(rx, request.GetRouteId())
 	})
 	if err != nil {
-		// __BEGIN_CYLONIX_MOD__
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &v1.DeleteRouteResponse{}, nil
 		}
@@ -944,6 +1020,10 @@ func (api headscaleV1APIServer) ExpireApiKey(
 	var err error
 
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	if request.Prefix == "" {
 		// Expiring the api key used to invoke this API.
 		apiKey, err = api.getAPIKeyFromIncomingContext(ctx)
@@ -1017,6 +1097,10 @@ func (api headscaleV1APIServer) DeleteApiKey(
 	)
 
 	// __BEGIN_CYLONIX_MOD__
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	if request.Prefix == "" {
 		// Deleting the api key used to invoke this API.
 		apiKey, err = api.getAPIKeyFromIncomingContext(ctx)
@@ -1298,6 +1382,10 @@ func (api headscaleV1APIServer) authNoLog(ctx context.Context, request interface
 	if err != nil {
 		return types.AuthScopeTypeNone, err
 	}
+	// Nil request means we just want to validate the key exists.
+	if request == nil {
+		return types.AuthScopeTypeNone, nil
+	}
 	scope, ok := key.Auth(request)
 	if !ok {
 		return types.AuthScopeTypeNone, status.Error(codes.PermissionDenied, "unauthorized scope")
@@ -1328,6 +1416,10 @@ func (api headscaleV1APIServer) RefreshApiKey(
 	ctx context.Context,
 	request *v1.RefreshApiKeyRequest,
 ) (*v1.RefreshApiKeyResponse, error) {
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
 	prefix := strings.TrimPrefix(request.Prefix, AuthPrefix)
 	key, valid, err := api.h.db.GetAndValidateAPIKey(prefix)
 	if err != nil {
@@ -1369,7 +1461,7 @@ func (api headscaleV1APIServer) CreateNode(
 	n := request.Node
 	logger := log.Error().Str("namespace", n.Namespace).Str("name", n.Name).
 		Str("machine-key", n.MachineKey)
-	node, err := types.ParseProtoNode(n)
+	node, err := types.ParseProtoNode(n, false)
 	if err != nil {
 		logger.Err(err).Msg("Failed to parse node")
 		return nil, err
@@ -1398,12 +1490,21 @@ func (api headscaleV1APIServer) UpdateNode(
 	ctx context.Context,
 	request *v1.UpdateNodeRequest,
 ) (*v1.UpdateNodeResponse, error) {
-	if err := api.auth(ctx, request); err != nil {
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+
+	node, err := api.h.db.GetNodeByID(types.NodeID(request.NodeId))
+	if err != nil {
+		return nil, err
+	}
+	s := types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)
+	if err := api.auth(ctx, s); err != nil {
 		return nil, err
 	}
 
 	var (
-		err    error
 		n      = request.Update
 		update = &types.Node{}
 		logger = log.Error().
@@ -1419,7 +1520,7 @@ func (api headscaleV1APIServer) UpdateNode(
 				Str("node-name", n.Name).
 				Msg("Capabilities field is not-nil but empty. This will remove all existing capabilities.")
 		}
-		update, err = types.ParseProtoNode(n)
+		update, err = types.ParseProtoNode(n, true)
 		if err != nil {
 			logger.Err(err).Msg("Failed to parse node")
 			return nil, err
@@ -1438,6 +1539,18 @@ func (api headscaleV1APIServer) UpdateNode(
 	); err != nil {
 		logger.Err(err).Msg("Failed to update node")
 		return nil, err
+	}
+
+	if api.h.cfg.NodeHandler != nil {
+		node, err := api.h.db.GetNodeByID(types.NodeID(request.NodeId))
+		if err != nil {
+			logger.Err(err).Msg("Failed to get node for NodeHandler Update")
+			return nil, err
+		}
+		if _, err := api.h.cfg.NodeHandler.Update(node); err != nil {
+			logger.Err(err).Msg("Node handler Update failed")
+			return nil, err
+		}
 	}
 
 	log.Info().

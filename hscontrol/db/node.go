@@ -1039,11 +1039,31 @@ func (hsdb *HSDatabase) UpdateNode(
 	tx := hsdb.DB.Begin()
 	defer tx.Rollback()
 
-	// Preload the 'BeforeSave()' hook changed fields.
 	node, err := GetNodeByID(tx, id)
 	if err != nil {
 		return err
 	}
+
+	// If the given name is being updated, we need to ensure it follows the rules
+	// and generate a unique given name.
+	if update.GivenName != "" && update.GivenName != node.GivenName {
+		err := util.CheckForFQDNRules(
+			update.GivenName,
+		)
+		if err != nil {
+			return fmt.Errorf("updating node given name: %w", err)
+		}
+		givenName, err := hsdb.GenerateGivenName(
+			node.MachineKey, update.GivenName,
+			node.NetworkDomain, &id, &node.GivenName,
+		)
+		if err != nil {
+			return fmt.Errorf("generating unique given name: %w", err)
+		}
+		update.GivenName = givenName
+	}
+
+	// Preload the 'BeforeSave()' hook changed fields.
 	node.PreloadUpdate(update)
 
 	m := &types.Node{ID: id}

@@ -77,6 +77,9 @@ func (key *APIKey) Auth(r interface{}) (AuthScopeType, bool) {
 	if key == nil {
 		return AuthScopeTypeNone, false
 	}
+	if r == nil {
+		return key.ScopeType, false
+	}
 	log.Debug().
 		Str("scope-type", string(key.ScopeType)).
 		Str("scope-value", key.ScopeValue).

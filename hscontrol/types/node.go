@@ -1008,7 +1008,7 @@ func ParseProtoRouteSpecs(nodeID uint64, userID *uint, namespace string, routes 
 		return route, nil
 	})
 }
-func ParseProtoNode(p *v1.Node) (*Node, error) {
+func ParseProtoNode(p *v1.Node, forUpdate bool) (*Node, error) {
 	var (
 		machineKey key.MachinePublic
 		nodeKey    key.NodePublic
@@ -1019,17 +1019,25 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 		endpoints  []netip.AddrPort
 		online     bool = p.Online
 	)
-	if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
-		return nil, fmt.Errorf("failed to parse machine key %v: %w", p.MachineKey, err)
+	if !forUpdate || p.MachineKey != "" {
+		if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
+			return nil, fmt.Errorf("failed to parse machine key %v: %w", p.MachineKey, err)
+		}
 	}
-	if err := nodeKey.UnmarshalText([]byte(p.NodeKey)); err != nil {
-		return nil, fmt.Errorf("failed to parse node key %v: %w", p.NodeKey, err)
+	if !forUpdate || p.NodeKey != "" {
+		if err := nodeKey.UnmarshalText([]byte(p.NodeKey)); err != nil {
+			return nil, fmt.Errorf("failed to parse node key %v: %w", p.NodeKey, err)
+		}
 	}
-	if err := discoKey.UnmarshalText([]byte(p.DiscoKey)); err != nil {
-		return nil, fmt.Errorf("failed to parse disco key %v: %w", p.DiscoKey, err)
+	if !forUpdate || p.DiscoKey != "" {
+		if err := discoKey.UnmarshalText([]byte(p.DiscoKey)); err != nil {
+			return nil, fmt.Errorf("failed to parse disco key %v: %w", p.DiscoKey, err)
+		}
 	}
-	if err := user.FromProto(p.User); err != nil {
-		return nil, fmt.Errorf("failed to parse user %v: %w", p.User, err)
+	if !forUpdate || p.User != nil {
+		if err := user.FromProto(p.User); err != nil {
+			return nil, fmt.Errorf("failed to parse user %v: %w", p.User, err)
+		}
 	}
 
 	for _, addr := range p.IpAddresses {
@@ -1061,7 +1069,7 @@ func ParseProtoNode(p *v1.Node) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse hostinfo: %w", err)
 	}
-	if hi == nil {
+	if hi == nil && !forUpdate {
 		hi = &tailcfg.Hostinfo{Hostname: p.Name}
 	}
 
