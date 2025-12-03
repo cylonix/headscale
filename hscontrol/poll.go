@@ -383,6 +383,10 @@ func (m *mapSession) serveLongPoll() {
 
 				err = rc.Flush()
 				if err != nil {
+					if strings.Contains(err.Error(), "client disconnected") {
+						m.tracef("client disconnected, flushing mapSession failed: %p", m)
+						return
+					}
 					mapResponseSent.WithLabelValues("error", updateType).Inc()
 					m.errf(err, "flushing the map response to client, for mapSession: %p", m)
 					return

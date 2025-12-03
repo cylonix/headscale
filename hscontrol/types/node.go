@@ -140,14 +140,15 @@ type Node struct {
 
 	IsOnline *bool `gorm:"-"`
 
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	IsWireguardOnly *bool
 	StableID        *string
 	Namespace       string
 	NetworkDomain   string
 	CapVersion      *uint32
 	Capabilities    []Capability `gorm:"many2many:node_capabilities_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
-	// __END_CYLONIX_MOD__
+	Health          *string
+	// __END_CYLONIX_ADD__
 }
 
 type Capability struct {
@@ -292,8 +293,6 @@ func (node *Node) BeforeSave(tx *gorm.DB) error {
 	node.NodeKeyDatabaseField = node.NodeKey.String()
 	node.DiscoKeyDatabaseField = node.DiscoKey.String()
 
-	log.Debug().Int("node-id", int(node.ID)).
-		Msgf("new node key: %s", node.NodeKey.String())
 	var endpoints StringList
 	for _, addrPort := range node.Endpoints {
 		endpoints = append(endpoints, addrPort.String())
@@ -461,6 +460,7 @@ func (node *Node) Proto() *v1.Node {
 		CapVersion:    node.CapVersion,
 		NetworkDomain: node.NetworkDomain,
 		Hostinfo:      node.ProtoHostinfo(),
+		Health:        node.Health,
 		// __END_CYLONIX_MOD__
 	}
 
@@ -1095,6 +1095,7 @@ func ParseProtoNode(p *v1.Node, forUpdate bool) (*Node, error) {
 		Capabilities:    ParseProtoCapabilities(p.Namespace, p.Capabilities),
 		NetworkDomain:   p.NetworkDomain,
 		IsOnline:        &online,
+		Health:          p.Health,
 	}
 
 	if p.PreAuthKey != nil {

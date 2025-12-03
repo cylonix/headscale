@@ -420,7 +420,7 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
-			// __BEGIN_CYLONIX_MOD__
+			// __BEGIN_CYLONIX_ADD__
 			{
 				ID: "202412031400",
 				// Migrate tables with additional columns.
@@ -479,7 +479,19 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
-			// __END_CYLONIX_MOD__
+			{
+				ID: "202511301100",
+				Migrate: func(tx *gorm.DB) error {
+					log.Info().Msg(`
+						Migrating database to add node health string.
+						`)
+					return tx.AutoMigrate(
+						&types.Node{},
+					)
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			// __END_CYLONIX_ADD__
 		},
 	)
 

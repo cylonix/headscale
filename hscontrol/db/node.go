@@ -1263,7 +1263,7 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 
 func (hsdb *HSDatabase) MaybeUpdateNodeGivenName(
 	node *types.Node,
-	hostinfo *tailcfg.Hostinfo, // __CYLONIX_MOD__
+	hostinfo *tailcfg.Hostinfo,
 ) error {
 	if hostinfo == nil || node.Hostname == hostinfo.Hostname {
 		// No need to update the given name if the hostname is the same.
@@ -1296,4 +1296,44 @@ func (hsdb *HSDatabase) MaybeUpdateNodeGivenName(
 	return nil
 }
 
+type HealthChange struct {
+	Subsys string
+	Error string
+}
+
+func (hsdb *HSDatabase) UpdateNodeHealth(
+	node *types.Node,
+	health *tailcfg.HealthChangeRequest,
+) error {
+	v, err := json.Marshal(&HealthChange {
+		Subsys: health.Subsys,
+		Error:  health.Error,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal health change: %w", err)
+	}
+	s := string(v)
+	if node.Health != nil && *node.Health == s {
+		// No change
+		return nil
+	}
+
+	tx := hsdb.DB.Begin()
+	defer tx.Rollback()
+	update := &types.Node{
+		Health: &s,
+	}
+	node.PreloadUpdate(update)
+	if err := tx.
+			Model(&types.Node{}).
+			Where("id = ?", node.ID).
+			Updates(update).Error; err != nil {
+		return fmt.Errorf("failed to update node health: %w", err)
+	}
+	log.Debug().
+		Str("namespace", node.Namespace).
+		Str("node", node.GivenName).
+		Msg("Updated node health status")
+	return tx.Commit().Error
+}
 // __END_CYLONIX_MOD__

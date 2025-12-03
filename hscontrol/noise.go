@@ -419,15 +419,9 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
 ) {
-	log.Debug().
+	log.Trace().
 		Str("handler", "UpdateHealthHandler").
 		Msg("UpdateHealthHandler called")
-
-	log.Debug().
-		Any("headers", req.Header).
-		Caller().
-		Msg("Headers")
-
 
 	// Extract node key and health status from json body
 	var update tailcfg.HealthChangeRequest
@@ -446,13 +440,13 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 		http.Error(writer, "Missing node key", http.StatusBadRequest)
 		return
 	}
-	log.Debug().
+	log.Trace().
 		Str("node", update.NodeKey.ShortString()).
 		Str("subsys", update.Subsys).
 		Str("error", update.Error).
 		Msg("UpdateHealthHandler parameters")
 
-	_, err := ns.headscale.db.GetNodeByAnyKey(
+	node, err := ns.headscale.db.GetNodeByAnyKey(
 		nil,
 		key.MachinePublic{},
 		update.NodeKey,
@@ -463,6 +457,19 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 			Str("handler", "UpdateHealthHandler").
 			Str("node", update.NodeKey.ShortString()).
 			Msg("Failed to fetch node from the database")
+		msg := "Internal error"
+		code := http.StatusInternalServerError
+		http.Error(writer, msg, code)
+		return
+	}
+
+	err = ns.headscale.db.UpdateNodeHealth(node, &update)
+	if err != nil {
+		log.Error().
+			Str("handler", "UpdateHealthHandler").
+			Str("node", update.NodeKey.ShortString()).
+			Err(err).
+			Msg("Failed to update node health")
 		msg := "Internal error"
 		code := http.StatusInternalServerError
 		http.Error(writer, msg, code)

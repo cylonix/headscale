@@ -321,7 +321,7 @@ func (m *Mapper) PeerChangedResponse(
 		}
 	}
 
-	log.Info().Caller().
+	log.Trace().Caller().
 		Int("peers-count", len(peers)).
 		Int("peers-changed", len(changedNodes)).
 		Msg("Peers listed") // __CYLONIX_MOD__
@@ -549,7 +549,7 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 			if err != nil {
 				return nil, err
 			}
-			log.Debug().
+			log.Trace().
 				Int("peers", len(list)).
 				Int("online_peers", len(onlineIDs)).
 				Msg("Peers-by-id listed by node handler")
@@ -565,11 +565,11 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 			}
 			peers = append(peers, list...)
 		}
-		log.Debug().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
+		log.Trace().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
 			Msg("Peers listed by node handler")
 	} else {
 		peers, err = m.db.ListPeers(node.ID)
-		log.Debug().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
+		log.Trace().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
 			Msg("Peers listed directly from db")
 	}
 	// __END_CYLONIX_MOD__
@@ -694,7 +694,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 		resp.PeersChanged = tailPeers
 	}
 	// __BEGIN_CYLONIX_MOD__
-	log.Info().Caller().
+	log.Trace().Caller().
 		Str("namespace", node.Namespace).
 		Str("user", ptr.ToString(node.User.LoginName)).
 		Str("node", node.Hostname).
