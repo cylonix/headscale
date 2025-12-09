@@ -76,6 +76,7 @@ func TestTailNode(t *testing.T) {
 					"https://tailscale.com/cap/file-sharing", "https://tailscale.com/cap/is-admin",
 					"https://tailscale.com/cap/ssh", "debug-disable-upnp",
 				},
+				IsWireGuardOnly: true, // __CYLONIX_ADD__
 			},
 			wantErr: false,
 		},

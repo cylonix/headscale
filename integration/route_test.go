@@ -1159,11 +1159,11 @@ func TestSubnetRouteACL(t *testing.T) {
 			Dsts: []filter.NetPortRange{
 				{
 					Net:   netip.MustParsePrefix("100.64.0.2/32"),
-					Ports: filter.PortRange{0, 0xffff},
+					Ports: filter.PortRange{First: 0, Last: 0xffff},
 				},
 				{
 					Net:   netip.MustParsePrefix("fd7a:115c:a1e0::2/128"),
-					Ports: filter.PortRange{0, 0xffff},
+					Ports: filter.PortRange{First: 0, Last: 0xffff},
 				},
 			},
 			Caps: []filter.CapMatch{},
@@ -1191,11 +1191,11 @@ func TestSubnetRouteACL(t *testing.T) {
 			Dsts: []filter.NetPortRange{
 				{
 					Net:   netip.MustParsePrefix("100.64.0.1/32"),
-					Ports: filter.PortRange{0, 0xffff},
+					Ports: filter.PortRange{First: 0, Last: 0xffff},
 				},
 				{
 					Net:   netip.MustParsePrefix("fd7a:115c:a1e0::1/128"),
-					Ports: filter.PortRange{0, 0xffff},
+					Ports: filter.PortRange{First: 0, Last: 0xffff},
 				},
 			},
 			Caps: []filter.CapMatch{},
@@ -1213,7 +1213,7 @@ func TestSubnetRouteACL(t *testing.T) {
 			Dsts: []filter.NetPortRange{
 				{
 					Net:   netip.MustParsePrefix("10.33.0.0/16"),
-					Ports: filter.PortRange{0, 0xffff},
+					Ports: filter.PortRange{First: 0, Last: 0xffff},
 				},
 			},
 			Caps: []filter.CapMatch{},

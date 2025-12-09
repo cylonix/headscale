@@ -425,9 +425,6 @@ func NewHeadscaleDatabase(
 				ID: "202412031400",
 				// Migrate tables with additional columns.
 				Migrate: func(tx *gorm.DB) error {
-					if err := tx.Migrator().DropIndex(&types.Node{}, "machine_key"); err != nil {
-						log.Error().Err(err).Msg("Failed to drop machine key index in nodes.")
-					}
 					return tx.AutoMigrate(
 						&types.APIKey{},
 						&types.Node{},
@@ -810,7 +807,7 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 		rx = rx.Where("id in ?", idList)
 	}
 	if filterBy != "" && filterValue != "" {
-		like := "%"+filterValue+"%"
+		like := "%" + filterValue + "%"
 		if filterBy == "username" {
 			if tableName == "users" {
 				rx = rx.Where("name like ? OR login_name like ?", like, like)

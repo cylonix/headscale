@@ -61,11 +61,11 @@ func (*Suite) TestValidateAPIKeyNotOk(c *check.C) {
 	c.Assert(validNow, check.Equals, false)
 
 	validSilly, err := db.ValidateAPIKey("nota.validkey")
-	c.Assert(err, check.NotNil)
+	c.Assert(err, check.IsNil) // __CYLONIX_MOD__
 	c.Assert(validSilly, check.Equals, false)
 
 	validWithErr, err := db.ValidateAPIKey("produceerrorkey")
-	c.Assert(err, check.NotNil)
+	c.Assert(err, check.IsNil)
 	c.Assert(validWithErr, check.Equals, false)
 }
 

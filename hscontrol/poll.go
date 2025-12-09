@@ -383,10 +383,17 @@ func (m *mapSession) serveLongPoll() {
 
 				err = rc.Flush()
 				if err != nil {
-					if strings.Contains(err.Error(), "client disconnected") {
-						m.tracef("client disconnected, flushing mapSession failed: %p", m)
+					// __BEGIN_CYLONIX_ADD__
+					// Suppress logging stream closed by client
+					if strings.Contains(err.Error(), "http2: stream closed") {
+						m.tracef("stream closed by client, stopping mapSession: %p", m)
 						return
 					}
+					if strings.Contains(err.Error(), "client disconnected") {
+						m.tracef("client disconnected, stopping mapSession: %p", m)
+						return
+					}
+					// __END_CYLONIX_ADD__
 					mapResponseSent.WithLabelValues("error", updateType).Inc()
 					m.errf(err, "flushing the map response to client, for mapSession: %p", m)
 					return

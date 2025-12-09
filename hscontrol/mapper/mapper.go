@@ -127,7 +127,7 @@ func generateDNSConfig(
 	dnsConfig := cfg.DNSConfig.Clone()
 
 	// __BEGIN_CYLONIX_MOD__
-	if !slices.Contains(dnsConfig.Domains, baseDomain) {
+	if !slices.Contains(dnsConfig.Domains, baseDomain) && baseDomain != "" {
 		dnsConfig.Domains = append(dnsConfig.Domains, baseDomain)
 	}
 	// __END_CYLONIX_MOD__
@@ -662,7 +662,12 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 		node,
 		peers,
 	)
-	dnsConfig.Routes[m.cfg.BaseDomain] = nil // __CYLONIX_ADD__
+
+	// __BEGIN_CYLONIX_ADD__
+	if dnsConfig.Routes != nil {
+		dnsConfig.Routes[m.cfg.BaseDomain] = nil
+	}
+	// __END_CYLONIX_ADD__
 
 	tailPeers, err := tailNodes(changed, capVer, pol, cfg)
 	if err != nil {
@@ -740,7 +745,7 @@ type DerpMapPolicy struct {
 // GetNodeDERPMap returns the DERPMap for a node by merging the global derpmap
 // with the node specific derpmap based on the policy.
 func (m *Mapper) getNodeDERPMap(node *types.Node, derpMap *tailcfg.DERPMap) (*tailcfg.DERPMap, error) {
-	if node == nil || derpMap == nil {
+	if node == nil || derpMap == nil || m.db == nil {
 		return derpMap, nil
 	}
 	policy, err := m.db.GetPolicy(&node.Namespace, &node.NetworkDomain)

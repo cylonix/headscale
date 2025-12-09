@@ -291,10 +291,11 @@ func deleteNodeRoutes(tx *gorm.DB, node *types.Node, isLikelyConnected *xsync.Ma
 func isUniquePrefix(tx *gorm.DB, route types.Route) bool {
 	var count int64
 	tx.Model(&types.Route{}).
-		Where("namespace = ? AND prefix = ? AND node_id != ? AND advertised = ? AND enabled = ?", // __CYLONIX_MOD__
+		Where("namespace = ? AND network = ? AND prefix = ? AND node_id != ? AND advertised = ? AND enabled = ?", // __CYLONIX_MOD__
+			route.Namespace, // __CYLONIX_ADD__
+			route.Network, // __CYLONIX_ADD__
 			route.Prefix,
 			route.NodeID,
-			route.Namespace, // __CYLONIX_MOD__
 			true, true).Count(&count)
 
 	return count == 0

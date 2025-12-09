@@ -17,11 +17,11 @@ var (
 type Route struct {
 	gorm.Model
 
-	NodeID uint64 `gorm:"uniqueIndex:route_node_id_prefix"` // __CYLONIX_MOD__
+	NodeID uint64
 	Node   Node
 
 	// TODO(kradalby): change this custom type to netip.Prefix
-	Prefix IPPrefix `gorm:"uniqueIndex:route_node_id_prefix"` // __CYLONIX_MOD__
+	Prefix IPPrefix
 
 	Advertised bool
 	Enabled    bool

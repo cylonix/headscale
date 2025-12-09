@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"tailscale.com/types/key"
 )
 
 var mpp = func(pref string) *netip.Prefix {
@@ -287,10 +288,24 @@ func TestIPAllocatorRandom(t *testing.T) {
 }
 
 func TestBackfillIPAddresses(t *testing.T) {
+	maxNodes := 4
+	nodeKeys := make([]key.NodePublic, maxNodes)
+	for i := 0; i < maxNodes; i++ {
+		nodeKeys[i] = key.NewNode().Public()
+	}
+	machineKeys := make([]key.MachinePublic, maxNodes)
+	for i := 0; i < maxNodes; i++ {
+		machineKeys[i] = key.NewMachine().Public()
+	}
 	fullNodeP := func(i int) *types.Node {
+		if i < 1 || i > maxNodes {
+			t.Fatalf("fullNodeP: index out of range: %d", i)
+		}
 		v4 := fmt.Sprintf("100.64.0.%d", i)
 		v6 := fmt.Sprintf("fd7a:115c:a1e0::%d", i)
 		return &types.Node{
+			NodeKey: nodeKeys[i-1],
+			MachineKey: machineKeys[i-1],
 			IPv4DatabaseField: sql.NullString{
 				Valid:  true,
 				String: v4,
@@ -301,6 +316,7 @@ func TestBackfillIPAddresses(t *testing.T) {
 				String: v6,
 			},
 			IPv6: nap(v6),
+			Capabilities: []types.Capability{},
 		}
 	}
 	tests := []struct {
@@ -341,6 +357,7 @@ func TestBackfillIPAddresses(t *testing.T) {
 						String: "fd7a:115c:a1e0::1",
 					},
 					IPv6: nap("fd7a:115c:a1e0::1"),
+					Capabilities: []types.Capability{},
 				},
 			},
 		},
@@ -374,6 +391,7 @@ func TestBackfillIPAddresses(t *testing.T) {
 						String: "fd7a:115c:a1e0::1",
 					},
 					IPv6: nap("fd7a:115c:a1e0::1"),
+					Capabilities: []types.Capability{},
 				},
 			},
 		},
@@ -402,6 +420,7 @@ func TestBackfillIPAddresses(t *testing.T) {
 						String: "100.64.0.1",
 					},
 					IPv4: nap("100.64.0.1"),
+					Capabilities: []types.Capability{},
 				},
 			},
 		},
@@ -430,29 +449,42 @@ func TestBackfillIPAddresses(t *testing.T) {
 						String: "fd7a:115c:a1e0::1",
 					},
 					IPv6: nap("fd7a:115c:a1e0::1"),
+					Capabilities: []types.Capability{},
 				},
 			},
 		},
 		{
 			name: "multi-backfill-ipv6",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "simple-backfill-ipv6")
+				db := dbForTest(t, "multi-backfill-ipv6")
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
+					NodeKey: nodeKeys[0],
+					MachineKey: machineKeys[0],
+					UserID: user.ID,
 					User: user,
 					IPv4: nap("100.64.0.1"),
 				})
 				db.DB.Save(&types.Node{
+					NodeKey: nodeKeys[1],
+					MachineKey: machineKeys[1],
+					UserID: user.ID,
 					User: user,
 					IPv4: nap("100.64.0.2"),
 				})
 				db.DB.Save(&types.Node{
+					NodeKey: nodeKeys[2],
+					MachineKey: machineKeys[2],
+					UserID: user.ID,
 					User: user,
 					IPv4: nap("100.64.0.3"),
 				})
 				db.DB.Save(&types.Node{
+					NodeKey: nodeKeys[3],
+					MachineKey: machineKeys[3],
+					UserID: user.ID,
 					User: user,
 					IPv4: nap("100.64.0.4"),
 				})

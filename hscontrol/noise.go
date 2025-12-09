@@ -308,8 +308,9 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	if err != nil {
 		log.Error().
 			Str("handler", "NoisePollNetMap").
-			Str("hostname", hostname). // __CYLONIX_MOD__
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+			Err(err). // __CYLONIX_ADD__
+			Str("hostname", hostname). // __CYLONIX_ADD__
+			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_ADD__
 			Msgf("Failed to fetch node from the database with node key: %s", mapRequest.NodeKey.String())
 
 		// __BEGIN_CYLONIX_MOD__
@@ -390,7 +391,7 @@ func (ns *noiseServer) NoiseExitNodeHandler(
 		key.NodePublic{},
 	)
 	if err != nil {
-		log.Error().
+		log.Error().Err(err).
 			Str("handler", "ExitNodeHandler").
 			Str("exit-node", exitNodeID).
 			Msgf("Failed to fetch node from the database with node key: %s", requestedNodeKey.String())
@@ -453,7 +454,7 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 		key.NodePublic{},
 	)
 	if err != nil {
-		log.Error().
+		log.Error().Err(err).
 			Str("handler", "UpdateHealthHandler").
 			Str("node", update.NodeKey.ShortString()).
 			Msg("Failed to fetch node from the database")
@@ -528,7 +529,7 @@ func (ns *noiseServer) NoiseCapHandler(
 		key.NodePublic{},
 	)
 	if err != nil {
-		log.Error().
+		log.Error().Err(err).
 			Str("handler", "CapHandler").
 			Str("node", requestedNodeKey.ShortString()).
 			Msg("Failed to fetch node from the database")

@@ -346,7 +346,7 @@ func (s *Suite) TestGenerateGivenName(c *check.C) {
 	c.Assert(err, check.IsNil, comment)
 	c.Assert(givenName, check.Equals, "hostname-2", comment)
 
-	givenName, err = db.GenerateGivenName(machineKey.Public(), "hostname-1", "", nil, nil)
+	givenName, err = db.GenerateGivenName(machineKey.Public(), "hostname-1", "", &node.ID, nil)
 	comment = check.Commentf("Same user, same node, same hostname, no conflict")
 	c.Assert(err, check.IsNil, comment)
 	c.Assert(givenName, check.Equals, "hostname-1", comment)
@@ -354,7 +354,7 @@ func (s *Suite) TestGenerateGivenName(c *check.C) {
 	givenName, err = db.GenerateGivenName(machineKey2.Public(), "hostname-1", "", nil, nil)
 	comment = check.Commentf("Same user, unique nodes, same hostname, conflict")
 	c.Assert(err, check.IsNil, comment)
-	c.Assert(givenName, check.Matches, fmt.Sprintf("^hostname-1-[a-z0-9]{%d}$", NodeGivenNameHashLength), comment)
+	c.Assert(givenName, check.Equals, "hostname-1-1", comment)
 }
 
 func (s *Suite) TestSetTags(c *check.C) {

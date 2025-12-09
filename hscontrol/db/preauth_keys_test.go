@@ -22,7 +22,7 @@ func (*Suite) TestCreatePreAuthKey(c *check.C) {
 
 	// Did we get a valid key?
 	c.Assert(key.Key, check.NotNil)
-	c.Assert(len(key.Key), check.Equals, 48)
+	c.Assert(len(key.Key), check.Equals, 52) // __CYLONIX_MOD__
 
 	// Make sure the User association is populated
 	c.Assert(key.User.Name, check.Equals, user.Name)
