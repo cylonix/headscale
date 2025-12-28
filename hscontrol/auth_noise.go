@@ -9,7 +9,7 @@ import (
 	"tailscale.com/tailcfg"
 )
 
-// // NoiseRegistrationHandler handles the actual registration process of a node.
+// NoiseRegistrationHandler handles the actual registration process of a node.
 func (ns *noiseServer) NoiseRegistrationHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
@@ -26,14 +26,31 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 		Caller().
 		Msg("Headers")
 
-	body, _ := io.ReadAll(req.Body)
-	registerRequest := tailcfg.RegisterRequest{}
-	if err := json.Unmarshal(body, &registerRequest); err != nil {
-		log.Error().
+	// __BEGIN_CYLONIX_MOD__
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		log.Debug().
 			Caller().
 			Err(err).
+			Msg("Cannot read request body")
+		http.Error(writer, "cannot read request body", http.StatusBadRequest)
+
+		return
+	}
+	// __END_CYLONIX_MOD__
+	registerRequest := tailcfg.RegisterRequest{}
+	if err := json.Unmarshal(body, &registerRequest); err != nil {
+		sub := len(body)
+		if sub > 200 {
+			sub = 200
+		}
+		log.Debug().
+			Caller().
+			Err(err).
+			Str("body", string(body[:sub])).
+			Int("body_length", len(body)).
 			Msg("Cannot parse RegisterRequest")
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
+		http.Error(writer, "cannot parse request", http.StatusBadRequest)
 
 		return
 	}
@@ -45,7 +62,7 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 			Int("min_version", int(MinimumCapVersion)).
 			Int("client_version", int(registerRequest.Version)).
 			Msg("unsupported client connected")
-		http.Error(writer, "Internal error", http.StatusBadRequest)
+		http.Error(writer, "unsupported client version", http.StatusBadRequest)
 
 		return
 	}

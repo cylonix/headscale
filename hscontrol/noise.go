@@ -179,7 +179,7 @@ func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) (err er
 	// __BEGIN_CYLONIX_MOD__
 	defer func() {
 		if err != nil {
-			log.Error().
+			log.Debug().
 				Caller().
 				Err(err).
 				Int("protocol_version", protocolVersion).
@@ -267,11 +267,17 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 
 	mapRequest := tailcfg.MapRequest{}
 	if err := json.Unmarshal(body, &mapRequest); err != nil {
+		sub := len(body)
+		if sub > 200 {
+			sub = 200
+		}
 		log.Error().
 			Caller().
 			Err(err).
 			Str("namespace", namespace). // __CYLONIX_ADD__
 			Str("network_domain", ns.networkDomain). // __CYLONIX_ADD__
+			Str("body", string(body[:sub])). // __CYLONIX_ADD__
+			Int("body_length", len(body)). // __CYLONIX_ADD__
 			Msg("Cannot parse MapRequest")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
 
