@@ -690,7 +690,7 @@ func EnableAutoApprovedRoutes(
 // __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ListRoutesWithOptions(
 	idList []uint64, namespace *string, network, username string,
-	filterBy, filterValue, sortBy string, sortDesc bool,
+	filterBy, filterValue, sortBy, sortDesc string,
 	page, pageSize int,
 ) (int, types.Routes, error) {
 	if username != "" {

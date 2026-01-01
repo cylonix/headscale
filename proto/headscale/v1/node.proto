@@ -98,6 +98,7 @@ message DeleteNodeResponse {}
 
 message ExpireNodeRequest {
     uint64 node_id = 1;
+    optional google.protobuf.Timestamp expiry = 2; // __CYLONIX_ADD__ 0 means disable expiry
 }
 
 message ExpireNodeResponse {
@@ -123,7 +124,7 @@ message ListNodesRequest {
     optional string filter_by    = 6;
     optional string filter_value = 7;
     optional string sort_by      = 8;
-    optional bool   sort_desc    = 9;
+    optional string sort_desc    = 9;
     optional uint32 page         = 10;
     optional uint32 pageSize     = 11;
     // __END_CYLONIX_MOD__

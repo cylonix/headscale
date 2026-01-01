@@ -110,7 +110,7 @@ func (hsdb *HSDatabase) ListPreAuthKeys(userName string) ([]types.PreAuthKey, er
 // __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
 	idList []uint64, namespace *string, network, username string,
-	filterBy, filterValue, sortBy string, sortDesc bool,
+	filterBy, filterValue, sortBy, sortDesc string,
 	page, pageSize int,
 ) (int, []*types.PreAuthKey, error) {
 	var total int64

@@ -162,7 +162,7 @@ func (hsdb *HSDatabase) GetAndValidateAPIKey(keyStr string) (*types.APIKey, bool
 }
 func (hsdb *HSDatabase) ListAPIKeysWithOptions(
 	idList []uint64, namespace *string, network, username string,
-	filterBy, filterValue, sortBy string, sortDesc bool,
+	filterBy, filterValue, sortBy, sortDesc string,
 	page, pageSize int,
 ) (int, []*types.APIKey, error) {
 	var total int64

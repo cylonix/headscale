@@ -565,6 +565,17 @@ func (api headscaleV1APIServer) ExpireNode(
 	// __END_CYLONIX_ADD__
 	now := time.Now()
 
+	// __BEGIN_CYLONIX_ADD__
+	// Check if expiry time is set in the request. 0 means disable expiry.
+	if request.Expiry != nil {
+		if request.Expiry.AsTime().IsZero() {
+			now = time.Time{}
+		} else {
+			now = request.Expiry.AsTime()
+		}
+	}
+	// __END_CYLONIX_ADD__
+
 	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
 		db.NodeSetExpiry(
 			tx,
@@ -596,7 +607,7 @@ func (api headscaleV1APIServer) ExpireNode(
 	log.Trace().
 		Str("node", node.Hostname).
 		Time("expiry", *node.Expiry).
-		Msg("node expired")
+		Msg("node set expiry") // __CYLONIX_MOD__
 
 	return &v1.ExpireNodeResponse{Node: node.Proto()}, nil
 }
@@ -693,9 +704,14 @@ func (api headscaleV1APIServer) ListNodes(
 		return nil, err
 	}
 
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].ID < nodes[j].ID
-	})
+	// __BEGIN_CYLONIX_MOD__
+	// Only sort by ID if there is no sorting specified in the request.
+	if request.SortBy == nil {
+		sort.Slice(nodes, func(i, j int) bool {
+			return nodes[i].ID < nodes[j].ID
+		})
+	}
+	// __END_CYLONIX_MOD__
 
 	response := make([]*v1.Node, len(nodes))
 	pols := make(map[string]*policy.ACLPolicy)
@@ -1226,7 +1242,7 @@ func (api headscaleV1APIServer) SetPolicy(
 	// __BEGIN_CYLONIX_MOD__
 	_, nodes, err := api.h.db.ListNodesWithOptions(
 		nil, request.Namespace, request.GetNetwork(), "", false, false, nil,
-		"", "", "", false, 0, 0,
+		"", "", "", "", 0, 0,
 	)
 	// __END_CYLONIX_MOD__
 	if err != nil {

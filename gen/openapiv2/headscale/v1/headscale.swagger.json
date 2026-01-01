@@ -86,7 +86,7 @@
             "name": "sortDesc",
             "in": "query",
             "required": false,
-            "type": "boolean"
+            "type": "string"
           },
           {
             "name": "page",
@@ -341,7 +341,7 @@
             "name": "sortDesc",
             "in": "query",
             "required": false,
-            "type": "boolean"
+            "type": "string"
           },
           {
             "name": "page",
@@ -1359,6 +1359,14 @@
             "required": true,
             "type": "string",
             "format": "uint64"
+          },
+          {
+            "name": "expiry",
+            "description": "__CYLONIX_ADD__ 0 means disable expiry",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
           }
         ],
         "tags": [
@@ -1643,7 +1651,7 @@
             "name": "sortDesc",
             "in": "query",
             "required": false,
-            "type": "boolean"
+            "type": "string"
           },
           {
             "name": "page",
@@ -1831,7 +1839,7 @@
             "name": "sortDesc",
             "in": "query",
             "required": false,
-            "type": "boolean"
+            "type": "string"
           },
           {
             "name": "page",
@@ -2017,7 +2025,7 @@
             "name": "sortDesc",
             "in": "query",
             "required": false,
-            "type": "boolean"
+            "type": "string"
           },
           {
             "name": "page",

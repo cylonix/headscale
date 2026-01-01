@@ -739,13 +739,26 @@ func Write[T any](db *gorm.DB, fn func(tx *gorm.DB) (T, error)) (T, error) {
 }
 
 // __BEGIN_CYLONIX_MOD__
-func Sort(db *gorm.DB, sortBy string, sortDesc bool) *gorm.DB {
-	if sortBy != "" {
-		order := sortBy
-		if sortDesc {
-			order += " desc"
+func Sort(db *gorm.DB, sortBy, sortDesc string) *gorm.DB {
+	if sortBy == "" {
+		return db
+	}
+	by := strings.Split(sortBy, ",")
+	desc := []string{}
+	if sortDesc != "" {
+		desc = strings.Split(sortDesc, ",")
+	}
+	for i := range by {
+		orderStr := by[i]
+		if len(desc) > i {
+			switch desc[i] {
+			case "desc":
+				orderStr += " desc"
+			case "asc":
+				orderStr += " asc"
+			}
 		}
-		return db.Order(order)
+		db = db.Order(orderStr)
 	}
 	return db
 }
@@ -766,7 +779,7 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 	listFunc func(*gorm.DB) ([]T, error),
 	idList []uint64, namespace *string, networkField, network, username string,
 	onlineOnly bool, namespaceLike bool, tableName string, onlineIDs []uint64,
-	filterBy, filterValue, sortBy string, sortDesc bool, page, pageSize int,
+	filterBy, filterValue, sortBy, sortDesc string, page, pageSize int,
 ) ([]T, int64, error) {
 	var m interface{}
 	m = model

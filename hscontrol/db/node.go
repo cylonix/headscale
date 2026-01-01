@@ -78,15 +78,33 @@ func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, e
 func (hsdb *HSDatabase) ListNodesWithOptions(
 	idList []uint64, namespace *string, network, username string,
 	onlineOnly, namespaceLike bool, onlineIDs []uint64,
-	filterBy, filterValue, sortBy string, sortDesc bool,
+	filterBy, filterValue, sortBy, sortDesc string,
 	page, pageSize int,
 ) (int, types.Nodes, error) {
 	var total int64
 	log.Trace().
 		Str("network", network).
 		Str("username", username).
+		Str("filterBy", filterBy).
+		Str("filterValue", filterValue).
+		Str("sortBy", sortBy).
+		Str("sortDesc", sortDesc).
 		Msg("Listing nodes with options")
 	nodes, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
+		switch filterBy {
+		case "node_key": filterBy = "node_key_database_field"
+		case "machine_key": filterBy = "machine_key_database_field"
+		}
+		// Transform sortBy field names to match database column names
+		switch sortBy {
+		case "node_key": sortBy = "node_key_database_field"
+		case "machine_key": sortBy = "machine_key_database_field"
+		case "disco_key": sortBy = "disco_key_database_field"
+		case "ipv4": sortBy = "ipv4_database_field"
+		case "ipv6": sortBy = "ipv6_database_field"
+		case "endpoints": sortBy = "endpoints_database_field"
+		case "host_info": sortBy = "host_info_database_field"
+		}
 		nodes, count, err := ListWithOptions(
 			&types.Node{}, rx, listNodes,
 			idList, namespace, "network_domain", network, username,
