@@ -109,7 +109,8 @@ func (hsdb *HSDatabase) ListPreAuthKeys(userName string) ([]types.PreAuthKey, er
 
 // __BEGIN_CYLONIX_MOD__
 func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
-	idList []uint64, namespace *string, network, username string,
+	idList []uint64, namespace *string, namespaceLike bool,
+	network, username string,
 	filterBy, filterValue, sortBy, sortDesc string,
 	page, pageSize int,
 ) (int, []*types.PreAuthKey, error) {
@@ -125,8 +126,9 @@ func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
 				}
 				return keys, nil
 			},
-			idList, namespace, "network", network, username, false, false,
-			"pre_auth_keys", nil,
+			idList, namespace, "network", network, username,
+			false, namespaceLike,
+			"pre_auth_keys", nil, nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count
@@ -213,15 +215,15 @@ func DestroyPreAuthKey(tx *gorm.DB, pak types.PreAuthKey) error {
 	})
 }
 
-func (hsdb *HSDatabase) ExpirePreAuthKey(k *types.PreAuthKey) error {
+func (hsdb *HSDatabase) ExpirePreAuthKey(k *types.PreAuthKey, expiry time.Time) error {
 	return hsdb.Write(func(tx *gorm.DB) error {
-		return ExpirePreAuthKey(tx, k)
+		return ExpirePreAuthKey(tx, k, expiry)
 	})
 }
 
 // MarkExpirePreAuthKey marks a PreAuthKey as expired.
-func ExpirePreAuthKey(tx *gorm.DB, k *types.PreAuthKey) error {
-	if err := tx.Model(&k).Update("Expiration", time.Now()).Error; err != nil {
+func ExpirePreAuthKey(tx *gorm.DB, k *types.PreAuthKey, expiry time.Time) error {
+	if err := tx.Model(&k).Update("Expiration", expiry).Error; err != nil {
 		return err
 	}
 

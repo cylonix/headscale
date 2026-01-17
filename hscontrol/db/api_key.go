@@ -175,7 +175,7 @@ func (hsdb *HSDatabase) ListAPIKeysWithOptions(
 				return keys, err
 			},
 			idList, namespace, "network", network, username, false, false,
-			"api_keys", nil,
+			"api_keys", nil, nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

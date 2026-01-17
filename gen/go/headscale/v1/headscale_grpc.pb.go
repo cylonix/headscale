@@ -42,6 +42,7 @@ const (
 	HeadscaleService_BackfillNodeIPs_FullMethodName         = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
 	HeadscaleService_CreateNode_FullMethodName              = "/headscale.v1.HeadscaleService/CreateNode"
 	HeadscaleService_UpdateNode_FullMethodName              = "/headscale.v1.HeadscaleService/UpdateNode"
+	HeadscaleService_UpdateNodeShareToUser_FullMethodName   = "/headscale.v1.HeadscaleService/UpdateNodeShareToUser"
 	HeadscaleService_GetRoutes_FullMethodName               = "/headscale.v1.HeadscaleService/GetRoutes"
 	HeadscaleService_EnableRoute_FullMethodName             = "/headscale.v1.HeadscaleService/EnableRoute"
 	HeadscaleService_DisableRoute_FullMethodName            = "/headscale.v1.HeadscaleService/DisableRoute"
@@ -88,6 +89,7 @@ type HeadscaleServiceClient interface {
 	// __BEGIN_CYLONIX_MOD__
 	CreateNode(ctx context.Context, in *CreateNodeRequest, opts ...grpc.CallOption) (*CreateNodeResponse, error)
 	UpdateNode(ctx context.Context, in *UpdateNodeRequest, opts ...grpc.CallOption) (*UpdateNodeResponse, error)
+	UpdateNodeShareToUser(ctx context.Context, in *UpdateNodeShareToUserRequest, opts ...grpc.CallOption) (*UpdateNodeShareToUserResponse, error)
 	// --- Route start ---
 	GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error)
 	EnableRoute(ctx context.Context, in *EnableRouteRequest, opts ...grpc.CallOption) (*EnableRouteResponse, error)
@@ -320,6 +322,15 @@ func (c *headscaleServiceClient) UpdateNode(ctx context.Context, in *UpdateNodeR
 	return out, nil
 }
 
+func (c *headscaleServiceClient) UpdateNodeShareToUser(ctx context.Context, in *UpdateNodeShareToUserRequest, opts ...grpc.CallOption) (*UpdateNodeShareToUserResponse, error) {
+	out := new(UpdateNodeShareToUserResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_UpdateNodeShareToUser_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *headscaleServiceClient) GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error) {
 	out := new(GetRoutesResponse)
 	err := c.cc.Invoke(ctx, HeadscaleService_GetRoutes_FullMethodName, in, out, opts...)
@@ -460,6 +471,7 @@ type HeadscaleServiceServer interface {
 	// __BEGIN_CYLONIX_MOD__
 	CreateNode(context.Context, *CreateNodeRequest) (*CreateNodeResponse, error)
 	UpdateNode(context.Context, *UpdateNodeRequest) (*UpdateNodeResponse, error)
+	UpdateNodeShareToUser(context.Context, *UpdateNodeShareToUserRequest) (*UpdateNodeShareToUserResponse, error)
 	// --- Route start ---
 	GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error)
 	EnableRoute(context.Context, *EnableRouteRequest) (*EnableRouteResponse, error)
@@ -550,6 +562,9 @@ func (UnimplementedHeadscaleServiceServer) CreateNode(context.Context, *CreateNo
 }
 func (UnimplementedHeadscaleServiceServer) UpdateNode(context.Context, *UpdateNodeRequest) (*UpdateNodeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateNode not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) UpdateNodeShareToUser(context.Context, *UpdateNodeShareToUserRequest) (*UpdateNodeShareToUserResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateNodeShareToUser not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRoutes not implemented")
@@ -1014,6 +1029,24 @@ func _HeadscaleService_UpdateNode_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HeadscaleService_UpdateNodeShareToUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateNodeShareToUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).UpdateNodeShareToUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_UpdateNodeShareToUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).UpdateNodeShareToUser(ctx, req.(*UpdateNodeShareToUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HeadscaleService_GetRoutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetRoutesRequest)
 	if err := dec(in); err != nil {
@@ -1328,6 +1361,10 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateNode",
 			Handler:    _HeadscaleService_UpdateNode_Handler,
+		},
+		{
+			MethodName: "UpdateNodeShareToUser",
+			Handler:    _HeadscaleService_UpdateNodeShareToUser_Handler,
 		},
 		{
 			MethodName: "GetRoutes",

@@ -77,38 +77,85 @@ func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, e
 }
 func (hsdb *HSDatabase) ListNodesWithOptions(
 	idList []uint64, namespace *string, network, username string,
-	onlineOnly, namespaceLike bool, onlineIDs []uint64,
+	onlineOnly, namespaceLike, shareInOnly bool, onlineIDs []uint64,
 	filterBy, filterValue, sortBy, sortDesc string,
 	page, pageSize int,
 ) (int, types.Nodes, error) {
 	var total int64
+	n := "nil"
+	if namespace != nil {
+		n = *namespace
+	}
 	log.Trace().
+		Str("namespace", n).
 		Str("network", network).
 		Str("username", username).
 		Str("filterBy", filterBy).
 		Str("filterValue", filterValue).
+		Bool("shareInOnly", shareInOnly).
 		Str("sortBy", sortBy).
 		Str("sortDesc", sortDesc).
 		Msg("Listing nodes with options")
 	nodes, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
-		switch filterBy {
-		case "node_key": filterBy = "node_key_database_field"
-		case "machine_key": filterBy = "machine_key_database_field"
-		}
 		// Transform sortBy field names to match database column names
 		switch sortBy {
-		case "node_key": sortBy = "node_key_database_field"
-		case "machine_key": sortBy = "machine_key_database_field"
-		case "disco_key": sortBy = "disco_key_database_field"
-		case "ipv4": sortBy = "ipv4_database_field"
-		case "ipv6": sortBy = "ipv6_database_field"
-		case "endpoints": sortBy = "endpoints_database_field"
-		case "host_info": sortBy = "host_info_database_field"
+		case "node_key":
+			sortBy = "node_key_database_field"
+		case "machine_key":
+			sortBy = "machine_key_database_field"
+		case "disco_key":
+			sortBy = "disco_key_database_field"
+		case "ipv4":
+			sortBy = "ipv4_database_field"
+		case "ipv6":
+			sortBy = "ipv6_database_field"
+		case "endpoints":
+			sortBy = "endpoints_database_field"
+		case "host_info":
+			sortBy = "host_info_database_field"
 		}
-		nodes, count, err := ListWithOptions(
+
+		var nodes types.Nodes
+		var count int64
+		var err error
+
+		if shareInOnly {
+			// Special handling for shareInOnly mode
+			// This lists nodes that have AcceptedShareTo field matching criteria
+			if username != "" {
+				// Find nodes where the specified user is in AcceptedShareTo
+				user := &types.User{}
+				err := rx.Model(&types.User{}).First(user, "name = ?", username).Error
+				if err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return types.Nodes{}, nil
+					}
+					return types.Nodes{}, err
+				}
+				rx = rx.Model(&types.Node{})
+				// Join with the many-to-many relation table
+				rx = rx.Joins("JOIN node_accepted_share_to_users_relation ON nodes.id = node_accepted_share_to_users_relation.node_id")
+				rx = rx.Where("node_accepted_share_to_users_relation.user_id = ?", user.ID)
+
+				// Change the network and username to be not set as it could be
+				// any network for the share-in nodes.
+				network = ""
+				username = ""
+			} else {
+				// Find nodes with non-empty AcceptedShareTo
+				// for the current namespace or network
+				rx = rx.Model(&types.Node{})
+				rx = rx.Where("EXISTS (SELECT 1 FROM node_accepted_share_to_users_relation WHERE node_accepted_share_to_users_relation.node_id = nodes.id)")
+			}
+		}
+		nodes, count, err = ListWithOptions(
 			&types.Node{}, rx, listNodes,
 			idList, namespace, "network_domain", network, username,
 			onlineOnly, namespaceLike, "nodes", onlineIDs,
+			map[string]string{
+				"node_key":    "node_key_database_field",
+				"machine_key": "machine_key_database_field",
+			},
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		log.Trace().
@@ -117,7 +164,7 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 			Int("count", int(count)).
 			Msg("Listed nodes with options")
 		total = count
-		return types.Nodes(nodes), err
+		return nodes, err
 	})
 	return int(total), nodes, err
 }
@@ -134,6 +181,8 @@ func listNodes(tx *gorm.DB) ([]*types.Node, error) {
 		Preload("User").
 		Preload("Routes").
 		Preload("Capabilities").
+		Preload("WouldShareTo").
+		Preload("AcceptedShareTo").
 		Find(&nodes).Error; err != nil {
 		return nil, err
 	}
@@ -201,7 +250,9 @@ func GetNodeByID(tx *gorm.DB, id types.NodeID) (*types.Node, error) {
 		Preload("AuthKey.User").
 		Preload("User").
 		Preload("Routes").
-		Preload("Capabilities"). // __CYLONIX_MOD__
+		Preload("Capabilities").    // __CYLONIX_ADD__
+		Preload("WouldShareTo").    // __CYLONIX_ADD__
+		Preload("AcceptedShareTo"). // __CYLONIX_ADD__
 		Find(&types.Node{ID: id}).First(&mach).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			err = ErrNodeNotFound
@@ -624,7 +675,7 @@ func NodeSetNodeKey(tx *gorm.DB, node *types.Node, nodeKey key.NodePublic) error
 	node.NodeKey = nodeKey // __CYLONIX_ADD__
 	return tx.Model(node).Updates(types.Node{
 		NodeKeyDatabaseField: nodeKey.String(), // __CYLONIX_ADD__
-		NodeKey: nodeKey,
+		NodeKey:              nodeKey,
 	}).Error
 }
 
@@ -646,7 +697,7 @@ func NodeSetMachineKey(
 	node.MachineKey = machineKey // __CYLONIX_ADD__
 	return tx.Model(node).Updates(types.Node{
 		MachineKeyDatabaseField: machineKey.String(), // __CYLONIX_ADD__
-		MachineKey: machineKey,
+		MachineKey:              machineKey,
 	}).Error
 }
 
@@ -1185,24 +1236,24 @@ func (hsdb *HSDatabase) UpdateNode(
 		return err
 	}
 
-    nullableUpdates := make(map[string]interface{})
+	nullableUpdates := make(map[string]interface{})
 
-    // Check if we need to explicitly set any nullable fields to NULL
+	// Check if we need to explicitly set any nullable fields to NULL
 
 	// For updating online status to true and last_seen to NULL
-    if update.LastSeen == nil && (update.IsOnline != nil && *update.IsOnline) {
-        nullableUpdates["last_seen"] = nil
-    }
-    // Add other nullable pointer fields as needed...
+	if update.LastSeen == nil && (update.IsOnline != nil && *update.IsOnline) {
+		nullableUpdates["last_seen"] = nil
+	}
+	// Add other nullable pointer fields as needed...
 
-    // Apply nullable field updates if any
-    if len(nullableUpdates) > 0 {
-        if err := tx.Model(&types.Node{}).
+	// Apply nullable field updates if any
+	if len(nullableUpdates) > 0 {
+		if err := tx.Model(&types.Node{}).
 			Where("id = ?", id).
 			Updates(nullableUpdates).Error; err != nil {
-            return err
-        }
-    }
+			return err
+		}
+	}
 
 	return tx.Commit().Error
 }
@@ -1316,14 +1367,14 @@ func (hsdb *HSDatabase) MaybeUpdateNodeGivenName(
 
 type HealthChange struct {
 	Subsys string
-	Error string
+	Error  string
 }
 
 func (hsdb *HSDatabase) UpdateNodeHealth(
 	node *types.Node,
 	health *tailcfg.HealthChangeRequest,
 ) error {
-	v, err := json.Marshal(&HealthChange {
+	v, err := json.Marshal(&HealthChange{
 		Subsys: health.Subsys,
 		Error:  health.Error,
 	})
@@ -1343,9 +1394,9 @@ func (hsdb *HSDatabase) UpdateNodeHealth(
 	}
 	node.PreloadUpdate(update)
 	if err := tx.
-			Model(&types.Node{}).
-			Where("id = ?", node.ID).
-			Updates(update).Error; err != nil {
+		Model(&types.Node{}).
+		Where("id = ?", node.ID).
+		Updates(update).Error; err != nil {
 		return fmt.Errorf("failed to update node health: %w", err)
 	}
 	log.Debug().
@@ -1354,4 +1405,112 @@ func (hsdb *HSDatabase) UpdateNodeHealth(
 		Msg("Updated node health status")
 	return tx.Commit().Error
 }
+
+func (hsdb *HSDatabase) ListWouldShareInNodes(user *types.User) (types.Nodes, error) {
+	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
+		return ListWouldShareInNodes(rx, user)
+	})
+}
+
+// ListWouldShareInNodes returns all nodes would like to share to the user,
+// regardless of any policy or if the node is expired.
+func ListWouldShareInNodes(tx *gorm.DB, user *types.User) (types.Nodes, error) {
+	nodes := types.Nodes{}
+	if err := tx.
+		Preload("User").
+		Joins("JOIN node_would_share_to_users_relation ON nodes.id = node_would_share_to_users_relation.node_id").
+		Where("nodes.namespace = ? AND node_would_share_to_users_relation.user_id = ?",
+			user.Namespace,
+			user.ID,
+		).Find(&nodes).Error; err != nil {
+		return types.Nodes{}, err
+	}
+	return nodes, nil
+}
+
+func (hsdb *HSDatabase) ListSharedInPeers(user *types.User) (types.Nodes, error) {
+	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
+		return ListSharedInPeers(rx, user)
+	})
+}
+
+// ListSharedInPeers returns all peers shared to this node, regardless of any
+// Policy or if the node is expired. Shared in nodes are always considered
+// jailed.
+func ListSharedInPeers(tx *gorm.DB, user *types.User) (types.Nodes, error) {
+	nodes := types.Nodes{}
+	if err := tx.
+		Preload("User").
+		Preload("Routes").
+		Preload("Capabilities").
+		Joins("JOIN node_accepted_share_to_users_relation ON nodes.id = node_accepted_share_to_users_relation.node_id").
+		Where("nodes.namespace = ? AND node_accepted_share_to_users_relation.user_id = ?",
+			user.Namespace,
+			user.ID,
+		).Find(&nodes).Error; err != nil {
+		return types.Nodes{}, err
+	}
+
+	// Set these nodes to as jailed.
+	for i := range nodes {
+		nodes[i].IsJailed = true
+	}
+	return nodes, nil
+}
+
+func (hsdb *HSDatabase) ListSharedToPeers(node *types.Node) (types.Nodes, error) {
+	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
+		return ListSharedToPeers(rx, node)
+	})
+}
+
+// ListSharedToPeers returns all the peers this node has shared to, regardless
+// of any policy or if the node is expired. Shared to nodes are always marked
+// with ShareeNode in the host info.
+func ListSharedToPeers(tx *gorm.DB, node *types.Node) (types.Nodes, error) {
+	nodes := types.Nodes{}
+	if err := tx.
+		Preload("User").
+		Preload("Routes").
+		Preload("Capabilities").
+		Where("namespace = ? AND user_id IN (?)",
+			node.Namespace,
+			tx.Table("node_accepted_share_to_users_relation").
+				Select("user_id").
+				Where("node_id = ?", node.ID),
+		).Find(&nodes).Error; err != nil {
+		return types.Nodes{}, err
+	}
+
+	// Set these nodes to as sharee nodes.
+	for i := range nodes {
+		nodes[i].Hostinfo.ShareeNode = true
+	}
+	return nodes, nil
+}
+
+// AddWouldShareToUser adds a user to the node's WouldShareTo relationship.
+func (hsdb *HSDatabase) AddWouldShareToUser(node *types.Node, user *types.User) error {
+	return hsdb.DB.Model(node).Association("WouldShareTo").Append(user)
+}
+
+// RemoveWouldShareToUser removes a user from the node's WouldShareTo relationship.
+func (hsdb *HSDatabase) RemoveWouldShareToUser(node *types.Node, user *types.User) error {
+	// GORM's Association().Delete() doesn't return error if relation doesn't exist
+	// It's idempotent and returns nil, which is the desired behavior
+	return hsdb.DB.Model(node).Association("WouldShareTo").Delete(user)
+}
+
+// AddAcceptedShareToUser adds a user to the node's AcceptedShareTo relationship.
+func (hsdb *HSDatabase) AddAcceptedShareToUser(node *types.Node, user *types.User) error {
+	return hsdb.DB.Model(node).Association("AcceptedShareTo").Append(user)
+}
+
+// RemoveAcceptedShareToUser removes a user from the node's AcceptedShareTo relationship.
+func (hsdb *HSDatabase) RemoveAcceptedShareToUser(node *types.Node, user *types.User) error {
+	// GORM's Association().Delete() doesn't return error if relation doesn't exist
+	// It's idempotent and returns nil, which is the desired behavior
+	return hsdb.DB.Model(node).Association("AcceptedShareTo").Delete(user)
+}
+
 // __END_CYLONIX_MOD__

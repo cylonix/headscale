@@ -770,7 +770,7 @@ func logPollFunc(
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
 				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
+				Str("node", node.GivenName). // __CYLONIX_MOD__
 				Msgf(msg, a...)
 		},
 		func(msg string, a ...any) {
@@ -780,7 +780,7 @@ func logPollFunc(
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
 				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
+				Str("node", node.GivenName). // __CYLONIX_MOD__
 				Msgf(msg, a...)
 		},
 		func(msg string, a ...any) {
@@ -790,7 +790,7 @@ func logPollFunc(
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
 				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
+				Str("node", node.GivenName). // __CYLONIX_MOD__
 				Msgf(msg, a...)
 		},
 		func(err error, msg string, a ...any) {
@@ -800,7 +800,7 @@ func logPollFunc(
 				Bool("omitPeers", mapRequest.OmitPeers).
 				Bool("stream", mapRequest.Stream).
 				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
+				Str("node", node.GivenName). // __CYLONIX_MOD__
 				Str("namespace", node.Namespace). // __CYLONIX_MOD__
 				Str("user", node.User.Name).      // __CYLONIX_MOD__
 				Err(err).

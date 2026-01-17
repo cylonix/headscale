@@ -573,9 +573,49 @@ func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { //
 			Msg("Peers listed directly from db")
 	}
 	// __END_CYLONIX_MOD__
+
 	if err != nil {
 		return nil, err
 	}
+
+	// __BEGIN_CYLONIX_ADD__
+
+	// Tailscale style node sharing support.
+	// Note, This is not the same as Cylonix's vpn label based sharing for mesh
+	// network peering. A node shared in is quarantined.
+	//
+	// First, list shared in peers. i.e. nodes that are shared to the user.
+	// As a node of the user, this node will peer with all the shared in nodes
+	// of the user and put these shared in nodes in Jailed mode.
+	// And then list peers that this node is being shared to.
+	sharedInPeers, err := m.db.ListSharedInPeers(&node.User)
+	if err != nil {
+		return nil, err
+	}
+	peers = append(peers, sharedInPeers...)
+
+	// List peers that this node is being shared to.
+	sharedToPeers, err := m.db.ListSharedToPeers(node)
+	if err != nil {
+		return nil, err
+	}
+
+	// Note a field can be both shared in and shared to so we need to
+	// deduplicate here but copy the ShareeNode field from the shared to version.
+	peersMap := make(map[types.NodeID]*types.Node)
+	for _, peer := range peers {
+		peersMap[peer.ID] = peer
+	}
+	for _, peer := range sharedToPeers {
+		if existing, ok := peersMap[peer.ID]; ok {
+			// Duplicate, copy ShareeNode field
+			existing.Hostinfo.ShareeNode = true
+			continue
+		}
+		peers = append(peers, peer)
+	}
+
+	// __END_CYLONIX_ADD__
 
 	for _, peer := range peers {
 		// __BEGIN_CYLONIX_MOD__

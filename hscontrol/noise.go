@@ -98,8 +98,8 @@ func (h *Headscale) NoiseUpgradeHandler(
 	myKey := h.noisePrivateKey.Public().ShortString()
 	if err != nil {
 		// __BEGIN_CYLONIX_MOD__
-		// Supress the error due to misconfigurations of the deloyment without
-		// persistenting the server private key. Or we simply have a bad client.
+		// Suppress the error due to misconfigurations of the deployment without
+		// persisting the server private key. Or we simply have a bad client.
 		// Don't let the log flood with this.
 		v, _ := json.Marshal(req.Header)
 		if strings.Contains(err.Error(), "noise handshake failed: decrypting machine key") {
@@ -107,8 +107,8 @@ func (h *Headscale) NoiseUpgradeHandler(
 			return
 		}
 		log.Debug().Err(err).Str("request", string(v)).Msg("Noise upgrade failed")
-		// Eventhough noise upgrade failed, the HTTP connection has been
-		// hijacked already. Donot write to the writer.
+		// Even though noise upgrade failed, the HTTP connection has been
+		// hijacked already. Do not write to the writer.
 		//http.Error(writer, err.Error(), http.StatusInternalServerError)
 		// __END_CYLONIX_MOD__
 

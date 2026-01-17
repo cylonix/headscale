@@ -56,7 +56,7 @@ func (hsdb *HSDatabase) ListUsersWithOptions(
 		users, count, err := ListWithOptions(
 			&types.User{}, rx, ListUsers,
 			idList, namespace, "network", network, "", false, false,
-			"users", nil,
+			"users", nil, nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count
@@ -123,6 +123,17 @@ func UpdateUserNetworkDomain(tx *gorm.DB, username, network string) error {
 		return err
 	}
 	return nil
+}
+
+func (hsdb *HSDatabase) GetUserByLoginName(namespace, loginName string) (*types.User, error) {
+	var user types.User
+	if err := hsdb.DB.First(&user, "login_name = ? AND namespace = ?", loginName, namespace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
 }
 
 // __END_CYLONIX_MOD__

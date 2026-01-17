@@ -148,6 +148,17 @@ type Node struct {
 	CapVersion      *uint32
 	Capabilities    []Capability `gorm:"many2many:node_capabilities_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
 	Health          *string
+	IsJailed        bool `gorm:"-"` // Not stored in DB, set at runtime for peer-listing only
+
+	// WouldShareTo and AcceptedShareTo represent this node is a shared node.
+	// WouldShareTo is the list of users this node would like to be shared to.
+	// AcceptedShareTo is the list of users accepted to share this node.
+	// When a user accepts a share node, the user is added to AcceptedShareTo.
+	// A node can revoke the share by removing the user from AcceptedShareTo
+	// and the WouldShareTo list. A user can remove itself from sharing the node
+	// by removing itself from AcceptedShareTo.
+	WouldShareTo    []User `gorm:"many2many:node_would_share_to_users_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
+	AcceptedShareTo []User `gorm:"many2many:node_accepted_share_to_users_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
 	// __END_CYLONIX_ADD__
 }
 
@@ -373,13 +384,13 @@ func (node *Node) PreloadUpdate(update *Node) {
 func (node *Node) AfterFind(tx *gorm.DB) error {
 	var machineKey key.MachinePublic
 	if err := machineKey.UnmarshalText([]byte(node.MachineKeyDatabaseField)); err != nil {
-		return fmt.Errorf("unmarshalling machine key from db: %w", err)
+		return fmt.Errorf("unmarshaling machine key from db: %w", err)
 	}
 	node.MachineKey = machineKey
 
 	var nodeKey key.NodePublic
 	if err := nodeKey.UnmarshalText([]byte(node.NodeKeyDatabaseField)); err != nil {
-		return fmt.Errorf("unmarshalling node key from db: %w", err)
+		return fmt.Errorf("unmarshaling node key from db: %w", err)
 	}
 	node.NodeKey = nodeKey
 
@@ -406,7 +417,7 @@ func (node *Node) AfterFind(tx *gorm.DB) error {
 
 	var hi tailcfg.Hostinfo
 	if err := json.Unmarshal([]byte(node.HostinfoDatabaseField), &hi); err != nil {
-		return fmt.Errorf("unmarshalling hostinfo from database: %w", err)
+		return fmt.Errorf("unmarshaling hostinfo from database: %w", err)
 	}
 	node.Hostinfo = &hi
 
@@ -461,6 +472,7 @@ func (node *Node) Proto() *v1.Node {
 		NetworkDomain: node.NetworkDomain,
 		Hostinfo:      node.ProtoHostinfo(),
 		Health:        node.Health,
+		ShareToUsers:  node.ProtoShareToUsers(),
 		// __END_CYLONIX_MOD__
 	}
 
@@ -1169,5 +1181,18 @@ func (node *Node) addLogFields(event *zerolog.Event) *zerolog.Event {
 		Str("namespace", node.Namespace).
 		Str("user", node.User.Name)
 }
-
+func(node *Node) ProtoShareToUsers() []string {
+	if node == nil {
+		return nil
+	}
+	var users []string
+	for _, u := range node.AcceptedShareTo {
+		name := u.Name
+		if u.LoginName != nil {
+			name = *u.LoginName
+		}
+		users = append(users, name)
+	}
+	return users
+}
 // __END_CYLONIX_MOD__

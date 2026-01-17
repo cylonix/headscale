@@ -133,7 +133,7 @@ func (*Suite) TestExpirePreauthKey(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(pak.Expiration, check.IsNil)
 
-	err = db.ExpirePreAuthKey(pak)
+	err = db.ExpirePreAuthKey(pak, time.Now())
 	c.Assert(err, check.IsNil)
 	c.Assert(pak.Expiration, check.NotNil)
 

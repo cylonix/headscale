@@ -291,7 +291,7 @@
           },
           {
             "name": "nodeIdList",
-            "description": "__BEGIN_CYLONIX_MOD__",
+            "description": "__BEGIN_CYLONIX_ADD_",
             "in": "query",
             "required": false,
             "type": "array",
@@ -352,11 +352,17 @@
           },
           {
             "name": "pageSize",
-            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "integer",
             "format": "int64"
+          },
+          {
+            "name": "shareInOnly",
+            "description": "If to list only nodes that are shared in.\n\n__END_CYLONIX_ADD__",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -1181,6 +1187,17 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "node.shareToUsers",
+            "description": "__CYLONIX_ADD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
           }
         ],
         "tags": [
@@ -1435,6 +1452,45 @@
             "required": true,
             "type": "string",
             "format": "uint64"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/node/{nodeId}/share-to": {
+      "put": {
+        "operationId": "HeadscaleService_UpdateNodeShareToUser",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateNodeShareToUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceUpdateNodeShareToUserBody"
+            }
           }
         ],
         "tags": [
@@ -2328,8 +2384,31 @@
             "type": "string"
           }
         }
-      },
-      "title": "___BEGIN_CYLONIX_MOD__"
+      }
+    },
+    "HeadscaleServiceUpdateNodeShareToUserBody": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "addWouldShareToUser": {
+          "type": "string",
+          "title": "username"
+        },
+        "delWouldShareToUser": {
+          "type": "string",
+          "title": "username"
+        },
+        "addAcceptedShareToUser": {
+          "type": "string",
+          "title": "username"
+        },
+        "delAcceptedShareToUser": {
+          "type": "string",
+          "title": "username"
+        }
+      }
     },
     "headscalev1Location": {
       "type": "object",
@@ -2649,6 +2728,16 @@
         },
         "key": {
           "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "format": "uint64",
+          "title": "__CYLONIX_ADD__"
+        },
+        "expiry": {
+          "type": "string",
+          "format": "date-time",
+          "title": "__CYLONIX_ADD__ 0 means disable expiry"
         }
       }
     },
@@ -3149,6 +3238,13 @@
         "health": {
           "type": "string",
           "title": "__CYLONIX_ADD__"
+        },
+        "shareToUsers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "__CYLONIX_ADD__"
         }
       }
     },
@@ -3371,6 +3467,9 @@
       }
     },
     "v1UpdateNodeResponse": {
+      "type": "object"
+    },
+    "v1UpdateNodeShareToUserResponse": {
       "type": "object"
     },
     "v1UpdateUserNetworkDomainResponse": {

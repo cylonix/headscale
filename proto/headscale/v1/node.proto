@@ -60,6 +60,7 @@ message Node {
     string             network_domain = 30; // __CYLONIX_ADD__
     optional Hostinfo  hostinfo       = 31; // __CYLONIX_ADD__
     optional string    health         = 32; // __CYLONIX_ADD__
+    repeated string    share_to_users = 33; // __CYLONIX_ADD__
 }
 
 message RegisterNodeRequest {
@@ -116,7 +117,7 @@ message RenameNodeResponse {
 
 message ListNodesRequest {
     string user = 1;
-    // __BEGIN_CYLONIX_MOD__
+    // __BEGIN_CYLONIX_ADD_
     repeated uint64 node_id_list = 2;
     optional string namespace    = 3;
     optional string network      = 4;
@@ -127,7 +128,10 @@ message ListNodesRequest {
     optional string sort_desc    = 9;
     optional uint32 page         = 10;
     optional uint32 pageSize     = 11;
-    // __END_CYLONIX_MOD__
+
+    // If to list only nodes that are shared in.
+    optional bool share_in_only  = 12;
+    // __END_CYLONIX_ADD__
 }
 
 message ListNodesResponse {
@@ -172,7 +176,7 @@ message CreateNodeRequest {
 message CreateNodeResponse {
     uint64 node_id = 1;
 }
-// ___BEGIN_CYLONIX_MOD__
+
 message UpdateNodeRequest {
     uint64                   node_id = 1;
     string                 namespace = 2;
@@ -190,4 +194,14 @@ message RouteSpec {
     bool   is_primary = 5;
 }
 
+message UpdateNodeShareToUserRequest {
+    uint64          node_id                    = 1;
+    string          namespace                  = 2;
+    optional string add_would_share_to_user    = 3; // username
+    optional string del_would_share_to_user    = 4; // username
+    optional string add_accepted_share_to_user = 5; // username
+    optional string del_accepted_share_to_user = 6; // username
+}
+message UpdateNodeShareToUserResponse {
+}
 // __END_CYLONIX_MOD__

@@ -49,6 +49,8 @@ message DeletePreAuthKeyResponse {
 message ExpirePreAuthKeyRequest {
     string user = 1;
     string key  = 2;
+    optional uint64 id = 3; // __CYLONIX_ADD__
+    optional google.protobuf.Timestamp expiry = 4; // __CYLONIX_ADD__ 0 means disable expiry
 }
 
 message ExpirePreAuthKeyResponse {

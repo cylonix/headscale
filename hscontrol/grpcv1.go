@@ -249,21 +249,49 @@ func (api headscaleV1APIServer) ExpirePreAuthKey(
 			return err
 		}
 		// __END_CYLONIX_ADD__
+		var (
+			preAuthKey *types.PreAuthKey
+			err        error
+		)
 
-		preAuthKey, err := db.GetPreAuthKey(tx, request.GetUser(), request.Key)
+		// __BEGIN_CYLONIX_MOD__
+		if request.Id != nil {
+			preAuthKey, err = db.GetPreAuthKeyByID(tx, request.GetId())
+			if err != nil {
+				log.Debug().Int("id", int(request.GetId())).
+					Err(err).Msg("Failed to get pre auth key by ID")
+			}
+		} else {
+			preAuthKey, err = db.GetPreAuthKey(tx, request.GetUser(), request.GetKey())
+			if err != nil {
+				log.Debug().
+					Str("user", request.GetUser()).
+					Str("key", request.GetKey()).
+					Err(err).Msg("Failed to get pre auth key by user and key")
+			}
+		}
 		if err != nil {
 			return err
 		}
 
-		// __BEGIN_CYLONIX_MOD__
 		if err := api.auth(ctx, types.NewAuthScope(
 			preAuthKey.Namespace, preAuthKey.User.Name, preAuthKey.User.Network,
 		)); err != nil {
 			return err
 		}
-		// __END_CYLONIX_MOD__
 
-		return db.ExpirePreAuthKey(tx, preAuthKey)
+		// Check if expiry time is set in the request. 0 means disable expiry.
+		now := time.Now()
+		if request.Expiry != nil {
+			if request.Expiry.AsTime().IsZero() {
+				now = time.Time{}
+			} else {
+				now = request.Expiry.AsTime()
+			}
+		}
+
+		return db.ExpirePreAuthKey(tx, preAuthKey, now)
+		// __END_CYLONIX_MOD__
 	})
 	if err != nil {
 		return nil, err
@@ -290,12 +318,14 @@ func (api headscaleV1APIServer) ListPreAuthKeys(
 		network = user.Network
 	}
 	r := types.NewAuthScope(request.GetNamespace(), request.GetUser(), network)
-	if err := api.auth(ctx, r); err != nil {
+	scope, err := api.authAndScope(ctx, r)
+	if err != nil {
 		return nil, err
 	}
 	total, preAuthKeys, err := api.h.db.ListPreAuthKeysWithOptions(
 		request.GetIdList(),
 		request.Namespace,
+		scope == types.AuthScopeTypeFull,
 		"", // network is not yet supported
 		request.GetUser(),
 		request.GetFilterBy(),
@@ -679,7 +709,7 @@ func (api headscaleV1APIServer) ListNodes(
 	if request.GetOnlineOnly() {
 		list := api.h.nodeNotifier.ConnectedNodeIDs()
 		onlineIDs = make([]uint64, 0, len(list))
-		for id := range list {
+		for _, id := range list {
 			onlineIDs = append(onlineIDs, uint64(id))
 		}
 	}
@@ -690,6 +720,7 @@ func (api headscaleV1APIServer) ListNodes(
 		request.GetUser(),
 		request.GetOnlineOnly(),
 		scope == types.AuthScopeTypeFull,
+		request.GetShareInOnly(),
 		onlineIDs,
 		request.GetFilterBy(),
 		request.GetFilterValue(),
@@ -1241,8 +1272,8 @@ func (api headscaleV1APIServer) SetPolicy(
 	// configurations.
 	// __BEGIN_CYLONIX_MOD__
 	_, nodes, err := api.h.db.ListNodesWithOptions(
-		nil, request.Namespace, request.GetNetwork(), "", false, false, nil,
-		"", "", "", "", 0, 0,
+		nil, request.Namespace, request.GetNetwork(), "", false, false, false,
+		nil, "", "", "", "", 0, 0,
 	)
 	// __END_CYLONIX_MOD__
 	if err != nil {
@@ -1577,6 +1608,202 @@ func (api headscaleV1APIServer) UpdateNode(
 		Msg("Updated node")
 
 	return &v1.UpdateNodeResponse{}, nil
+}
+
+func (api headscaleV1APIServer) UpdateNodeShareToUser(
+	ctx context.Context,
+	request *v1.UpdateNodeShareToUserRequest,
+) (*v1.UpdateNodeShareToUserResponse, error) {
+	// First check if auth token exists.
+	if err := api.auth(ctx, nil); err != nil {
+		return nil, err
+	}
+
+	node, err := api.h.db.GetNodeByID(types.NodeID(request.NodeId))
+	if err != nil {
+		return nil, err
+	}
+	// For modifying would_share_to, check auth against the node owner
+	// For modifying accepted_share_to, check auth against if would_be_shared_to
+	// has the user listed or the API call is from a namespace admin.
+	username := ""
+	op := ""
+	updatePeers := false
+	userNetwork := ""
+	logger := log.Error().
+		Str("namespace", request.Namespace).
+		Uint64("node-id", request.NodeId)
+	log.Debug().
+		Str("namespace", request.Namespace).
+		Uint64("node-id", request.NodeId).
+		Str("delete-username", request.GetDelAcceptedShareToUser()).
+		Msg("UpdateNodeShareToUser called")
+	if request.AddWouldShareToUser != nil || request.DelWouldShareToUser != nil {
+		// Allow only one of add/del would_share_to per request
+		if request.AddWouldShareToUser != nil && request.DelWouldShareToUser != nil {
+			return nil, errors.New("cannot add and delete would_share_to user in the same request")
+		}
+		s := types.NewAuthScope(node.Namespace, node.User.Name, node.NetworkDomain)
+		if err := api.auth(ctx, s); err != nil {
+			return nil, err
+		}
+		if request.AddWouldShareToUser != nil {
+			username = *request.AddWouldShareToUser
+			op = "add_would_share_to"
+		} else if request.DelWouldShareToUser != nil {
+			username = *request.DelWouldShareToUser
+			op = "delete_would_share_to"
+		}
+		if username == "" {
+			return nil, errors.New("username cannot be empty")
+		}
+		user, err := api.h.db.GetUserByLoginName(node.Namespace, username)
+		if err != nil {
+			// TODO: handle the case when user is not yet created
+			// TODO: but invite is sent to a future user to share the node.
+			if errors.Is(err, db.ErrUserNotFound) {
+				if request.DelWouldShareToUser != nil {
+					// If we're deleting a user that doesn't exist, we can just ignore it
+					return &v1.UpdateNodeShareToUserResponse{}, nil
+				}
+			}
+			return nil, err
+		}
+		if request.AddWouldShareToUser != nil {
+			err = api.h.db.AddWouldShareToUser(node, user)
+		} else {
+			err = api.h.db.RemoveWouldShareToUser(node, user)
+		}
+		if err != nil {
+			logger.Err(err).Msg("Failed to update node would_share_to")
+			return nil, err
+		}
+	} else if request.AddAcceptedShareToUser != nil || request.DelAcceptedShareToUser != nil {
+		// Allow only one of add/del accepted_share_to per request
+		if request.AddAcceptedShareToUser != nil && request.DelAcceptedShareToUser != nil {
+			return nil, errors.New("cannot add and delete accepted_share_to user in the same request")
+		}
+		if request.AddAcceptedShareToUser != nil {
+			username = *request.AddAcceptedShareToUser
+			op = "add_accepted_share_to"
+		} else if request.DelAcceptedShareToUser != nil {
+			username = *request.DelAcceptedShareToUser
+			op = "delete_accepted_share_to"
+		}
+		if username == "" {
+			return nil, errors.New("username cannot be empty")
+		}
+		// Check if the auth has authorization to operate on the username.
+		user, err := api.h.db.GetUserByLoginName(node.Namespace, username)
+		if err != nil {
+			if errors.Is(err, db.ErrUserNotFound) {
+				if op == "delete_accepted_share_to" {
+					// Ignore user not found error when deleting accepted_share_to
+					log.Debug().
+						Str("namespace", request.Namespace).
+						Uint64("node-id", request.NodeId).
+						Str("username", username).
+						Msg("User not found when deleting accepted_share_to, ignoring")
+					return &v1.UpdateNodeShareToUserResponse{}, nil
+				}
+			}
+			return nil, err
+		}
+		s := types.NewAuthScope(node.Namespace, username, user.Network)
+		if err := api.auth(ctx, s); err != nil {
+			return nil, err
+		}
+		if request.AddAcceptedShareToUser != nil {
+			// Check if the user is already in the accepted_share_to relationship
+			isAlreadyAccepted := false
+			for _, acceptedUser := range node.AcceptedShareTo {
+				if acceptedUser.ID == user.ID {
+					isAlreadyAccepted = true
+					break
+				}
+			}
+
+			// Skip if already accepted
+			if isAlreadyAccepted {
+				log.Info().
+					Str("username", username).
+					Msg("User already in accepted_share_to, skipping")
+			} else {
+				// Check if the user is in the would_share_to relationship
+				isInWouldShareTo := false
+				for _, wouldShareUser := range node.WouldShareTo {
+					if wouldShareUser.ID == user.ID {
+						isInWouldShareTo = true
+						break
+					}
+				}
+				if !isInWouldShareTo {
+					s := types.NewAuthScope(node.Namespace, "", "")
+					if err := api.auth(ctx, s); err != nil {
+						return nil, errors.New("user is not in the would_share_to list of this node")
+					}
+					// Fall through:
+					// Namespace admin can just add a user to share without
+					// setting up the would_share_to relationship
+				}
+
+				err = api.h.db.AddAcceptedShareToUser(node, user)
+				if err != nil {
+					logger.Err(err).Msg("Failed to update node accepted_share_to")
+					return nil, err
+				}
+				log.Info().
+					Str("namespace", request.Namespace).
+					Uint64("node-id", request.NodeId).
+					Str("username", username).
+					Str("operation", op).
+					Msg("Updated")
+			}
+		} else {
+			err = api.h.db.RemoveAcceptedShareToUser(node, user)
+			if err != nil {
+				logger.Err(err).Msg("Failed to update node accepted_share_to")
+				return nil, err
+			}
+		}
+		updatePeers = true
+		userNetwork = user.Network
+	}
+
+	log.Info().
+		Str("namespace", request.Namespace).
+		Uint64("node-id", request.NodeId).
+		Str("username", username).
+		Str("operation", op).
+		Msg("Updated. Notifying peers")
+
+	// TODO: notify only the node being shared and the user add or removed.
+	if updatePeers {
+		if err := api.h.mapper.NotifyPeers(
+			types.StateUpdate{
+				Type:          types.StateFullUpdate,
+				Message:       "Node peers update due to sharing change",
+				Namespace:     node.Namespace,
+				NetworkDomain: node.NetworkDomain,
+			},
+		); err != nil {
+			logger.Err(err).Msg("Failed to update node peers")
+			return nil, err
+		}
+		if err := api.h.mapper.NotifyPeers(
+			types.StateUpdate{
+				Type:          types.StateFullUpdate,
+				Message:       "User peers update due to sharing change",
+				Namespace:     node.Namespace,
+				NetworkDomain: userNetwork,
+			},
+		); err != nil {
+			logger.Err(err).Msg("Failed to update user nodes' peers")
+			return nil, err
+		}
+	}
+
+	return &v1.UpdateNodeShareToUserResponse{}, nil
 }
 
 func (api headscaleV1APIServer) UpdateUserNetworkDomain(

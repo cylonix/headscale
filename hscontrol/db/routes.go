@@ -701,7 +701,7 @@ func (hsdb *HSDatabase) ListRoutesWithOptions(
 		v, count, err := ListWithOptions(
 			types.Route{}, rx, GetRoutes,
 			idList, namespace, "network", network, username, false, false,
-			"routes", nil,
+			"routes", nil, nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		total = count

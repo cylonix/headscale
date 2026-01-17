@@ -488,6 +488,18 @@ func NewHeadscaleDatabase(
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				ID: "202601051100",
+				Migrate: func(tx *gorm.DB) error {
+					log.Info().Msg(`
+						Migrating database to add node shared-to relations.
+						`)
+					return tx.AutoMigrate(
+						&types.Node{},
+					)
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 			// __END_CYLONIX_ADD__
 		},
 	)
@@ -775,10 +787,41 @@ func Page(db *gorm.DB, total int64, page, pageSize int) *gorm.DB {
 	}
 	return db
 }
+
+func Filter(rx *gorm.DB, keyMap map[string]string, filterBy, filterValue, tableName string) *gorm.DB {
+	if filterBy == "" || filterValue == "" {
+		return rx
+	}
+	filters := strings.Split(filterBy, ",")
+	values := strings.Split(filterValue, ",")
+	if len(filters) != len(values) {
+		return rx
+	}
+	for i := range filters {
+		like := "%" + values[i] + "%"
+		if filters[i] == "username" {
+			if tableName == "users" {
+				rx = rx.Where("name like ? OR login_name like ?", like, like)
+			} else {
+				rx = rx.Joins("JOIN users ON users.id = " + tableName + ".user_id")
+				rx = rx.Where("users.name like ? OR users.login_name like ?", like, like)
+			}
+		} else {
+			if dbField, ok := keyMap[filters[i]]; ok {
+				rx = rx.Where(dbField+" like ?", like)
+			} else {
+				rx = rx.Where(filters[i]+" like ?", like)
+			}
+		}
+	}
+	return rx
+}
+
 func ListWithOptions[T any](model T, rx *gorm.DB,
 	listFunc func(*gorm.DB) ([]T, error),
 	idList []uint64, namespace *string, networkField, network, username string,
 	onlineOnly bool, namespaceLike bool, tableName string, onlineIDs []uint64,
+	filterByKeyMap map[string]string,
 	filterBy, filterValue, sortBy, sortDesc string, page, pageSize int,
 ) ([]T, int64, error) {
 	var m interface{}
@@ -806,35 +849,24 @@ func ListWithOptions[T any](model T, rx *gorm.DB,
 	}
 
 	if networkField != "" && network != "" {
-		rx = rx.Where(networkField+" = ?", network)
+		rx = rx.Where(tableName+"."+networkField+" = ?", network)
 	}
 
 	if namespace != nil {
 		if namespaceLike {
-			rx = rx.Where("namespace LIKE ?", "%"+*namespace+"%")
+			rx = rx.Where(tableName+".namespace LIKE ?", "%"+*namespace+"%")
 		} else {
-			rx = rx.Where("namespace = ?", *namespace)
+			rx = rx.Where(tableName+".namespace = ?", *namespace)
 		}
 	}
 	if len(idList) > 0 {
-		rx = rx.Where("id in ?", idList)
-	}
-	if filterBy != "" && filterValue != "" {
-		like := "%" + filterValue + "%"
-		if filterBy == "username" {
-			if tableName == "users" {
-				rx = rx.Where("name like ? OR login_name like ?", like, like)
-			} else {
-				rx = rx.Joins("JOIN users ON users.id = " + tableName + ".user_id")
-				rx = rx.Where("users.name like ? OR users.login_name like ?", like, like)
-			}
-		} else {
-			rx = rx.Where(filterBy+" like ?", like)
-		}
+		rx = rx.Where(tableName+".id in ?", idList)
 	}
 	if onlineOnly {
-		rx = rx.Where("last_seen IS NULL OR id in ?", onlineIDs)
+		log.Debug().Interface("onlineIDs", onlineIDs).Msg("online IDs filter applied")
+		rx = rx.Where(tableName+".last_seen IS NULL OR "+tableName+".id in ?", onlineIDs)
 	}
+	rx = Filter(rx, filterByKeyMap, filterBy, filterValue, tableName)
 	if err := rx.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

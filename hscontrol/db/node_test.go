@@ -973,4 +973,88 @@ func TestUpdateNodeCapabilities(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeShareToUsers(t *testing.T) {
+	db, err := newTestDB()
+	if err != nil {
+		t.Fatalf("creating db: %s", err)
+	}
+
+	var (
+		namespace, login, network = "test-namespace-share-to", "test-share-to", "test-network-share-to"
+		login1, network1 = "test-share-to-1", "test-network-share-to1"
+		login2, network2 = "test-share-to-2", "test-network-share-to2"
+	)
+	user, err := db.CreateNamespaceUser("test-user-share-to-id", &namespace, &login, network)
+	assert.NoError(t, err)
+	user1, err := db.CreateNamespaceUser("test-user-share-to-id-1", &namespace, &login1, network1)
+	assert.NoError(t, err)
+	user2, err := db.CreateNamespaceUser("test-user-share-to-id-2", &namespace, &login2, network2)
+	assert.NoError(t, err)
+
+	node := &types.Node{
+		MachineKey:     key.NewMachine().Public(),
+		NodeKey:        key.NewNode().Public(),
+		Hostname:       "test",
+		UserID:         user.ID,
+		RegisterMethod: util.RegisterMethodAuthKey,
+	}
+
+	checkShareTo := func(node *types.Node, u *types.User, accepted bool) {
+		num := len(node.WouldShareTo)
+		if accepted {
+			num = len(node.AcceptedShareTo)
+		}
+		t.Logf("would share to num=%v", num)
+		nodes, err := db.ListNodes()
+		assert.NoError(t, err)
+		if assert.Len(t, nodes, 1) {
+			list := nodes[0].WouldShareTo
+			if accepted {
+				list = nodes[0].AcceptedShareTo
+			}
+			if assert.Len(t, list, num) {
+				u1 := list[num-1]
+				t.Logf("accepted(%v) share to: in=%v/%v db=%v/%v", accepted, u.Name, u.ID, u1.Name, u1.ID)
+				assert.Equal(t, u.ID, u1.ID)
+				assert.Equal(t, u.Name, u1.Name)
+				assert.Equal(t, u.Namespace, u1.Namespace)
+			}
+		}
+	}
+	err = db.DB.Create(node).Error
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	err = db.AddWouldShareToUser(node, user1)
+	if assert.NoError(t, err) {
+		checkShareTo(node, user1, false)
+	}
+	err = db.AddWouldShareToUser(node, user2)
+	if assert.NoError(t, err) {
+		checkShareTo(node, user2, false)
+	}
+	err = db.AddAcceptedShareToUser(node, user1)
+	if assert.NoError(t, err) {
+		checkShareTo(node, user1, true)
+	}
+	err = db.AddAcceptedShareToUser(node, user2)
+	if assert.NoError(t, err) {
+		checkShareTo(node, user2, true)
+	}
+	err = db.RemoveWouldShareToUser(node, user1)
+	if assert.NoError(t, err) {
+		checkShareTo(node, user2, false)
+	}
+	err = db.RemoveWouldShareToUser(node, user2)
+	assert.NoError(t, err)
+
+	err = db.RemoveAcceptedShareToUser(node, user1)
+	if assert.NoError(t, err) {
+		checkShareTo(node, user2, true)
+	}
+	err = db.RemoveAcceptedShareToUser(node, user2)
+	assert.NoError(t, err)
+}
+
 // __END_CYLONIX_MOD__

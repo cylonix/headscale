@@ -89,31 +89,34 @@ func (key *APIKey) Auth(r interface{}) (AuthScopeType, bool) {
 		return AuthScopeTypeFull, true
 	case AuthScopeTypeNamespace:
 		s, ok := r.(AuthNamespaceScopedRequest)
+		namespace := s.GetNamespace()
 		if ok {
 			log.Debug().
 				Str("authorized-scope", key.ScopeValue).
-				Str("requested-scope", s.GetNamespace()).
+				Str("requested-scope", namespace).
 				Msg("Auth Namespace Scope")
 		}
-		return AuthScopeTypeNamespace, ok && (s.GetNamespace() == key.ScopeValue)
+		return AuthScopeTypeNamespace, ok && (namespace == key.ScopeValue) && namespace != ""
 	case AuthScopeTypeNetwork:
 		s, ok := r.(AuthNetworkScopedRequest)
+		network := s.GetNetwork()
 		if ok {
 			log.Debug().
 				Str("authorized-scope", key.ScopeValue).
-				Str("requested-scope", s.GetNetwork()).
+				Str("requested-scope", network).
 				Msg("Auth network Scope")
 		}
-		return AuthScopeTypeNetwork, ok && (s.GetNetwork() == key.ScopeValue)
+		return AuthScopeTypeNetwork, ok && (network == key.ScopeValue) && network != ""
 	case AuthScopeTypeUser:
 		s, ok := r.(AuthUserScopedRequest)
+		user := s.GetUser()
 		if ok {
 			log.Debug().
 				Str("authorized-scope", key.ScopeValue).
-				Str("requested-scope", s.GetUser()).
+				Str("requested-scope", user).
 				Msg("Auth User Scope")
 		}
-		return AuthScopeTypeUser, ok && (s.GetUser() == key.ScopeValue)
+		return AuthScopeTypeUser, ok && (user == key.ScopeValue) && user != ""
 	}
 	return AuthScopeTypeNone, false
 }
