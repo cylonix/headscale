@@ -898,7 +898,8 @@ func (h *Headscale) handleNodeKeyRefresh(
 	resp := tailcfg.RegisterResponse{}
 
 	// __BEGIN_CYLONIX_MOD__
-	err := h.refreshNodeKeyAndExpiry(&node, registerRequest.NodeKey, registerRequest.OldNodeKey, nil)
+	expiry := time.Now().Add(time.Hour * 24 * 150)
+	err := h.refreshNodeKeyAndExpiry(&node, registerRequest.NodeKey, registerRequest.OldNodeKey, &expiry)
 	if err != nil {
 		writeInternalError(writer, fmt.Errorf("failed to refresh node key and/or expiry: %w", err))
 		return

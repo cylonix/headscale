@@ -517,6 +517,8 @@ func TestBackfillIPAddresses(t *testing.T) {
 		"Routes",
 		"CreatedAt",
 		"UpdatedAt",
+		"WouldShareTo",
+		"AcceptedShareTo",
 	))
 
 	for _, tt := range tests {

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,24 +98,6 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 		Str("sortDesc", sortDesc).
 		Msg("Listing nodes with options")
 	nodes, err := Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
-		// Transform sortBy field names to match database column names
-		switch sortBy {
-		case "node_key":
-			sortBy = "node_key_database_field"
-		case "machine_key":
-			sortBy = "machine_key_database_field"
-		case "disco_key":
-			sortBy = "disco_key_database_field"
-		case "ipv4":
-			sortBy = "ipv4_database_field"
-		case "ipv6":
-			sortBy = "ipv6_database_field"
-		case "endpoints":
-			sortBy = "endpoints_database_field"
-		case "host_info":
-			sortBy = "host_info_database_field"
-		}
-
 		var nodes types.Nodes
 		var count int64
 		var err error
@@ -152,10 +135,7 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 			&types.Node{}, rx, listNodes,
 			idList, namespace, "network_domain", network, username,
 			onlineOnly, namespaceLike, "nodes", onlineIDs,
-			map[string]string{
-				"node_key":    "node_key_database_field",
-				"machine_key": "machine_key_database_field",
-			},
+			nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
 		log.Trace().
@@ -872,6 +852,7 @@ func generateGivenName(suppliedName string, randomSuffix bool) (string, error) {
 	normalizedHostname, err := util.NormalizeToFQDNRulesConfigFromViper(
 		suppliedName,
 	)
+	normalizedHostname = strings.ReplaceAll(normalizedHostname, ".", "-") // Don't allow '.' in hostname __CYLONIX_ADD__
 	if err != nil {
 		return "", err
 	}
