@@ -3,6 +3,7 @@ package mapper
 import (
 	"fmt"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var iap = func(ipStr string) *netip.Addr {
@@ -504,4 +507,38 @@ func Test_fullMapResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseVersion(t *testing.T) {
+	major, minor, patch, err := parseVersion("1.80.4")
+	assert.Nil(t, err)
+	assert.Equal(t, 1, major)
+	assert.Equal(t, 80, minor)
+	assert.Equal(t, 4, patch)
+
+	major, minor, patch, err = parseVersion("0.100.2")
+	assert.Nil(t, err)
+	assert.Equal(t, 0, major)
+	assert.Equal(t, 100, minor)
+	assert.Equal(t, 2, patch)
+
+	_, _, _, err = parseVersion("1.2.3-4")
+	assert.NotNil(t, err)
+
+	_, _, _, err = parseVersion("1.2")
+	assert.NotNil(t, err)
+
+	_, _, _, err = parseVersion("abc.def.ghi")
+	assert.NotNil(t, err)
+
+	_, _, _, err = parseVersion("1.2.x")
+	assert.NotNil(t, err)
+
+	version := "1.80.4-extra-info"
+	version = strings.SplitN(version, "-", 2)[0]
+	major, minor, patch, err = parseVersion(version)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, major)
+	assert.Equal(t, 80, minor)
+	assert.Equal(t, 4, patch)
 }

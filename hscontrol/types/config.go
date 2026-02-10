@@ -193,6 +193,11 @@ type DERPConfig struct {
 
 type LogTailConfig struct {
 	Enabled bool
+
+	// __BEGIN_CYLONIX_ADD__
+	// Selectively enable for specific versions
+	After string // e.g. "1.80.4"
+	// __END_CYLONIX_ADD__
 }
 
 type CLIConfig struct {

@@ -12,6 +12,7 @@ import (
 	"path"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -532,6 +533,22 @@ func (m *Mapper) baseWithConfigMapResponse(
 	resp.Debug = &tailcfg.Debug{
 		DisableLogTail: !m.cfg.LogTail.Enabled,
 	}
+	// __BEGIN_CYLONIX_ADD__
+	// Support selective log tail enabling based on client version.
+	if !m.cfg.LogTail.Enabled && m.cfg.LogTail.After != "" && node.Hostinfo != nil {
+		version := node.Hostinfo.IPNVersion
+		// Remove any suffix after hyphen
+		version = strings.SplitN(version, "-", 2)[0]
+		major1, min1, patch1, err1 := parseVersion(version)
+		major2, min2, patch2, err2 := parseVersion(m.cfg.LogTail.After)
+		if err1 == nil && err2 == nil {
+			if major1 > major2 || (major1 == major2 && min1 > min2) ||
+				(major1 == major2 && min1 == min2 && patch1 >= patch2) {
+				resp.Debug.DisableLogTail = false
+			}
+		}
+	}
+	// __END_CYLONIX_ADD__
 
 	return &resp, nil
 }
@@ -776,7 +793,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	return nil
 }
 
-// __ BEGIN_CYLONIX_MOD __
+// __BEGIN_CYLONIX_MOD__
 
 type DerpMapPolicy struct {
 	DerpMap *tailcfg.DERPMap `json:"derpMap"`
@@ -833,4 +850,24 @@ func (m *Mapper) NotifyPeers(update types.StateUpdate) error {
 	m.notif.NotifyAll(context.Background(), update)
 	return nil
 }
-// __ END_CYLONIX_MOD __
+
+func parseVersion(s string) (major, minor, patch int, err error) {
+	fs := strings.Split(strings.TrimSpace(s), ".")
+	if len(fs) != 3 {
+		err = fmt.Errorf("parseVersion: parsing %q: wrong number of parts: %d", s, len(fs))
+		return
+	}
+	ints := make([]int, 0, 3)
+	for _, s := range fs {
+		var i int
+		i, err = strconv.Atoi(s)
+		if err != nil {
+			err = fmt.Errorf("parseVersion: parsing %q: %w", s, err)
+			return
+		}
+		ints = append(ints, i)
+	}
+	return ints[0], ints[1], ints[2], nil
+}
+
+// __END_CYLONIX_MOD__
