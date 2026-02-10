@@ -222,4 +222,4 @@ require (
 	modernc.org/sqlite v1.34.4 // indirect
 )
 
-replace tailscale.com => ../tailscale
+replace tailscale.com => github.com/cylonix/tailscale v1.80.4
