@@ -1195,4 +1195,10 @@ func(node *Node) ProtoShareToUsers() []string {
 	}
 	return users
 }
+
+type RegistrationCacheNodeInfo struct {
+	Node     Node
+	FollowUp string
+}
+
 // __END_CYLONIX_MOD__

@@ -497,7 +497,8 @@ func RegisterNodeFromAuthCallback(
 		Msg("Registering node from API/CLI or auth callback")
 
 	if nodeInterface, ok := cache.Get(mkey.String()); ok {
-		if registrationNode, ok := nodeInterface.(types.Node); ok {
+		if registration, ok := nodeInterface.(types.RegistrationCacheNodeInfo); ok {
+			registrationNode := registration.Node
 			user, err := GetUser(tx, userName)
 			if err != nil {
 				return nil, fmt.Errorf(
@@ -513,6 +514,16 @@ func RegisterNodeFromAuthCallback(
 			}
 
 			// __BEGIN_CYLONIX_MOD__
+			// Cache has been hit with the callback. Delete it before it
+			// to avoid be re-used even for error since the provider of
+			// the auth URL may have set the state to be authorized already.
+			log.Info().
+				Caller().
+				Str("machine_key", mkey.ShortString()).
+				Str("node_key", registrationNode.NodeKey.ShortString()).
+				Msg("Cache hit with auth callback, deleting cache entry")
+			cache.Delete(mkey.String())
+
 			node, err := GetNodeByAnyKey(tx, &user.ID, mkey, registrationNode.NodeKey, key.NodePublic{})
 			if err == nil {
 				node.NodeKey = registrationNode.NodeKey
@@ -556,11 +567,6 @@ func RegisterNodeFromAuthCallback(
 				ipv4, ipv6,
 				nodeHandler, // __CYLONIX_MOD__
 			)
-
-			if err == nil {
-				cache.Delete(mkey.String())
-			}
-
 			return node, err
 		} else {
 			return nil, ErrCouldNotConvertNodeInterface
@@ -1343,6 +1349,32 @@ func (hsdb *HSDatabase) MaybeUpdateNodeGivenName(
 		return fmt.Errorf("failed to update node given name: %w", err)
 	}
 	node.DebugLog().Msgf("updated hostname to %s and given name to %s", newHostname, givenName)
+	return nil
+}
+
+func (hsdb *HSDatabase) MaybeUpdateNodeCapVersion(
+	node *types.Node,
+	version uint32,
+) error {
+	if node.CapVersion != nil && *node.CapVersion == version {
+		// No need to update the capability version if it's the same.
+		return nil
+	}
+
+	currentVersion := uint32(0)
+	if node.CapVersion != nil {
+		currentVersion = *node.CapVersion
+	}
+	node.
+		DebugLog().
+		Uint32("new-cap-version", version).
+		Uint32("current-cap-version", currentVersion).
+		Msg("Updating capability version for node")
+	node.CapVersion = &version
+	update := &types.Node{CapVersion: &version}
+	if err := hsdb.UpdateNode(node.ID, node.Namespace, update, nil, nil); err != nil {
+		return fmt.Errorf("failed to update node capability version: %w", err)
+	}
 	return nil
 }
 

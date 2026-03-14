@@ -147,8 +147,33 @@ func (h *Headscale) handleRegister(
 			// Fall through to let node retry.
 			// __END_CYLONIX_MOD__
 
-			if _, ok := h.registrationCache.Get(machineKey.String()); ok {
+			if i, ok := h.registrationCache.Get(machineKey.String()); ok {
 				logTrace("Node is waiting for interactive login")
+				registration, ok := i.(types.RegistrationCacheNodeInfo)
+				if !ok {
+					logErr(
+						fmt.Errorf("unexpected type in registration cache for machine key %s", machineKey.String()),
+						"Failed to get registration cache")
+					return
+				}
+				if registration.FollowUp != regReq.Followup {
+					log.Info().
+						Caller().
+						Str("machine", machineKey.ShortString()).
+						Str("node_key_in_cache", registration.Node.NodeKey.ShortString()).
+						Str("node_key_in_request", regReq.NodeKey.ShortString()).
+						Str("followup_in_cache", registration.FollowUp).
+						Str("followup_in_request", regReq.Followup).
+						Msg("Followup URL in cache does not match request, proceeding with registration")
+					h.registrationCache.Set(
+						machineKey.String(),
+						types.RegistrationCacheNodeInfo{
+							Node:     registration.Node,
+							FollowUp: regReq.Followup,
+						},
+						registerCacheExpiration,
+					)
+				}
 
 				select {
 				case <-req.Context().Done():
@@ -165,7 +190,7 @@ func (h *Headscale) handleRegister(
 						return
 					}
 					logInfo("Node is still not registered, send login URL again")
-					h.handleNewNode(req, writer, regReq, machineKey, regReq.Followup) // __CYLONIX_MOD__
+					h.handleNewNode(req, writer, regReq, machineKey, registration.Node, regReq.Followup) // __CYLONIX_MOD__
 
 					return
 				}
@@ -195,20 +220,41 @@ func (h *Headscale) handleRegister(
 		}
 
 		// __BEGIN_CYLONIX_MOD__
+		// If there is an existing authURL cache entry, re-use it instead of
+		// getting a new one as the client may have changed the node key after
+		// getting the auth URL.
+		followUp := regReq.Followup
+		if followUp == "" {
+			if i, ok := h.registrationCache.Get(machineKey.String()); ok {
+				if existing, ok := i.(types.RegistrationCacheNodeInfo); ok {
+					log.Info().
+						Caller().
+						Str("machine", machineKey.ShortString()).
+						Str("existing_node_key", existing.Node.NodeKey.ShortString()).
+						Str("new_node_key", regReq.NodeKey.ShortString()).
+						Msg("Re-using existing auth URL cache entry")
+					followUp = existing.FollowUp
+				}
+			}
+		}
+
 		log.Info().
 			Caller().
 			Str("machine", machineKey.ShortString()).
 			Str("node", regReq.NodeKey.ShortString()).
 			Msg("Set registration cache for node")
-		// __END_CYLONIX_MOD__
 
 		h.registrationCache.Set(
 			machineKey.String(),
-			newNode,
+			types.RegistrationCacheNodeInfo{
+				Node:     newNode,
+				FollowUp: followUp,
+			},
 			registerCacheExpiration,
 		)
 
-		h.handleNewNode(req, writer, regReq, machineKey, regReq.Followup) // __CYLONIX_MOD__
+		h.handleNewNode(req, writer, regReq, machineKey, newNode, followUp)
+		// __END_CYLONIX_MOD__
 
 		return
 	}
@@ -342,11 +388,13 @@ func (h *Headscale) handleRegister(
 		// headscale-managed tailnets?
 		// __BEGIN_CYLONIX_MOD__
 		//node.NodeKey = regReq.NodeKey
+		capVersion := uint32(regReq.Version)
 		newNode := types.Node{
 			MachineKey: machineKey,
 			Hostname:   regReq.Hostinfo.Hostname,
 			Hostinfo:   regReq.Hostinfo,
 			NodeKey:    regReq.NodeKey,
+			CapVersion: &capVersion,
 			LastSeen:   &now,
 			Expiry:     &time.Time{},
 		}
@@ -355,12 +403,15 @@ func (h *Headscale) handleRegister(
 			Str("machine", machineKey.ShortString()).
 			Str("node", regReq.NodeKey.ShortString()).
 			Msg("Set registration cache for node")
-		// __END_CYLONIX_MOD__
 		h.registrationCache.Set(
 			machineKey.String(),
-			newNode, // __CYLONIX_MOD__
+			types.RegistrationCacheNodeInfo{
+				Node:     newNode,
+				FollowUp: regReq.Followup,
+			},
 			registerCacheExpiration,
 		)
+		// __END_CYLONIX_MOD__
 
 		return
 	}
@@ -703,6 +754,7 @@ func (h *Headscale) handleNewNode(
 	writer http.ResponseWriter,
 	registerRequest tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
+	newNode types.Node, // __CYLONIX_MOD__
 	followUp string, // __CYLONIX_MOD__
 ) {
 	logInfo, logTrace, logErr := logAuthFunc(req, registerRequest, machineKey) // __CYLONIX_MOD__
@@ -732,17 +784,30 @@ func (h *Headscale) handleNewNode(
 			NetworkDomain: registerRequest.Tailnet,
 		}, followUp) // __CYLONIX_MOD__
 		if err != nil {
-			logErr(err, "Failed to get auth url")
+			logErr(err, "Failed to get auth url. Deleting registration cache to avoid stale cache")
+			h.registrationCache.Delete(machineKey.String())
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 		resp.AuthURL = url
 	}
+	if resp.AuthURL != followUp {
+		logInfo("Updating cache auth url: " + resp.AuthURL)
+		h.registrationCache.Set(
+			machineKey.String(),
+			types.RegistrationCacheNodeInfo{
+				Node: newNode,
+				FollowUp: resp.AuthURL,
+			},
+			registerCacheExpiration,
+		)
+	}
 	// __END_CYLONIX_MOD__
 
 	respBody, err := json.Marshal(resp)
 	if err != nil {
-		logErr(err, "Cannot encode message")
+		logErr(err, "Cannot encode message, deleting registration cache to avoid stale cache")
+		h.registrationCache.Delete(machineKey.String())
 		http.Error(writer, "Internal server error", http.StatusInternalServerError)
 
 		return
@@ -752,7 +817,9 @@ func (h *Headscale) handleNewNode(
 	writer.WriteHeader(http.StatusOK)
 	_, err = writer.Write(respBody)
 	if err != nil {
-		logErr(err, "Failed to write response")
+		logErr(err, "Failed to write response. Deleting registration cache to avoid stale cache")
+		h.registrationCache.Delete(machineKey.String())
+		return
 	}
 
 	logInfo(fmt.Sprintf("Successfully sent auth url: %s", resp.AuthURL))
@@ -1100,15 +1167,23 @@ func (h *Headscale) checkAuthStatus(
 	if err == nil {
 		logInfo("Node already registered")
 		err = h.refreshNodeKeyAndExpiry(node, nodeKey, key.NodePublic{}, &expiry)
+		logInfo("Node registering after logged in. Deleting registration cache entry.")
+		h.registrationCache.Delete(machineKey.String())
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh node key and/or expiry: %w", err)
 		}
 	} else {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logInfo("Node registering after logged in. Deleting registration cache entry.")
+			h.registrationCache.Delete(machineKey.String())
 			return nil, fmt.Errorf("failed to get node before authorization: %w", err)
 		}
 
-		if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
+		err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry)
+		logInfo("Node registering after logged in. Deleting registration cache entry.")
+		h.registrationCache.Delete(machineKey.String())
+
+		if err != nil {
 			return nil, fmt.Errorf("failed to register node after authorization: %w", err)
 		}
 	}

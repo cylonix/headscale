@@ -69,6 +69,13 @@ func (h *Headscale) newMapSession(
 			return nil
 		}
 	}
+	if node != nil && req.Version != 0 {
+		capVersion := uint32(req.Version)
+		if err := h.db.MaybeUpdateNodeCapVersion(node, capVersion); err != nil {
+			errf(err, "Could not update node capability version from request")
+			return nil
+		}
+	}
 	// __END_CYLONIX_MOD__
 
 	var updateChan chan types.StateUpdate
