@@ -145,6 +145,11 @@ func GenerateFilterAndSSHRulesForTests(
 	if err != nil {
 		return []tailcfg.FilterRule{}, &tailcfg.SSHPolicy{}, err
 	}
+	grantRules, err := policy.CompileGrantRules(append(peers, node))
+	if err != nil {
+		return []tailcfg.FilterRule{}, &tailcfg.SSHPolicy{}, err
+	}
+	rules = append(rules, grantRules...)
 
 	log.Trace().Interface("ACL", rules).Str("node", node.GivenName).Msg("ACL rules")
 
@@ -154,6 +159,95 @@ func GenerateFilterAndSSHRulesForTests(
 	}
 
 	return rules, sshPolicy, nil
+}
+
+// CompileGrantRules converts grant rules into tailcfg FilterRules with CapGrant entries.
+func (pol *ACLPolicy) CompileGrantRules(nodes types.Nodes) ([]tailcfg.FilterRule, error) {
+	if pol == nil {
+		return nil, nil
+	}
+
+	var rules []tailcfg.FilterRule
+
+	for index, grant := range pol.Grants {
+		var srcIPs []string
+		for srcIndex, src := range grant.Sources {
+			srcs, err := pol.expandSource(src, nodes)
+			if err != nil {
+				return nil, fmt.Errorf("parsing grants, grant index: %d->%d: %w", index, srcIndex, err)
+			}
+			srcIPs = append(srcIPs, srcs...)
+		}
+
+		capGrant, err := pol.compileCapGrant(nodes, grant.Destinations, grant.App)
+		if err != nil {
+			return nil, fmt.Errorf("parsing grants, grant index: %d: %w", index, err)
+		}
+
+		rules = append(rules, tailcfg.FilterRule{
+			SrcIPs:   srcIPs,
+			CapGrant: capGrant,
+		})
+
+		// Taildrive sharers are discovered via a reverse capability lookup.
+		if vals, ok := grant.App[tailcfg.PeerCapabilityTaildrive]; ok && len(vals) > 0 {
+			reverseCapGrant, err := pol.compileCapGrant(
+				nodes,
+				grant.Sources,
+				map[tailcfg.PeerCapability][]tailcfg.RawMessage{
+					tailcfg.PeerCapabilityTaildriveSharer: nil,
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("parsing grants, reverse taildrive-sharer, grant index: %d: %w", index, err)
+			}
+
+			var reverseSrcIPs []string
+			for dstIndex, dst := range grant.Destinations {
+				srcs, err := pol.expandSource(dst, nodes)
+				if err != nil {
+					return nil, fmt.Errorf("parsing grants, reverse taildrive-sharer, grant index: %d->%d: %w", index, dstIndex, err)
+				}
+				reverseSrcIPs = append(reverseSrcIPs, srcs...)
+			}
+
+			rules = append(rules, tailcfg.FilterRule{
+				SrcIPs:   reverseSrcIPs,
+				CapGrant: reverseCapGrant,
+			})
+		}
+	}
+
+	return rules, nil
+}
+
+func (pol *ACLPolicy) compileCapGrant(
+	nodes types.Nodes,
+	destinations []string,
+	app map[tailcfg.PeerCapability][]tailcfg.RawMessage,
+) ([]tailcfg.CapGrant, error) {
+	var dsts []netip.Prefix
+	for destIndex, dest := range destinations {
+		expanded, err := pol.ExpandAlias(nodes, dest)
+		if err != nil {
+			return nil, fmt.Errorf("expanding destination %d: %w", destIndex, err)
+		}
+		dsts = append(dsts, expanded.Prefixes()...)
+	}
+
+	capMap := make(tailcfg.PeerCapMap, len(app))
+	for cap, vals := range app {
+		if vals == nil {
+			capMap[cap] = nil
+			continue
+		}
+		capMap[cap] = append([]tailcfg.RawMessage(nil), vals...)
+	}
+
+	return []tailcfg.CapGrant{{
+		Dsts:   dsts,
+		CapMap: capMap,
+	}}, nil
 }
 
 // CompileFilterRules takes a set of nodes and an ACLPolicy and generates a
@@ -953,6 +1047,58 @@ func (pol *ACLPolicy) TagsOfNode(
 	}
 
 	return validTags, invalidTags
+}
+
+// NodeAttrsOfNode returns policy-derived node attributes for the provided node.
+func (pol *ACLPolicy) NodeAttrsOfNode(node *types.Node) ([]tailcfg.NodeCapability, error) {
+	if pol == nil || node == nil {
+		return nil, nil
+	}
+
+	var attrs []tailcfg.NodeCapability
+	seen := make(map[tailcfg.NodeCapability]bool)
+	nodes := types.Nodes{node}
+
+	for index, rule := range pol.NodeAttrs {
+		matched := false
+		for targetIndex, target := range rule.Target {
+			ok, err := pol.nodeMatchesTarget(target, node, nodes)
+			if err != nil {
+				return nil, fmt.Errorf("matching nodeAttrs target %d->%d: %w", index, targetIndex, err)
+			}
+			if ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+
+		for _, attr := range rule.Attr {
+			cap := tailcfg.NodeCapability(attr)
+			if !seen[cap] {
+				attrs = append(attrs, cap)
+				seen[cap] = true
+			}
+		}
+	}
+
+	return attrs, nil
+}
+
+func (pol *ACLPolicy) nodeMatchesTarget(alias string, node *types.Node, nodes types.Nodes) (bool, error) {
+	switch alias {
+	case "*", "autogroup:member":
+		return true, nil
+	}
+
+	ipSet, err := pol.ExpandAlias(nodes, alias)
+	if err != nil {
+		return false, err
+	}
+
+	return node.InIPSet(ipSet), nil
 }
 
 func filterNodesByUser(nodes types.Nodes, user string) types.Nodes {

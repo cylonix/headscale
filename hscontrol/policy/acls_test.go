@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
@@ -3717,5 +3718,94 @@ func TestValidTagInvalidUser(t *testing.T) {
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("TestValidTagInvalidUser() unexpected result (-want +got):\n%s", diff)
+	}
+}
+
+func TestTaildrivePolicyParsingAndCompilation(t *testing.T) {
+	pol, err := LoadACLPolicyFromBytes([]byte(`
+{
+  "nodeAttrs": [
+    {
+      "target": ["autogroup:member"],
+      "attr": ["drive:share", "drive:access"]
+    }
+  ],
+  "grants": [
+    {
+      "src": ["group:dev"],
+      "dst": ["fileserver"],
+      "app": {
+        "tailscale.com/cap/drive": [
+          {"shares": ["docs"], "access": "rw"}
+        ]
+      }
+    }
+  ],
+  "groups": {
+    "group:dev": ["alice"]
+  },
+  "hosts": {
+    "fileserver": "100.64.0.2"
+  }
+}
+`))
+	if err != nil {
+		t.Fatalf("LoadACLPolicyFromBytes() error = %v", err)
+	}
+
+	alice := &types.Node{
+		IPv4: iap("100.64.0.1"),
+		User: types.User{Name: "alice"},
+	}
+	server := &types.Node{
+		IPv4: iap("100.64.0.2"),
+		User: types.User{Name: "fileserver-owner"},
+	}
+	nodes := types.Nodes{alice, server}
+
+	nodeAttrs, err := pol.NodeAttrsOfNode(server)
+	if err != nil {
+		t.Fatalf("NodeAttrsOfNode() error = %v", err)
+	}
+	if diff := cmp.Diff(
+		[]tailcfg.NodeCapability{
+			tailcfg.NodeCapability("drive:share"),
+			tailcfg.NodeCapability("drive:access"),
+		},
+		nodeAttrs,
+	); diff != "" {
+		t.Fatalf("NodeAttrsOfNode() unexpected result (-want +got):\n%s", diff)
+	}
+
+	got, err := pol.CompileGrantRules(nodes)
+	if err != nil {
+		t.Fatalf("CompileGrantRules() error = %v", err)
+	}
+
+	want := []tailcfg.FilterRule{
+		{
+			SrcIPs: []string{"100.64.0.1/32"},
+			CapGrant: []tailcfg.CapGrant{{
+				Dsts: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
+				CapMap: tailcfg.PeerCapMap{
+					tailcfg.PeerCapabilityTaildrive: []tailcfg.RawMessage{
+						tailcfg.RawMessage(`{"shares": ["docs"], "access": "rw"}`),
+					},
+				},
+			}},
+		},
+		{
+			SrcIPs: []string{"100.64.0.2/32"},
+			CapGrant: []tailcfg.CapGrant{{
+				Dsts: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+				CapMap: tailcfg.PeerCapMap{
+					tailcfg.PeerCapabilityTaildriveSharer: nil,
+				},
+			}},
+		},
+	}
+
+	if diff := cmp.Diff(want, got, cmpopts.EquateComparable(netip.Prefix{})); diff != "" {
+		t.Fatalf("CompileGrantRules() unexpected result (-want +got):\n%s", diff)
 	}
 }

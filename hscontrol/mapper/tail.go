@@ -83,6 +83,10 @@ func tailNode(
 
 	tags, _ := pol.TagsOfNode(node)
 	tags = lo.Uniq(append(tags, node.ForcedTags...))
+	policyNodeAttrs, err := pol.NodeAttrsOfNode(node)
+	if err != nil {
+		return nil, fmt.Errorf("tailNode, failed to resolve nodeAttrs: %w", err)
+	}
 
 	// __BEGIN_CYLONIX_ADD__
 	stableID := node.ID.StableID()
@@ -101,7 +105,7 @@ func tailNode(
 
 	tNode := tailcfg.Node{
 		ID:       tailcfg.NodeID(node.ID), // this is the actual ID
-		StableID: stableID, // __CYLONIX_MOD__
+		StableID: stableID,                // __CYLONIX_MOD__
 		Name:     hostname,
 		Cap:      nodeCapVer, // __CYLONIX_MOD__
 
@@ -115,7 +119,7 @@ func tailNode(
 		Addresses:  addrs,
 		AllowedIPs: allowedIPs,
 		Endpoints:  node.Endpoints,
-		HomeDERP:       derp,
+		HomeDERP:   derp,
 		Hostinfo:   node.Hostinfo.View(),
 		Created:    node.CreatedAt.UTC(),
 
@@ -129,7 +133,7 @@ func tailNode(
 		Expired:           node.IsExpired(),
 
 		IsWireGuardOnly: isWireguardOnly, // __CYLONIX_MOD__
-		IsJailed: node.IsJailed, // __CYLONIX_ADD__
+		IsJailed:        node.IsJailed,   // __CYLONIX_ADD__
 	}
 
 	//   - 74: 2023-09-18: Client understands NodeCapMap
@@ -151,6 +155,9 @@ func tailNode(
 		for _, cap := range node.Capabilities {
 			tNode.CapMap[tailcfg.NodeCapability(cap.Name)] = []tailcfg.RawMessage{}
 		}
+		for _, attr := range policyNodeAttrs {
+			tNode.CapMap[attr] = []tailcfg.RawMessage{}
+		}
 		// __END_CYLONIX_ADD__
 	} else {
 		tNode.Capabilities = []tailcfg.NodeCapability{
@@ -162,6 +169,7 @@ func tailNode(
 		if cfg.RandomizeClientPort {
 			tNode.Capabilities = append(tNode.Capabilities, tailcfg.NodeAttrRandomizeClientPort)
 		}
+		tNode.Capabilities = append(tNode.Capabilities, policyNodeAttrs...)
 	}
 
 	//   - 72: 2023-08-23: TS-2023-006 UPnP issue fixed; UPnP can now be used again

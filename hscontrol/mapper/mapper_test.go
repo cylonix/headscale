@@ -509,6 +509,31 @@ func Test_fullMapResponse(t *testing.T) {
 	}
 }
 
+func TestReduceFilterRulesForNodeKeepsCapabilityGrantsForSource(t *testing.T) {
+	node := &types.Node{
+		IPv4: iap("100.64.0.1"),
+	}
+
+	rules := []tailcfg.FilterRule{
+		{
+			SrcIPs: []string{"100.64.0.1/32"},
+			CapGrant: []tailcfg.CapGrant{{
+				Dsts: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
+				CapMap: tailcfg.PeerCapMap{
+					tailcfg.PeerCapabilityTaildrive: []tailcfg.RawMessage{
+						tailcfg.RawMessage(`{"shares":["*"],"access":"rw"}`),
+					},
+				},
+			}},
+		},
+	}
+
+	got := reduceFilterRulesForNode(node, rules)
+	if diff := cmp.Diff(rules, got, cmpopts.EquateComparable(netip.Prefix{})); diff != "" {
+		t.Fatalf("reduceFilterRulesForNode() unexpected result (-want +got):\n%s", diff)
+	}
+}
+
 func TestParseVersion(t *testing.T) {
 	major, minor, patch, err := parseVersion("1.80.4")
 	assert.Nil(t, err)

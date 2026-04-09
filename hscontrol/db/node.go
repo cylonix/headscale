@@ -316,17 +316,17 @@ func GetNodeByAnyKey(
 				return nil, result.Error
 			}
 		case !nodeKey.IsZero() && oldNodeKey.IsZero():
-			where += "OR node_key = ?"
+			where += "AND node_key = ?"
 			if result := tx.First(&node, where, machineKey.String(), *userID, nodeKey.String()); result.Error != nil {
 				return nil, result.Error
 			}
 		case nodeKey.IsZero() && !oldNodeKey.IsZero():
-			where += "OR node_key = ?"
+			where += "AND node_key = ?"
 			if result := tx.First(&node, where, machineKey.String(), *userID, oldNodeKey.String()); result.Error != nil {
 				return nil, result.Error
 			}
 		case !nodeKey.IsZero() && !oldNodeKey.IsZero():
-			where += "OR node_key = ? OR node_key = ?"
+			where += "AND (node_key = ? OR node_key = ?)"
 			if result := tx.First(&node, where, machineKey.String(), *userID, nodeKey.String(), oldNodeKey.String()); result.Error != nil {
 				return nil, result.Error
 			}
