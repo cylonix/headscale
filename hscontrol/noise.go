@@ -305,12 +305,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	}
 	// __END_CYLONIX_MOD__
 
-	node, err := ns.headscale.db.GetNodeByAnyKey(
-		nil, // __CYLONIX_MOD__
-		ns.conn.Peer(),
-		mapRequest.NodeKey,
-		key.NodePublic{},
-	)
+	node, err := ns.headscale.db.GetNodeByNodeKey(mapRequest.NodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().
 			Str("handler", "NoisePollNetMap").
@@ -390,12 +385,7 @@ func (ns *noiseServer) NoiseExitNodeHandler(
 		Str("exit_node_id", exitNodeID).
 		Msg("ExitNodeHandler parameters")
 
-	node, err := ns.headscale.db.GetNodeByAnyKey(
-		nil,
-		ns.conn.Peer(),
-		requestedNodeKey,
-		key.NodePublic{},
-	)
+	node, err := ns.headscale.db.GetNodeByNodeKey(requestedNodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().Err(err).
 			Str("handler", "ExitNodeHandler").
@@ -453,12 +443,7 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 		Str("error", update.Error).
 		Msg("UpdateHealthHandler parameters")
 
-	node, err := ns.headscale.db.GetNodeByAnyKey(
-		nil,
-		key.MachinePublic{},
-		update.NodeKey,
-		key.NodePublic{},
-	)
+	node, err := ns.headscale.db.GetNodeByNodeKey(update.NodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().Err(err).
 			Str("handler", "UpdateHealthHandler").
@@ -528,12 +513,7 @@ func (ns *noiseServer) NoiseCapHandler(
 		Str("op", op).
 		Msg("CapHandler parameters")
 
-	node, err := ns.headscale.db.GetNodeByAnyKey(
-		nil,
-		key.MachinePublic{},
-		requestedNodeKey,
-		key.NodePublic{},
-	)
+	node, err := ns.headscale.db.GetNodeByNodeKey(requestedNodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().Err(err).
 			Str("handler", "CapHandler").

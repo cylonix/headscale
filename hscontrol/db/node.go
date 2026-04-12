@@ -277,82 +277,65 @@ func GetNodeByMachineKey(
 	return &mach, nil
 }
 
-func (hsdb *HSDatabase) GetNodeByAnyKey(
-	userID *uint, // __CYLONIX_MOD__
+// __BEGIN_CYLONIX_MOD__
+
+// GetNodeByUserAndMachineKey finds a Node by user ID and machine key.
+// Used for scoped lookups during auth/registration when the user is known.
+// These are stable identifiers that survive node key rotation.
+func (hsdb *HSDatabase) GetNodeByUserAndMachineKey(
+	userID uint,
 	machineKey key.MachinePublic,
-	nodeKey key.NodePublic,
-	oldNodeKey key.NodePublic,
 ) (*types.Node, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
-		return GetNodeByAnyKey(rx, userID, machineKey, nodeKey, oldNodeKey) // __CYLONIX_MOD__
+		return GetNodeByUserAndMachineKey(rx, userID, machineKey)
 	})
 }
 
-// GetNodeByAnyKey finds a Node by its MachineKey, its current NodeKey or the old one, and returns the Node struct.
-// TODO(kradalby): see if we can remove this.
-func GetNodeByAnyKey(
+func GetNodeByUserAndMachineKey(
 	tx *gorm.DB,
-	userID *uint, // __CYLONIX_MOD__
-	machineKey key.MachinePublic, nodeKey key.NodePublic, oldNodeKey key.NodePublic,
+	userID uint,
+	machineKey key.MachinePublic,
 ) (*types.Node, error) {
 	node := types.Node{}
-	tx = tx.
+	if result := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes")
-
-	// __BEGIN_CYLONIX_MOD__
-	if nodeKey.IsZero() && oldNodeKey.IsZero() && machineKey.IsZero() {
-		return nil, gorm.ErrRecordNotFound
+		Preload("Routes").
+		First(&node, "user_id = ? AND machine_key = ?", userID, machineKey.String()); result.Error != nil {
+		return nil, result.Error
 	}
-
-	if userID != nil && !machineKey.IsZero() {
-		where := "(machine_key = ? AND user_id = ?) "
-		switch {
-		case nodeKey.IsZero() && oldNodeKey.IsZero():
-			// Nothing more to add
-			if result := tx.First(&node, where, machineKey.String(), *userID); result.Error != nil {
-				return nil, result.Error
-			}
-		case !nodeKey.IsZero() && oldNodeKey.IsZero():
-			where += "AND node_key = ?"
-			if result := tx.First(&node, where, machineKey.String(), *userID, nodeKey.String()); result.Error != nil {
-				return nil, result.Error
-			}
-		case nodeKey.IsZero() && !oldNodeKey.IsZero():
-			where += "AND node_key = ?"
-			if result := tx.First(&node, where, machineKey.String(), *userID, oldNodeKey.String()); result.Error != nil {
-				return nil, result.Error
-			}
-		case !nodeKey.IsZero() && !oldNodeKey.IsZero():
-			where += "AND (node_key = ? OR node_key = ?)"
-			if result := tx.First(&node, where, machineKey.String(), *userID, nodeKey.String(), oldNodeKey.String()); result.Error != nil {
-				return nil, result.Error
-			}
-		}
-	} else {
-		if nodeKey.IsZero() {
-			where := "node_key = ?"
-			if result := tx.First(&node, where, oldNodeKey.String()); result.Error != nil {
-				return nil, result.Error
-			}
-		} else if oldNodeKey.IsZero() {
-			where := "node_key = ?"
-			if result := tx.First(&node, where, nodeKey.String()); result.Error != nil {
-				return nil, result.Error
-			}
-		} else {
-			where := "node_key = ? OR node_key = ?"
-			if result := tx.First(&node, where, nodeKey.String(), oldNodeKey.String()); result.Error != nil {
-				return nil, result.Error
-			}
-		}
-	}
-	// __END_CYLONIX_MOD__
-
 	return &node, nil
 }
+
+// GetNodeByNodeKey finds a Node by its current node key.
+// Used for global lookups when no user context is available (noise handlers, health, caps).
+// NodeKey is globally unique.
+func (hsdb *HSDatabase) GetNodeByNodeKey(
+	nodeKey key.NodePublic,
+) (*types.Node, error) {
+	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
+		return GetNodeByNodeKey(rx, nodeKey)
+	})
+}
+
+func GetNodeByNodeKey(
+	tx *gorm.DB,
+	nodeKey key.NodePublic,
+) (*types.Node, error) {
+	node := types.Node{}
+	if result := tx.
+		Preload("AuthKey").
+		Preload("AuthKey.User").
+		Preload("User").
+		Preload("Routes").
+		First(&node, "node_key = ?", nodeKey.String()); result.Error != nil {
+		return nil, result.Error
+	}
+	return &node, nil
+}
+
+// __END_CYLONIX_MOD__
 
 func (hsdb *HSDatabase) SetTags(
 	nodeID types.NodeID,
@@ -524,7 +507,22 @@ func RegisterNodeFromAuthCallback(
 				Msg("Cache hit with auth callback, deleting cache entry")
 			cache.Delete(mkey.String())
 
-			node, err := GetNodeByAnyKey(tx, &user.ID, mkey, registrationNode.NodeKey, key.NodePublic{})
+			node, err := GetNodeByUserAndMachineKey(tx, user.ID, mkey)
+		if !registrationNode.NodeKey.IsZero() {
+			nodeByKey, _ := GetNodeByNodeKey(tx, registrationNode.NodeKey)
+			if nodeByKey != nil {
+				if node != nil && nodeByKey.ID != node.ID {
+					return nil, fmt.Errorf("node key conflict: nodeKey belongs to different node")
+				}
+				if node == nil && nodeByKey.UserID != user.ID {
+					return nil, fmt.Errorf("node key conflict: nodeKey belongs to different user")
+				}
+				if node == nil {
+					node = nodeByKey
+					err = nil
+				}
+			}
+		}
 			if err == nil {
 				node.NodeKey = registrationNode.NodeKey
 				registrationNode.RegisterMethod = registrationMethod
