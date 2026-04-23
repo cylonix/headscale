@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -411,6 +412,11 @@ func (ns *noiseServer) NoiseExitNodeHandler(
 	}
 }
 
+var (
+	healthErrLogMu    sync.Mutex
+	healthErrLogCache = make(map[key.NodePublic]time.Time)
+)
+
 // NoiseUpdateHealthHandler takes care of /machine/:id/update-health using the Noise protocol
 func (ns *noiseServer) NoiseUpdateHealthHandler(
 	writer http.ResponseWriter,
@@ -443,19 +449,29 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 		Str("error", update.Error).
 		Msg("UpdateHealthHandler parameters")
 
-	node, err := ns.headscale.db.GetNodeByNodeKey(update.NodeKey) // __CYLONIX_MOD__
+	nodeLite, err := ns.headscale.db.GetNodeByNodeKeyLite(update.NodeKey) // __CYLONIX_MOD__
 	if err != nil {
-		log.Error().Err(err).
-			Str("handler", "UpdateHealthHandler").
-			Str("node", update.NodeKey.ShortString()).
-			Msg("Failed to fetch node from the database")
-		msg := "Internal error"
-		code := http.StatusInternalServerError
-		http.Error(writer, msg, code)
+		// Throttle error logs: only log once per 5 minutes per node key.
+		healthErrLogMu.Lock()
+		last, exists := healthErrLogCache[update.NodeKey]
+		now := time.Now()
+		shouldLog := !exists || now.Sub(last) > 5*time.Minute
+		if shouldLog {
+			healthErrLogCache[update.NodeKey] = now
+		}
+		healthErrLogMu.Unlock()
+
+		if shouldLog {
+			log.Error().Err(err).
+				Str("handler", "UpdateHealthHandler").
+				Str("node", update.NodeKey.ShortString()).
+				Msg("Failed to fetch node from the database")
+		}
+		http.Error(writer, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	err = ns.headscale.db.UpdateNodeHealth(node, &update)
+	err = ns.headscale.db.UpdateNodeHealth(nodeLite, &update)
 	if err != nil {
 		log.Error().
 			Str("handler", "UpdateHealthHandler").
@@ -513,7 +529,7 @@ func (ns *noiseServer) NoiseCapHandler(
 		Str("op", op).
 		Msg("CapHandler parameters")
 
-	node, err := ns.headscale.db.GetNodeByNodeKey(requestedNodeKey) // __CYLONIX_MOD__
+	nodeLite, err := ns.headscale.db.GetNodeByNodeKeyLite(requestedNodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().Err(err).
 			Str("handler", "CapHandler").
@@ -532,8 +548,8 @@ func (ns *noiseServer) NoiseCapHandler(
 		delCapabilities = append(delCapabilities, cap)
 	}
 	err = ns.headscale.db.UpdateNode(
-		node.ID,
-		node.Namespace,
+		nodeLite.ID,
+		nodeLite.Namespace,
 		&types.Node{},
 		addCapabilities,
 		delCapabilities,

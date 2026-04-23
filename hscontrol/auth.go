@@ -65,6 +65,48 @@ func logAuthFunc(
 		}
 }
 
+// __BEGIN_CYLONIX_ADD__
+// postRegistrationHandling performs common tasks after a node has been
+// registered through any path (auth-key, OIDC, gRPC/CLI). Currently it
+// persists advertised routes (e.g. exit-node 0.0.0.0/0, ::/0) that are
+// included in the initial RegisterRequest's Hostinfo. Without this,
+// routes are only saved when the first MapRequest arrives, but
+// hostInfoChanged() won't detect a change because RegisterNode already
+// stored the Hostinfo with the RoutableIPs.
+func (h *Headscale) postRegistrationHandling(node *types.Node) {
+	if node == nil || node.Hostinfo == nil || len(node.Hostinfo.RoutableIPs) == 0 {
+		return
+	}
+
+	if _, err := h.db.SaveNodeRoutes(node); err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Str("node", node.Hostname).
+			Msg("Failed to save node routes during registration")
+		return
+	}
+
+	pol, err := h.ACLPolicy(&node.Namespace, &node.NetworkDomain)
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Could not get ACL policy for auto-approved routes")
+		return
+	}
+	if pol != nil {
+		if err := h.db.EnableAutoApprovedRoutes(pol, node); err != nil {
+			log.Error().
+				Caller().
+				Err(err).
+				Msg("Error running auto-approved routes during registration")
+		}
+	}
+}
+
+// __END_CYLONIX_ADD__
+
 // handleRegister is the logic for registering a client.
 func (h *Headscale) handleRegister(
 	writer http.ResponseWriter,
@@ -568,6 +610,7 @@ func (h *Headscale) handleAuthKey(
 		node.Expiry = &registerRequest.Expiry
 		node.User = pak.User
 		node.UserID = pak.UserID
+		node.Hostinfo = registerRequest.Hostinfo // __CYLONIX_MOD__ update hostinfo on re-auth
 		err := h.db.DB.Save(node).Error
 		if err != nil {
 			logNodeError(node, err, "failed to save node after logging in with auth key") // __CYLONIX_MOD__
@@ -603,6 +646,8 @@ func (h *Headscale) handleAuthKey(
 			NetworkDomain: node.NetworkDomain,
 		})
 		// __END_CYLONIX_MOD__
+
+		h.postRegistrationHandling(node) // __CYLONIX_ADD__ save routes on re-auth
 	} else {
 		now := time.Now().UTC()
 
@@ -706,7 +751,7 @@ func (h *Headscale) handleAuthKey(
 			nodeToRegister.AuthKeyID = ptr.To(pak.ID)
 			nodeToRegister.AuthKey = pak // __CYLONIX_MOD__
 		}
-		_, err = h.db.RegisterNode( // __CYLONIX_MOD__ golint
+		registeredNode, err := h.db.RegisterNode( // __CYLONIX_MOD__ golint
 			nodeToRegister,
 			ipv4, ipv6,
 			h.cfg.NodeHandler, // __CYLONIX_MOD__
@@ -745,6 +790,8 @@ func (h *Headscale) handleAuthKey(
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+
+		h.postRegistrationHandling(registeredNode) // __CYLONIX_ADD__
 	}
 
 	err = h.db.Write(func(tx *gorm.DB) error { // __CYLONIX_MOD__ golint
@@ -1240,6 +1287,7 @@ func (h *Headscale) checkAuthStatus(
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh node key and/or expiry: %w", err)
 		}
+		h.postRegistrationHandling(node) // __CYLONIX_ADD__ save routes on re-auth
 	} else {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			logInfo("Node registering after logged in. Deleting registration cache entry.")

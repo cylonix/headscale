@@ -335,6 +335,19 @@ func GetNodeByNodeKey(
 	return &node, nil
 }
 
+// GetNodeByNodeKeyLite finds a Node by its current node key without preloads.
+// Used for lightweight lookups where only node fields are needed (health, caps).
+func (hsdb *HSDatabase) GetNodeByNodeKeyLite(
+	nodeKey key.NodePublic,
+) (*types.Node, error) {
+	node := types.Node{}
+	if result := hsdb.DB.
+		First(&node, "node_key = ?", nodeKey.String()); result.Error != nil {
+		return nil, result.Error
+	}
+	return &node, nil
+}
+
 // __END_CYLONIX_MOD__
 
 func (hsdb *HSDatabase) SetTags(
@@ -1381,6 +1394,11 @@ type HealthChange struct {
 	Error  string
 }
 
+var (
+	healthCacheMu sync.Mutex
+	healthCache   = make(map[types.NodeID]string)
+)
+
 func (hsdb *HSDatabase) UpdateNodeHealth(
 	node *types.Node,
 	health *tailcfg.HealthChangeRequest,
@@ -1393,10 +1411,15 @@ func (hsdb *HSDatabase) UpdateNodeHealth(
 		return fmt.Errorf("failed to marshal health change: %w", err)
 	}
 	s := string(v)
-	if node.Health != nil && *node.Health == s {
-		// No change
+
+	// Throttle: skip DB write if health status hasn't changed.
+	healthCacheMu.Lock()
+	if prev, ok := healthCache[node.ID]; ok && prev == s {
+		healthCacheMu.Unlock()
 		return nil
 	}
+	healthCache[node.ID] = s
+	healthCacheMu.Unlock()
 
 	tx := hsdb.DB.Begin()
 	defer tx.Rollback()

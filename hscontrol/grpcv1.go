@@ -406,6 +406,8 @@ func (api headscaleV1APIServer) RegisterNode(
 		return nil, err
 	}
 
+	api.h.postRegistrationHandling(node) // __CYLONIX_ADD__
+
 	return &v1.RegisterNodeResponse{Node: node.Proto()}, nil
 }
 

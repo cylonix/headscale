@@ -621,8 +621,11 @@ func (h *Headscale) registerNodeForOIDCCallback(
 		return err
 	}
 
+	// __BEGIN_CYLONIX_MOD__
+	var registeredNode *types.Node
 	if err := h.db.Write(func(tx *gorm.DB) error {
-		if _, err := db.RegisterNodeFromAuthCallback(
+		var regErr error
+		registeredNode, regErr = db.RegisterNodeFromAuthCallback(
 			// TODO(kradalby): find a better way to use the cache across modules
 			tx,
 			h.registrationCache,
@@ -632,10 +635,11 @@ func (h *Headscale) registerNodeForOIDCCallback(
 			util.RegisterMethodOIDC,
 			ipv4, ipv6,
 			h.cfg.NodeHandler, // __CYLONIX_MOD__
-		); err != nil {
+		)
+		if regErr != nil {
 			h.ipAlloc.FreeFor(ipv4, user, machineKey) // __CYLONIX_MOD__
 			h.ipAlloc.FreeFor(ipv6, user, machineKey) // __CYLONIX_MOD__
-			return err
+			return regErr
 		}
 
 		return nil
@@ -650,6 +654,9 @@ func (h *Headscale) registerNodeForOIDCCallback(
 
 		return err
 	}
+
+	h.postRegistrationHandling(registeredNode)
+	// __END_CYLONIX_MOD__
 
 	return nil
 }
