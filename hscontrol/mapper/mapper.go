@@ -24,6 +24,7 @@ import (
 	"github.com/juanfont/headscale/hscontrol/derp"
 	"github.com/juanfont/headscale/hscontrol/notifier"
 	"github.com/juanfont/headscale/hscontrol/policy"
+	"github.com/juanfont/headscale/hscontrol/policy/matcher"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/klauspost/compress/zstd"
@@ -684,6 +685,11 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	if err != nil {
 		return err
 	}
+	grantRules, err := pol.CompileGrantRules(append(peers, node))
+	if err != nil {
+		return err
+	}
+	packetFilter = append(packetFilter, grantRules...)
 
 	sshPolicy, err := pol.CompileSSHPolicy(node, peers)
 	if err != nil {
@@ -774,7 +780,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 		// new PacketFilters field and "base" allows us to send a full update when we
 		// have to send an empty list, avoiding the hack in the else block.
 		resp.PacketFilters = map[string][]tailcfg.FilterRule{
-			"base": policy.ReduceFilterRules(node, packetFilter),
+			"base": reduceFilterRulesForNode(node, packetFilter),
 		}
 	} else {
 		// This is a hack to avoid sending an empty list of packet filters.
@@ -782,7 +788,7 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 		// be omitted, causing the client to consider it unchange, keeping the
 		// previous packet filter. Worst case, this can cause a node that previously
 		// has access to a node to _not_ loose access if an empty (allow none) is sent.
-		reduced := policy.ReduceFilterRules(node, packetFilter)
+		reduced := reduceFilterRulesForNode(node, packetFilter)
 		if len(reduced) > 0 {
 			resp.PacketFilter = reduced
 		} else {
@@ -791,6 +797,23 @@ func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
 	}
 
 	return nil
+}
+
+func reduceFilterRulesForNode(node *types.Node, rules []tailcfg.FilterRule) []tailcfg.FilterRule {
+	reduced := policy.ReduceFilterRules(node, rules)
+
+	for _, rule := range rules {
+		if len(rule.CapGrant) == 0 {
+			continue
+		}
+
+		match := matcher.MatchFromStrings(rule.SrcIPs, nil)
+		if match.SrcsContainsIPs(node.IPs()) {
+			reduced = append(reduced, rule)
+		}
+	}
+
+	return reduced
 }
 
 // __BEGIN_CYLONIX_MOD__

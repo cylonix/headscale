@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tailscale/hujson"
+	"tailscale.com/tailcfg"
 )
 
 // ACLPolicy represents a Tailscale ACL Policy.
@@ -14,8 +15,10 @@ type ACLPolicy struct {
 	Hosts         Hosts         `json:"hosts"`
 	TagOwners     TagOwners     `json:"tagOwners"`
 	ACLs          []ACL         `json:"acls"`
+	Grants        []Grant       `json:"grants"`
 	Tests         []ACLTest     `json:"tests"`
 	AutoApprovers AutoApprovers `json:"autoApprovers"`
+	NodeAttrs     []NodeAttr    `json:"nodeAttrs"`
 	SSHs          []SSH         `json:"ssh"`
 }
 
@@ -25,6 +28,19 @@ type ACL struct {
 	Protocol     string   `json:"proto"`
 	Sources      []string `json:"src"`
 	Destinations []string `json:"dst"`
+}
+
+// Grant is an application capability grant rule.
+type Grant struct {
+	Sources      []string                                        `json:"src"`
+	Destinations []string                                        `json:"dst"`
+	App          map[tailcfg.PeerCapability][]tailcfg.RawMessage `json:"app"`
+}
+
+// NodeAttr is a node attribute assignment rule.
+type NodeAttr struct {
+	Target []string `json:"target"`
+	Attr   []string `json:"attr"`
 }
 
 // Groups references a series of alias in the ACL rules.
@@ -90,7 +106,11 @@ func (hosts *Hosts) UnmarshalJSON(data []byte) error {
 
 // IsZero is perhaps a bit naive here.
 func (pol ACLPolicy) IsZero() bool {
-	if len(pol.Groups) == 0 && len(pol.Hosts) == 0 && len(pol.ACLs) == 0 {
+	if len(pol.Groups) == 0 &&
+		len(pol.Hosts) == 0 &&
+		len(pol.ACLs) == 0 &&
+		len(pol.Grants) == 0 &&
+		len(pol.NodeAttrs) == 0 {
 		return true
 	}
 
