@@ -23,25 +23,25 @@ const (
 	SocketWritePermissions  = 0o666
 )
 
-func getHeadscaleApp() (*hscontrol.Headscale, error) {
-	cfg, err := types.GetHeadscaleConfig()
+func newHeadscaleServerWithConfig() (*hscontrol.Headscale, error) {
+	cfg, err := types.LoadServerConfig()
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to load configuration while creating headscale instance: %w",
+			"loading configuration: %w",
 			err,
 		)
 	}
 
 	app, err := hscontrol.NewHeadscale(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating new headscale: %w", err)
 	}
 
 	return app, nil
 }
 
-func getHeadscaleCLIClient() (context.Context, v1.HeadscaleServiceClient, *grpc.ClientConn, context.CancelFunc) {
-	cfg, err := types.GetHeadscaleConfig()
+func newHeadscaleCLIWithConfig() (context.Context, v1.HeadscaleServiceClient, *grpc.ClientConn, context.CancelFunc) {
+	cfg, err := types.LoadCLIConfig()
 	if err != nil {
 		log.Fatal().
 			Err(err).
@@ -134,7 +134,7 @@ func GetHeadscaleCLIClientWithConfig(cfg *types.Config) (context.Context, v1.Hea
 	return ctx, client, conn, cancel
 }
 
-func SuccessOutput(result interface{}, override string, outputFormat string) {
+func output(result any, override string, outputFormat string) string {
 	var jsonBytes []byte
 	var err error
 	switch outputFormat {
@@ -155,21 +155,33 @@ func SuccessOutput(result interface{}, override string, outputFormat string) {
 		}
 	default:
 		// nolint
-		fmt.Println(override)
-
-		return
+		return override
 	}
 
-	// nolint
-	fmt.Println(string(jsonBytes))
+	return string(jsonBytes)
 }
 
+// SuccessOutput prints the result to stdout and exits with status code 0.
+func SuccessOutput(result any, override string, outputFormat string) {
+	fmt.Println(output(result, override, outputFormat))
+	os.Exit(0)
+}
+
+// ErrorOutput prints an error message to stderr and exits with status code 1.
 func ErrorOutput(errResult error, override string, outputFormat string) {
 	type errOutput struct {
 		Error string `json:"error"`
 	}
 
-	SuccessOutput(errOutput{errResult.Error()}, override, outputFormat)
+	var errorMessage string
+	if errResult != nil {
+		errorMessage = errResult.Error()
+	} else {
+		errorMessage = override
+	}
+
+	fmt.Fprintf(os.Stderr, "%s\n", output(errOutput{errorMessage}, override, outputFormat))
+	os.Exit(1)
 }
 
 func HasMachineOutputFlag() bool {

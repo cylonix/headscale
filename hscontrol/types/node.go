@@ -1,11 +1,11 @@
 package types
 
 import (
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,10 +17,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
-	"gorm.io/gorm"
+	"gorm.io/gorm" // __CYLONIX_ADD__ needed for Capability.gorm.Model
+	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/types/views"
 )
 
 var (
@@ -28,11 +29,24 @@ var (
 	ErrHostnameTooLong      = errors.New("hostname too long, cannot except 255 ASCII chars")
 	ErrNodeHasNoGivenName   = errors.New("node has no given name")
 	ErrNodeUserHasNoName    = errors.New("node user has no name")
+	ErrCannotRemoveAllTags  = errors.New("cannot remove all tags from node")
+	ErrInvalidNodeView      = errors.New("cannot convert invalid NodeView to tailcfg.Node")
+
+	invalidDNSRegex = regexp.MustCompile("[^a-z0-9-.]+")
 )
 
-type NodeID uint64
+// RouteFunc is a function that takes a node ID and returns a list of
+// netip.Prefixes representing the primary routes for that node.
+type RouteFunc func(id NodeID) []netip.Prefix
 
-// type NodeConnectedMap *xsync.MapOf[NodeID, bool]
+type (
+	NodeID  uint64
+	NodeIDs []NodeID
+)
+
+func (n NodeIDs) Len() int           { return len(n) }
+func (n NodeIDs) Less(i, j int) bool { return n[i] < n[j] }
+func (n NodeIDs) Swap(i, j int)      { n[i], n[j] = n[j], n[i] }
 
 func (id NodeID) StableID() tailcfg.StableNodeID {
 	return tailcfg.StableNodeID(strconv.FormatUint(uint64(id), util.Base10))
@@ -46,66 +60,43 @@ func (id NodeID) Uint64() uint64 {
 	return uint64(id)
 }
 
-func (id NodeID) IsZero() bool {
-	return id == 0
-}
-
 func (id NodeID) String() string {
 	return strconv.FormatUint(id.Uint64(), util.Base10)
+}
+
+func ParseNodeID(s string) (NodeID, error) {
+	id, err := strconv.ParseUint(s, util.Base10, 64)
+	return NodeID(id), err
+}
+
+func MustParseNodeID(s string) NodeID {
+	id, err := ParseNodeID(s)
+	if err != nil {
+		panic(err)
+	}
+
+	return id
 }
 
 // Node is a Headscale client.
 type Node struct {
 	ID NodeID `gorm:"primary_key"`
 
-	// MachineKeyDatabaseField is the string representation of MachineKey
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use MachineKey instead.
-	MachineKeyDatabaseField string            `gorm:"column:machine_key;uniqueIndex:nodes_user_machine_key"`
-	MachineKey              key.MachinePublic `gorm:"-"`
+	// __BEGIN_CYLONIX_MOD__
+	// MachineKey is compound-unique with UserID (same physical device may be
+	// registered across different cylonix tenants as separate headscale users,
+	// so global uniqueness would be too strict).
+	MachineKey key.MachinePublic `gorm:"serializer:text;uniqueIndex:nodes_user_machine_key"`
+	// __END_CYLONIX_MOD__
+	NodeKey  key.NodePublic  `gorm:"serializer:text"`
+	DiscoKey key.DiscoPublic `gorm:"serializer:text"`
 
-	// NodeKeyDatabaseField is the string representation of NodeKey
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use NodeKey instead.
-	NodeKeyDatabaseField string         `gorm:"column:node_key;unique"`
-	NodeKey              key.NodePublic `gorm:"-"`
+	Endpoints []netip.AddrPort `gorm:"serializer:json"`
 
-	// DiscoKeyDatabaseField is the string representation of DiscoKey
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use DiscoKey instead.
-	DiscoKeyDatabaseField string          `gorm:"column:disco_key"`
-	DiscoKey              key.DiscoPublic `gorm:"-"`
+	Hostinfo *tailcfg.Hostinfo `gorm:"column:host_info;serializer:json"`
 
-	// EndpointsDatabaseField is the string list representation of Endpoints
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use Endpoints instead.
-	EndpointsDatabaseField StringList       `gorm:"column:endpoints"`
-	Endpoints              []netip.AddrPort `gorm:"-"`
-
-	// EndpointsDatabaseField is the string list representation of Endpoints
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use Endpoints instead.
-	HostinfoDatabaseField string            `gorm:"column:host_info"`
-	Hostinfo              *tailcfg.Hostinfo `gorm:"-"`
-
-	// IPv4DatabaseField is the string representation of v4 address,
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use V4 instead.
-	IPv4DatabaseField sql.NullString `gorm:"column:ipv4"`
-	IPv4              *netip.Addr    `gorm:"-"`
-
-	// IPv6DatabaseField is the string representation of v4 address,
-	// it is _only_ used for reading and writing the key to the
-	// database and should not be used.
-	// Use V6 instead.
-	IPv6DatabaseField sql.NullString `gorm:"column:ipv6"`
-	IPv6              *netip.Addr    `gorm:"-"`
+	IPv4 *netip.Addr `gorm:"column:ipv4;serializer:text"`
+	IPv6 *netip.Addr `gorm:"column:ipv6;serializer:text"`
 
 	// Hostname represents the name given by the Tailscale
 	// client during registration
@@ -117,22 +108,55 @@ type Node struct {
 	//
 	// GivenName is the name used in all DNS related
 	// parts of headscale.
-	GivenName string `gorm:"type:varchar(63);unique_index:nodes_network_domain_given_name"`
-	UserID    uint   `gorm:"uniqueIndex:nodes_user_machine_key"`
-	User      User   `gorm:"constraint:OnDelete:CASCADE;"`
+	//
+	// __BEGIN_CYLONIX_MOD__
+	// GivenName is unique per NetworkDomain (not globally) so two cylonix
+	// network_domains can have nodes with overlapping DNS names without
+	// colliding. The composite unique index is created as a PARTIAL index
+	// (WHERE given_name != '') by the `202504010001-cylonix-given-name-
+	// partial-index` migration so empty fixture rows don't collide during
+	// tests. Because the tag below omits uniqueIndex, AutoMigrate won't
+	// reintroduce a non-partial version.
+	GivenName string `gorm:"type:varchar(63)"`
+	// __END_CYLONIX_MOD__
+
+	// UserID is set for ALL nodes (tagged and user-owned) to track "created by".
+	// For tagged nodes, this is informational only - the tag is the owner.
+	// For user-owned nodes, this identifies the owner.
+	// Only nil for orphaned nodes (should not happen in normal operation).
+	//
+	// __BEGIN_CYLONIX_MOD__
+	// UserID participates in the nodes_user_machine_key compound unique index.
+	UserID *uint `gorm:"uniqueIndex:nodes_user_machine_key"`
+	// __END_CYLONIX_MOD__
+	User *User `gorm:"constraint:OnDelete:CASCADE;"`
 
 	RegisterMethod string
 
-	ForcedTags StringList
+	// Tags is the definitive owner for tagged nodes.
+	// When non-empty, the node is "tagged" and tags define its identity.
+	// Empty for user-owned nodes.
+	// Tags cannot be removed once set (one-way transition).
+	Tags []string `gorm:"column:tags;serializer:json"`
 
-	// TODO(kradalby): This seems like irrelevant information?
-	AuthKeyID *uint64     `sql:"DEFAULT:NULL"`
-	AuthKey   *PreAuthKey `gorm:"constraint:OnDelete:SET NULL;"`
+	// When a node has been created with a PreAuthKey, we need to
+	// prevent the preauthkey from being deleted before the node.
+	// The preauthkey can define "tags" of the node so we need it
+	// around.
+	AuthKeyID *uint64 `sql:"DEFAULT:NULL"`
+	AuthKey   *PreAuthKey
 
-	LastSeen *time.Time
-	Expiry   *time.Time
+	Expiry *time.Time
 
-	Routes []Route `gorm:"constraint:OnDelete:CASCADE;"`
+	// LastSeen is when the node was last in contact with
+	// headscale. It is best effort and not persisted.
+	LastSeen *time.Time `gorm:"column:last_seen"`
+
+	// ApprovedRoutes is a list of routes that the node is allowed to announce
+	// as a subnet router. They are not necessarily the routes that the node
+	// announces at the moment.
+	// See [Node.Hostinfo]
+	ApprovedRoutes []netip.Prefix `gorm:"column:approved_routes;serializer:json"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -141,6 +165,10 @@ type Node struct {
 	IsOnline *bool `gorm:"-"`
 
 	// __BEGIN_CYLONIX_ADD__
+	// Cylonix multi-tenant extensions + per-node extras. The
+	// nodes_network_domain_given_name compound unique index is created as a
+	// partial index by the `202604240001` migration — neither field carries
+	// the uniqueIndex tag, so AutoMigrate does not override it.
 	IsWireguardOnly *bool
 	StableID        *string
 	Namespace       string
@@ -148,34 +176,101 @@ type Node struct {
 	CapVersion      *uint32
 	Capabilities    []Capability `gorm:"many2many:node_capabilities_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
 	Health          *string
-	IsJailed        bool `gorm:"-"` // Not stored in DB, set at runtime for peer-listing only
+	IsJailed        bool `gorm:"-"` // Not stored in DB; set at runtime for peer-listing only.
 
-	// WouldShareTo and AcceptedShareTo represent this node is a shared node.
-	// WouldShareTo is the list of users this node would like to be shared to.
-	// AcceptedShareTo is the list of users accepted to share this node.
-	// When a user accepts a share node, the user is added to AcceptedShareTo.
-	// A node can revoke the share by removing the user from AcceptedShareTo
-	// and the WouldShareTo list. A user can remove itself from sharing the node
-	// by removing itself from AcceptedShareTo.
+	// WouldShareTo and AcceptedShareTo represent this node as a shared node.
+	// WouldShareTo is the list of users this node offered sharing to.
+	// AcceptedShareTo is the list of users who accepted the share.
+	// When a user accepts a share, the user is added to AcceptedShareTo.
+	// A node can revoke sharing by removing the user from AcceptedShareTo
+	// and WouldShareTo. A user can remove itself from sharing by removing
+	// itself from AcceptedShareTo.
 	WouldShareTo    []User `gorm:"many2many:node_would_share_to_users_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
 	AcceptedShareTo []User `gorm:"many2many:node_accepted_share_to_users_relation;foreignKey:ID;References:ID;constraint:OnDelete:CASCADE;"`
 	// __END_CYLONIX_ADD__
 }
 
+// __BEGIN_CYLONIX_ADD__
+// Capability is a namespace-scoped per-node capability flag. Cylonix uses
+// these to opt individual nodes into experimental tailscale features or
+// operator-managed behaviors.
 type Capability struct {
 	gorm.Model
 	Name      string `gorm:"uniqueIndex:capabilities_name_namespace"`
 	Namespace string `gorm:"uniqueIndex:capabilities_name_namespace"`
 }
 
-type (
-	Nodes []*Node
-)
+// ParseProtoCapabilities turns a flat list of capability name strings (the
+// wire form used by cylonix grpcv1 requests) into []Capability records
+// stamped with the caller's tenant namespace.
+func ParseProtoCapabilities(namespace string, names []string) []Capability {
+	out := make([]Capability, 0, len(names))
+	for _, n := range names {
+		out = append(out, Capability{Name: n, Namespace: namespace})
+	}
+	return out
+}
+
+// ParseProtoNode converts the partial-update fields from a v1.Node proto into
+// a *Node suitable for db.UpdateNode. Only the cylonix-managed mutable fields
+// are honored (Hostname/GivenName/Capabilities/Namespace/NetworkDomain/CapVersion/
+// Health/IsWireguardOnly/StableID); upstream-managed fields (machine_key,
+// node_key, IPs, ApprovedRoutes, etc.) are intentionally ignored to keep the
+// RPC surface predictable and tenant-safe. The partial flag is currently
+// unused — passed for forward-compat with a future per-field selective update.
+func ParseProtoNode(p *v1.Node, partial bool) (*Node, error) {
+	if p == nil {
+		return nil, fmt.Errorf("ParseProtoNode: nil proto Node")
+	}
+	n := &Node{
+		Hostname:      p.GetName(),
+		GivenName:     p.GetGivenName(),
+		Namespace:     p.GetNamespace(),
+		NetworkDomain: p.GetNetworkDomain(),
+	}
+	if v := p.GetWireguardOnly(); p.WireguardOnly != nil {
+		n.IsWireguardOnly = &v
+	}
+	if s := p.GetStableId(); p.StableId != nil {
+		n.StableID = &s
+	}
+	if v := p.GetCapVersion(); p.CapVersion != nil {
+		n.CapVersion = &v
+	}
+	if h := p.GetHealth(); p.Health != nil {
+		n.Health = &h
+	}
+	if caps := p.GetCapabilities(); caps != nil {
+		n.Capabilities = ParseProtoCapabilities(p.GetNamespace(), caps)
+	}
+	return n, nil
+}
+
+// __END_CYLONIX_ADD__
+
+type Nodes []*Node
+
+func (ns Nodes) ViewSlice() views.Slice[NodeView] {
+	vs := make([]NodeView, len(ns))
+	for i, n := range ns {
+		vs[i] = n.View()
+	}
+
+	return views.SliceOf(vs)
+}
+
+// GivenNameHasBeenChanged returns whether the `givenName` can be automatically changed based on the `Hostname` of the node.
+func (node *Node) GivenNameHasBeenChanged() bool {
+	// Strip invalid DNS characters for givenName comparison
+	normalised := strings.ToLower(node.Hostname)
+	normalised = invalidDNSRegex.ReplaceAllString(normalised, "")
+	return node.GivenName == normalised
+}
 
 // IsExpired returns whether the node registration has expired.
 func (node Node) IsExpired() bool {
 	// If Expiry is not set, the client has not indicated that
-	// it wants an expiry time, it is therefor considered
+	// it wants an expiry time, it is therefore considered
 	// to mean "not expired"
 	if node.Expiry == nil || node.Expiry.IsZero() {
 		return false
@@ -204,8 +299,55 @@ func (node *Node) IPs() []netip.Addr {
 	return ret
 }
 
+// HasIP reports if a node has a given IP address.
+func (node *Node) HasIP(i netip.Addr) bool {
+	for _, ip := range node.IPs() {
+		if ip.Compare(i) == 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsTagged reports if a device is tagged and therefore should not be treated
+// as a user-owned device.
+// When a node has tags, the tags define its identity (not the user).
+func (node *Node) IsTagged() bool {
+	return len(node.Tags) > 0
+}
+
+// IsUserOwned returns true if node is owned by a user (not tagged).
+// Tagged nodes may have a UserID for "created by" tracking, but the tag is the owner.
+func (node *Node) IsUserOwned() bool {
+	return !node.IsTagged()
+}
+
+// HasTag reports if a node has a given tag.
+func (node *Node) HasTag(tag string) bool {
+	return slices.Contains(node.Tags, tag)
+}
+
+// TypedUserID returns the UserID as a typed UserID type.
+// Returns 0 if UserID is nil.
+func (node *Node) TypedUserID() UserID {
+	if node.UserID == nil {
+		return 0
+	}
+
+	return UserID(*node.UserID)
+}
+
+func (node *Node) RequestTags() []string {
+	if node.Hostinfo == nil {
+		return []string{}
+	}
+
+	return node.Hostinfo.RequestTags
+}
+
 func (node *Node) Prefixes() []netip.Prefix {
-	addrs := []netip.Prefix{}
+	var addrs []netip.Prefix
 	for _, nodeAddress := range node.IPs() {
 		ip := netip.PrefixFrom(nodeAddress, nodeAddress.BitLen())
 		addrs = append(addrs, ip)
@@ -214,28 +356,37 @@ func (node *Node) Prefixes() []netip.Prefix {
 	return addrs
 }
 
+// ExitRoutes returns a list of both exit routes if the
+// node has any exit routes enabled.
+// If none are enabled, it will return nil.
+func (node *Node) ExitRoutes() []netip.Prefix {
+	var routes []netip.Prefix
+
+	for _, route := range node.AnnouncedRoutes() {
+		if tsaddr.IsExitRoute(route) && slices.Contains(node.ApprovedRoutes, route) {
+			routes = append(routes, route)
+		}
+	}
+
+	return routes
+}
+
+func (node *Node) IsExitNode() bool {
+	return len(node.ExitRoutes()) > 0
+}
+
 func (node *Node) IPsAsString() []string {
 	var ret []string
 
-	if node.IPv4 != nil {
-		ret = append(ret, node.IPv4.String())
-	}
-
-	if node.IPv6 != nil {
-		ret = append(ret, node.IPv6.String())
+	for _, ip := range node.IPs() {
+		ret = append(ret, ip.String())
 	}
 
 	return ret
 }
 
 func (node *Node) InIPSet(set *netipx.IPSet) bool {
-	for _, nodeAddr := range node.IPs() {
-		if set.Contains(nodeAddr) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(node.IPs(), set.Contains)
 }
 
 // AppendToIPSet adds the individual ips in NodeAddresses to a
@@ -246,25 +397,43 @@ func (node *Node) AppendToIPSet(build *netipx.IPSetBuilder) {
 	}
 }
 
-func (node *Node) CanAccess(filter []tailcfg.FilterRule, node2 *Node) bool {
+func (node *Node) CanAccess(matchers []matcher.Match, node2 *Node) bool {
 	src := node.IPs()
 	allowedIPs := node2.IPs()
 
-	for _, route := range node2.Routes {
-		if route.Enabled {
-			allowedIPs = append(allowedIPs, netip.Prefix(route.Prefix).Addr())
-		}
-	}
-
-	for _, rule := range filter {
-		// TODO(kradalby): Cache or pregen this
-		matcher := matcher.MatchFromFilterRule(rule)
-
-		if !matcher.SrcsContainsIPs(src) {
+	for _, matcher := range matchers {
+		if !matcher.SrcsContainsIPs(src...) {
 			continue
 		}
 
-		if matcher.DestsContainsIP(allowedIPs) {
+		if matcher.DestsContainsIP(allowedIPs...) {
+			return true
+		}
+
+		// Check if the node has access to routes that might be part of a
+		// smaller subnet that is served from node2 as a subnet router.
+		if matcher.DestsOverlapsPrefixes(node2.SubnetRoutes()...) {
+			return true
+		}
+
+		// If the dst is "the internet" and node2 is an exit node, allow access.
+		if matcher.DestsIsTheInternet() && node2.IsExitNode() {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (node *Node) CanAccessRoute(matchers []matcher.Match, route netip.Prefix) bool {
+	src := node.IPs()
+
+	for _, matcher := range matchers {
+		if matcher.SrcsContainsIPs(src...) && matcher.DestsOverlapsPrefixes(route) {
+			return true
+		}
+
+		if matcher.SrcsOverlapsPrefixes(route) && matcher.DestsContainsIP(src...) {
 			return true
 		}
 	}
@@ -289,157 +458,14 @@ func (nodes Nodes) FilterByIP(ip netip.Addr) Nodes {
 	return found
 }
 
-// BeforeUpdate to make sure readonly fields are not updated
-// Or for debugging node information changes.
-func (node *Node) BeforeUpdate(tx *gorm.DB) error {
-	return nil
-}
-
-// BeforeSave is a hook that ensures that some values that
-// cannot be directly marshalled into database values are stored
-// correctly in the database.
-// This currently means storing the keys as strings.
-func (node *Node) BeforeSave(tx *gorm.DB) error {
-	node.MachineKeyDatabaseField = node.MachineKey.String()
-	node.NodeKeyDatabaseField = node.NodeKey.String()
-	node.DiscoKeyDatabaseField = node.DiscoKey.String()
-
-	var endpoints StringList
-	for _, addrPort := range node.Endpoints {
-		endpoints = append(endpoints, addrPort.String())
-	}
-
-	node.EndpointsDatabaseField = endpoints
-
-	hi, err := json.Marshal(node.Hostinfo)
-	if err != nil {
-		return fmt.Errorf("marshalling Hostinfo to store in db: %w", err)
-	}
-	node.HostinfoDatabaseField = string(hi)
-
-	if node.IPv4 != nil {
-		node.IPv4DatabaseField.String, node.IPv4DatabaseField.Valid = node.IPv4.String(), true
-	} else {
-		node.IPv4DatabaseField.String, node.IPv4DatabaseField.Valid = "", false
-	}
-
-	if node.IPv6 != nil {
-		node.IPv6DatabaseField.String, node.IPv6DatabaseField.Valid = node.IPv6.String(), true
-	} else {
-		node.IPv6DatabaseField.String, node.IPv6DatabaseField.Valid = "", false
-	}
-
-	// __BEGIN_CYLONIX_MOD__
-	namespace := node.Namespace
-	if namespace != "" {
-		for i := range node.Routes {
-			r := &node.Routes[i]
-			if r.Namespace != "" && r.Namespace != namespace {
-				return fmt.Errorf("namespace mismatch for route '%v': expected %v got %v", r.Prefix.String(), namespace, r.Namespace)
-			}
-			r.Namespace = namespace
-		}
-		for i := range node.Capabilities {
-			c := &node.Capabilities[i]
-			if c.Namespace != "" && c.Namespace != namespace {
-				return fmt.Errorf("namespace mismatch for capability '%v': expected %v got %v", c.Name, namespace, c.Namespace)
-			}
-			c.Namespace = namespace
+func (nodes Nodes) ContainsNodeKey(nodeKey key.NodePublic) bool {
+	for _, node := range nodes {
+		if node.NodeKey == nodeKey {
+			return true
 		}
 	}
-	// __END_CYLONIX_MOD__
 
-	return nil
-}
-
-// __BEGIN_CYLONIX_MOD__
-func (node *Node) PreloadUpdate(update *Node) {
-	if update.MachineKey.IsZero() {
-		update.MachineKey = node.MachineKey
-	}
-	if update.NodeKey.IsZero() {
-		update.NodeKey = node.NodeKey
-	}
-	if update.DiscoKey.IsZero() {
-		update.DiscoKey = node.DiscoKey
-	}
-	if update.Hostinfo == nil {
-		update.Hostinfo = node.Hostinfo
-	}
-	if update.IPv4 == nil {
-		update.IPv4 = node.IPv4
-	}
-	if update.IPv6 == nil {
-		update.IPv6 = node.IPv6
-	}
-}
-
-// __END_CYLONIX_MOD__
-
-// AfterFind is a hook that ensures that Node objects fields that
-// has a different type in the database is unwrapped and populated
-// correctly.
-// This currently unmarshals all the keys, stored as strings, into
-// the proper types.
-func (node *Node) AfterFind(tx *gorm.DB) error {
-	var machineKey key.MachinePublic
-	if err := machineKey.UnmarshalText([]byte(node.MachineKeyDatabaseField)); err != nil {
-		return fmt.Errorf("unmarshaling machine key from db: %w", err)
-	}
-	node.MachineKey = machineKey
-
-	var nodeKey key.NodePublic
-	if err := nodeKey.UnmarshalText([]byte(node.NodeKeyDatabaseField)); err != nil {
-		return fmt.Errorf("unmarshaling node key from db: %w", err)
-	}
-	node.NodeKey = nodeKey
-
-	// DiscoKey might be empty if a node has not sent it to headscale.
-	// This means that this might fail if the disco key is empty.
-	if node.DiscoKeyDatabaseField != "" {
-		var discoKey key.DiscoPublic
-		if err := discoKey.UnmarshalText([]byte(node.DiscoKeyDatabaseField)); err != nil {
-			return fmt.Errorf("unmarshalling disco key from db: %w", err)
-		}
-		node.DiscoKey = discoKey
-	}
-
-	endpoints := make([]netip.AddrPort, len(node.EndpointsDatabaseField))
-	for idx, ep := range node.EndpointsDatabaseField {
-		addrPort, err := netip.ParseAddrPort(ep)
-		if err != nil {
-			return fmt.Errorf("parsing endpoint from db: %w", err)
-		}
-
-		endpoints[idx] = addrPort
-	}
-	node.Endpoints = endpoints
-
-	var hi tailcfg.Hostinfo
-	if err := json.Unmarshal([]byte(node.HostinfoDatabaseField), &hi); err != nil {
-		return fmt.Errorf("unmarshaling hostinfo from database: %w", err)
-	}
-	node.Hostinfo = &hi
-
-	if node.IPv4DatabaseField.Valid {
-		ip, err := netip.ParseAddr(node.IPv4DatabaseField.String)
-		if err != nil {
-			return fmt.Errorf("parsing IPv4 from database: %w", err)
-		}
-
-		node.IPv4 = &ip
-	}
-
-	if node.IPv6DatabaseField.Valid {
-		ip, err := netip.ParseAddr(node.IPv6DatabaseField.String)
-		if err != nil {
-			return fmt.Errorf("parsing IPv6 from database: %w", err)
-		}
-
-		node.IPv6 = &ip
-	}
-
-	return nil
+	return false
 }
 
 func (node *Node) Proto() *v1.Node {
@@ -454,26 +480,26 @@ func (node *Node) Proto() *v1.Node {
 		IpAddresses: node.IPsAsString(),
 		Name:        node.Hostname,
 		GivenName:   node.GivenName,
-		User:        node.User.Proto(),
-		ForcedTags:  node.ForcedTags,
+		User:        nil, // Will be set below based on node type
+		Tags:        node.Tags,
+		Online:      node.IsOnline != nil && *node.IsOnline,
+
+		// Only ApprovedRoutes and AvailableRoutes is set here. SubnetRoutes has
+		// to be populated manually with PrimaryRoute, to ensure it includes the
+		// routes that are actively served from the node.
+		ApprovedRoutes:  util.PrefixesToString(node.ApprovedRoutes),
+		AvailableRoutes: util.PrefixesToString(node.AnnouncedRoutes()),
 
 		RegisterMethod: node.RegisterMethodToV1Enum(),
 
 		CreatedAt: timestamppb.New(node.CreatedAt),
+	}
 
-		// __BEGIN_CYLONIX_MAP__
-		Namespace:     node.Namespace,
-		StableId:      node.StableID,
-		WireguardOnly: node.IsWireguardOnly,
-		Endpoints:     node.EndpointStringSlice(),
-		Routes:        node.ProtoRouteSpecs(),
-		Capabilities:  node.ProtoCapabilities(),
-		CapVersion:    node.CapVersion,
-		NetworkDomain: node.NetworkDomain,
-		Hostinfo:      node.ProtoHostinfo(),
-		Health:        node.Health,
-		ShareToUsers:  node.ProtoShareToUsers(),
-		// __END_CYLONIX_MOD__
+	// Set User field based on node ownership
+	// Note: User will be set to TaggedDevices in the gRPC layer (grpcv1.go)
+	// for proper MapResponse formatting
+	if node.User != nil {
+		nodeProto.User = node.User.Proto()
 	}
 
 	if node.AuthKey != nil {
@@ -491,7 +517,7 @@ func (node *Node) Proto() *v1.Node {
 	return nodeProto
 }
 
-func (node *Node) GetFQDN(cfg *Config, baseDomain string) (string, error) {
+func (node *Node) GetFQDN(baseDomain string) (string, error) {
 	if node.GivenName == "" {
 		return "", fmt.Errorf("failed to create valid FQDN: %w", ErrNodeHasNoGivenName)
 	}
@@ -500,30 +526,11 @@ func (node *Node) GetFQDN(cfg *Config, baseDomain string) (string, error) {
 
 	if baseDomain != "" {
 		hostname = fmt.Sprintf(
-			"%s.%s",
+			"%s.%s.",
 			node.GivenName,
 			baseDomain,
 		)
 	}
-
-	if cfg.DNSUserNameInMagicDNS {
-		if node.User.Name == "" {
-			return "", fmt.Errorf("failed to create valid FQDN: %w", ErrNodeUserHasNoName)
-		}
-
-		hostname = fmt.Sprintf(
-			"%s.%s.%s",
-			node.GivenName,
-			node.User.Name,
-			baseDomain,
-		)
-	}
-
-	// __BEGIN_CYLONIX_MOD__
-	if node.NetworkDomain != "" {
-		hostname = node.GivenName + "." + node.NetworkDomain
-	}
-	// __END_CYLONIX_MOD__
 
 	if len(hostname) > MaxHostnameLength {
 		return "", fmt.Errorf(
@@ -536,9 +543,53 @@ func (node *Node) GetFQDN(cfg *Config, baseDomain string) (string, error) {
 	return hostname, nil
 }
 
-// func (node *Node) String() string {
-// 	return node.Hostname
-// }
+// AnnouncedRoutes returns the list of routes that the node announces.
+// It should be used instead of checking Hostinfo.RoutableIPs directly.
+func (node *Node) AnnouncedRoutes() []netip.Prefix {
+	if node.Hostinfo == nil {
+		return nil
+	}
+
+	return node.Hostinfo.RoutableIPs
+}
+
+// SubnetRoutes returns the list of routes (excluding exit routes) that the node
+// announces and are approved.
+//
+// IMPORTANT: This method is used for internal data structures and should NOT be
+// used for the gRPC Proto conversion. For Proto, SubnetRoutes must be populated
+// manually with PrimaryRoutes to ensure it includes only routes actively served
+// by the node. See the comment in Proto() method and the implementation in
+// grpcv1.go/nodesToProto.
+func (node *Node) SubnetRoutes() []netip.Prefix {
+	var routes []netip.Prefix
+
+	for _, route := range node.AnnouncedRoutes() {
+		if tsaddr.IsExitRoute(route) {
+			continue
+		}
+
+		if slices.Contains(node.ApprovedRoutes, route) {
+			routes = append(routes, route)
+		}
+	}
+
+	return routes
+}
+
+// IsSubnetRouter reports if the node has any subnet routes.
+func (node *Node) IsSubnetRouter() bool {
+	return len(node.SubnetRoutes()) > 0
+}
+
+// AllApprovedRoutes returns the combination of SubnetRoutes and ExitRoutes
+func (node *Node) AllApprovedRoutes() []netip.Prefix {
+	return append(node.SubnetRoutes(), node.ExitRoutes()...)
+}
+
+func (node *Node) String() string {
+	return node.Hostname
+}
 
 // PeerChangeFromMapRequest takes a MapRequest and compares it to the node
 // to produce a PeerChange struct that can be used to updated the node and
@@ -582,13 +633,41 @@ func (node *Node) PeerChangeFromMapRequest(req tailcfg.MapRequest) tailcfg.PeerC
 		}
 	}
 
-	// TODO(kradalby): Find a good way to compare updates
-	ret.Endpoints = req.Endpoints
+	// Compare endpoints using order-independent comparison
+	if EndpointsChanged(node.Endpoints, req.Endpoints) {
+		ret.Endpoints = req.Endpoints
+	}
 
 	now := time.Now()
 	ret.LastSeen = &now
 
 	return ret
+}
+
+// EndpointsChanged compares two endpoint slices and returns true if they differ.
+// The comparison is order-independent - endpoints are sorted before comparison.
+func EndpointsChanged(oldEndpoints, newEndpoints []netip.AddrPort) bool {
+	if len(oldEndpoints) != len(newEndpoints) {
+		return true
+	}
+
+	if len(oldEndpoints) == 0 {
+		return false
+	}
+
+	// Make copies to avoid modifying the original slices
+	oldCopy := slices.Clone(oldEndpoints)
+	newCopy := slices.Clone(newEndpoints)
+
+	// Sort both slices to enable order-independent comparison
+	slices.SortFunc(oldCopy, func(a, b netip.AddrPort) int {
+		return a.Compare(b)
+	})
+	slices.SortFunc(newCopy, func(a, b netip.AddrPort) int {
+		return a.Compare(b)
+	})
+
+	return !slices.Equal(oldCopy, newCopy)
 }
 
 func (node *Node) RegisterMethodToV1Enum() v1.RegisterMethod {
@@ -601,6 +680,49 @@ func (node *Node) RegisterMethodToV1Enum() v1.RegisterMethod {
 		return v1.RegisterMethod_REGISTER_METHOD_CLI
 	default:
 		return v1.RegisterMethod_REGISTER_METHOD_UNSPECIFIED
+	}
+}
+
+// ApplyHostnameFromHostInfo takes a Hostinfo struct and updates the node.
+func (node *Node) ApplyHostnameFromHostInfo(hostInfo *tailcfg.Hostinfo) {
+	if hostInfo == nil {
+		return
+	}
+
+	newHostname := strings.ToLower(hostInfo.Hostname)
+	if err := util.ValidateHostname(newHostname); err != nil {
+		log.Warn().
+			Str("node.id", node.ID.String()).
+			Str("current_hostname", node.Hostname).
+			Str("rejected_hostname", hostInfo.Hostname).
+			Err(err).
+			Msg("Rejecting invalid hostname update from hostinfo")
+		return
+	}
+
+	if node.Hostname != newHostname {
+		log.Trace().
+			Str("node.id", node.ID.String()).
+			Str("old_hostname", node.Hostname).
+			Str("new_hostname", newHostname).
+			Str("old_given_name", node.GivenName).
+			Bool("given_name_changed", node.GivenNameHasBeenChanged()).
+			Msg("Updating hostname from hostinfo")
+
+		if node.GivenNameHasBeenChanged() {
+			// Strip invalid DNS characters for givenName display
+			givenName := strings.ToLower(newHostname)
+			givenName = invalidDNSRegex.ReplaceAllString(givenName, "")
+			node.GivenName = givenName
+		}
+
+		node.Hostname = newHostname
+
+		log.Trace().
+			Str("node.id", node.ID.String()).
+			Str("new_hostname", node.Hostname).
+			Str("new_given_name", node.GivenName).
+			Msg("Hostname updated")
 	}
 }
 
@@ -663,542 +785,557 @@ func (nodes Nodes) IDMap() map[NodeID]*Node {
 	return ret
 }
 
-// __BEGIN_CYLONIX_MOD__
-func SliceMap[T1 any, T2 any](from []T1, mapFn func(T1) (T2, error)) ([]T2, error) {
+func (nodes Nodes) DebugString() string {
+	var sb strings.Builder
+	sb.WriteString("Nodes:\n")
+	for _, node := range nodes {
+		sb.WriteString(node.DebugString())
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+func (node Node) DebugString() string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s(%s):\n", node.Hostname, node.ID)
+
+	// Show ownership status
+	if node.IsTagged() {
+		fmt.Fprintf(&sb, "\tTagged: %v\n", node.Tags)
+
+		if node.User != nil {
+			fmt.Fprintf(&sb, "\tCreated by: %s (%d, %q)\n", node.User.Display(), node.User.ID, node.User.Username())
+		}
+	} else if node.User != nil {
+		fmt.Fprintf(&sb, "\tUser-owned: %s (%d, %q)\n", node.User.Display(), node.User.ID, node.User.Username())
+	} else {
+		fmt.Fprintf(&sb, "\tOrphaned: no user or tags\n")
+	}
+
+	fmt.Fprintf(&sb, "\tIPs: %v\n", node.IPs())
+	fmt.Fprintf(&sb, "\tApprovedRoutes: %v\n", node.ApprovedRoutes)
+	fmt.Fprintf(&sb, "\tAnnouncedRoutes: %v\n", node.AnnouncedRoutes())
+	fmt.Fprintf(&sb, "\tSubnetRoutes: %v\n", node.SubnetRoutes())
+	fmt.Fprintf(&sb, "\tExitRoutes: %v\n", node.ExitRoutes())
+	sb.WriteString("\n")
+
+	return sb.String()
+}
+
+// Owner returns the owner for display purposes.
+// For tagged nodes, returns TaggedDevices. For user-owned nodes, returns the user.
+func (nv NodeView) Owner() UserView {
+	if nv.IsTagged() {
+		return TaggedDevices.View()
+	}
+
+	return nv.User()
+}
+
+func (nv NodeView) IPs() []netip.Addr {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.IPs()
+}
+
+func (nv NodeView) InIPSet(set *netipx.IPSet) bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.InIPSet(set)
+}
+
+func (nv NodeView) CanAccess(matchers []matcher.Match, node2 NodeView) bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.CanAccess(matchers, node2.AsStruct())
+}
+
+func (nv NodeView) CanAccessRoute(matchers []matcher.Match, route netip.Prefix) bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.CanAccessRoute(matchers, route)
+}
+
+func (nv NodeView) AnnouncedRoutes() []netip.Prefix {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.AnnouncedRoutes()
+}
+
+func (nv NodeView) SubnetRoutes() []netip.Prefix {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.SubnetRoutes()
+}
+
+func (nv NodeView) IsSubnetRouter() bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.IsSubnetRouter()
+}
+
+func (nv NodeView) AllApprovedRoutes() []netip.Prefix {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.AllApprovedRoutes()
+}
+
+func (nv NodeView) AppendToIPSet(build *netipx.IPSetBuilder) {
+	if !nv.Valid() {
+		return
+	}
+
+	nv.ж.AppendToIPSet(build)
+}
+
+func (nv NodeView) RequestTagsSlice() views.Slice[string] {
+	if !nv.Valid() || !nv.Hostinfo().Valid() {
+		return views.Slice[string]{}
+	}
+
+	return nv.Hostinfo().RequestTags()
+}
+
+// IsTagged reports if a device is tagged
+// and therefore should not be treated as a
+// user owned device.
+// Currently, this function only handles tags set
+// via CLI ("forced tags" and preauthkeys).
+func (nv NodeView) IsTagged() bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.IsTagged()
+}
+
+// IsExpired returns whether the node registration has expired.
+func (nv NodeView) IsExpired() bool {
+	if !nv.Valid() {
+		return true
+	}
+
+	return nv.ж.IsExpired()
+}
+
+// IsEphemeral returns if the node is registered as an Ephemeral node.
+// https://tailscale.com/kb/1111/ephemeral-nodes/
+func (nv NodeView) IsEphemeral() bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.IsEphemeral()
+}
+
+// PeerChangeFromMapRequest takes a MapRequest and compares it to the node
+// to produce a PeerChange struct that can be used to updated the node and
+// inform peers about smaller changes to the node.
+func (nv NodeView) PeerChangeFromMapRequest(req tailcfg.MapRequest) tailcfg.PeerChange {
+	if !nv.Valid() {
+		return tailcfg.PeerChange{}
+	}
+
+	return nv.ж.PeerChangeFromMapRequest(req)
+}
+
+// GetFQDN returns the fully qualified domain name for the node.
+func (nv NodeView) GetFQDN(baseDomain string) (string, error) {
+	if !nv.Valid() {
+		return "", errors.New("failed to create valid FQDN: node view is invalid")
+	}
+
+	return nv.ж.GetFQDN(baseDomain)
+}
+
+// ExitRoutes returns a list of both exit routes if the
+// node has any exit routes enabled.
+// If none are enabled, it will return nil.
+func (nv NodeView) ExitRoutes() []netip.Prefix {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.ExitRoutes()
+}
+
+func (nv NodeView) IsExitNode() bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.IsExitNode()
+}
+
+// RequestTags returns the ACL tags that the node is requesting.
+func (nv NodeView) RequestTags() []string {
+	if !nv.Valid() || !nv.Hostinfo().Valid() {
+		return []string{}
+	}
+
+	return nv.Hostinfo().RequestTags().AsSlice()
+}
+
+// Proto converts the NodeView to a protobuf representation.
+func (nv NodeView) Proto() *v1.Node {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.Proto()
+}
+
+// HasIP reports if a node has a given IP address.
+func (nv NodeView) HasIP(i netip.Addr) bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.HasIP(i)
+}
+
+// HasTag reports if a node has a given tag.
+func (nv NodeView) HasTag(tag string) bool {
+	if !nv.Valid() {
+		return false
+	}
+
+	return nv.ж.HasTag(tag)
+}
+
+// TypedUserID returns the UserID as a typed UserID type.
+// Returns 0 if UserID is nil or node is invalid.
+func (nv NodeView) TypedUserID() UserID {
+	if !nv.Valid() {
+		return 0
+	}
+
+	return nv.ж.TypedUserID()
+}
+
+// TailscaleUserID returns the user ID to use in Tailscale protocol.
+// Tagged nodes always return TaggedDevices.ID, user-owned nodes return their actual UserID.
+func (nv NodeView) TailscaleUserID() tailcfg.UserID {
+	if !nv.Valid() {
+		return 0
+	}
+
+	if nv.IsTagged() {
+		//nolint:gosec // G115: TaggedDevices.ID is a constant that fits in int64
+		return tailcfg.UserID(int64(TaggedDevices.ID))
+	}
+
+	//nolint:gosec // G115: UserID values are within int64 range
+	return tailcfg.UserID(int64(nv.UserID().Get()))
+}
+
+// Prefixes returns the node IPs as netip.Prefix.
+func (nv NodeView) Prefixes() []netip.Prefix {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.Prefixes()
+}
+
+// IPsAsString returns the node IPs as strings.
+func (nv NodeView) IPsAsString() []string {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.IPsAsString()
+}
+
+// HasNetworkChanges checks if the node has network-related changes.
+// Returns true if IPs, announced routes, or approved routes changed.
+// This is primarily used for policy cache invalidation.
+func (nv NodeView) HasNetworkChanges(other NodeView) bool {
+	if !slices.Equal(nv.IPs(), other.IPs()) {
+		return true
+	}
+
+	if !slices.Equal(nv.AnnouncedRoutes(), other.AnnouncedRoutes()) {
+		return true
+	}
+
+	if !slices.Equal(nv.SubnetRoutes(), other.SubnetRoutes()) {
+		return true
+	}
+
+	return false
+}
+
+// HasPolicyChange reports whether the node has changes that affect policy evaluation.
+func (nv NodeView) HasPolicyChange(other NodeView) bool {
+	if nv.UserID() != other.UserID() {
+		return true
+	}
+
+	if !views.SliceEqual(nv.Tags(), other.Tags()) {
+		return true
+	}
+
+	if !slices.Equal(nv.IPs(), other.IPs()) {
+		return true
+	}
+
+	return false
+}
+
+// TailNodes converts a slice of NodeViews into Tailscale tailcfg.Nodes.
+func TailNodes(
+	nodes views.Slice[NodeView],
+	capVer tailcfg.CapabilityVersion,
+	primaryRouteFunc RouteFunc,
+	cfg *Config,
+) ([]*tailcfg.Node, error) {
+	tNodes := make([]*tailcfg.Node, 0, nodes.Len())
+
+	for _, node := range nodes.All() {
+		tNode, err := node.TailNode(capVer, primaryRouteFunc, cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		tNodes = append(tNodes, tNode)
+	}
+
+	return tNodes, nil
+}
+
+// TailNode converts a NodeView into a Tailscale tailcfg.Node.
+func (nv NodeView) TailNode(
+	capVer tailcfg.CapabilityVersion,
+	primaryRouteFunc RouteFunc,
+	cfg *Config,
+) (*tailcfg.Node, error) {
+	if !nv.Valid() {
+		return nil, ErrInvalidNodeView
+	}
+
+	hostname, err := nv.GetFQDN(cfg.BaseDomain)
+	if err != nil {
+		return nil, err
+	}
+
+	var derp int
+	// TODO(kradalby): legacyDERP was removed in tailscale/tailscale@2fc4455e6dd9ab7f879d4e2f7cffc2be81f14077
+	// and should be removed after 111 is the minimum capver.
+	legacyDERP := "127.3.3.40:0" // Zero means disconnected or unknown.
+	if nv.Hostinfo().Valid() && nv.Hostinfo().NetInfo().Valid() {
+		legacyDERP = fmt.Sprintf("127.3.3.40:%d", nv.Hostinfo().NetInfo().PreferredDERP())
+		derp = nv.Hostinfo().NetInfo().PreferredDERP()
+	}
+
+	var keyExpiry time.Time
+	if nv.Expiry().Valid() {
+		keyExpiry = nv.Expiry().Get()
+	}
+
+	primaryRoutes := primaryRouteFunc(nv.ID())
+	allowedIPs := slices.Concat(nv.Prefixes(), primaryRoutes, nv.ExitRoutes())
+	tsaddr.SortPrefixes(allowedIPs)
+
+	capMap := tailcfg.NodeCapMap{
+		tailcfg.CapabilityAdmin: []tailcfg.RawMessage{},
+		tailcfg.CapabilitySSH:   []tailcfg.RawMessage{},
+	}
+	if cfg.RandomizeClientPort {
+		capMap[tailcfg.NodeAttrRandomizeClientPort] = []tailcfg.RawMessage{}
+	}
+
+	if cfg.Taildrop.Enabled {
+		capMap[tailcfg.CapabilityFileSharing] = []tailcfg.RawMessage{}
+	}
+
+	// __BEGIN_CYLONIX_ADD__
+	// Merge per-node capability attrs (cylonix Capabilities + policy NodeAttrs).
+	// WireGuard-only is opt-in via the explicit IsWireguardOnly field; we do
+	// NOT infer it from a zero DiscoKey because incomplete clients (e.g.
+	// during early registration) may report no DiscoKey but still expect
+	// the regular peer-cap path. WireGuard-only nodes get an empty CapMap.
+	isWireguardOnly := false
+	if wgOnly := nv.IsWireguardOnly(); wgOnly.Valid() {
+		isWireguardOnly = wgOnly.Get()
+	}
+	if isWireguardOnly {
+		capMap = tailcfg.NodeCapMap{}
+	}
+	for _, cap := range nv.Capabilities().All() {
+		capMap[tailcfg.NodeCapability(cap.Name)] = []tailcfg.RawMessage{}
+	}
+	if cfg != nil && cfg.PolicyNodeAttrs != nil {
+		for _, cap := range cfg.PolicyNodeAttrs(nv) {
+			capMap[cap] = []tailcfg.RawMessage{}
+		}
+	}
+	// __END_CYLONIX_ADD__
+
+	tNode := tailcfg.Node{
+		//nolint:gosec // G115: NodeID values are within int64 range
+		ID:       tailcfg.NodeID(nv.ID()),
+		StableID: nv.ID().StableID(),
+		Name:     hostname,
+		Cap:      capVer,
+		CapMap:   capMap,
+
+		User: nv.TailscaleUserID(),
+
+		Key:       nv.NodeKey(),
+		KeyExpiry: keyExpiry.UTC(),
+
+		Machine:          nv.MachineKey(),
+		DiscoKey:         nv.DiscoKey(),
+		Addresses:        nv.Prefixes(),
+		PrimaryRoutes:    primaryRoutes,
+		AllowedIPs:       allowedIPs,
+		Endpoints:        nv.Endpoints().AsSlice(),
+		HomeDERP:         derp,
+		LegacyDERPString: legacyDERP,
+		Hostinfo:         nv.Hostinfo(),
+		Created:          nv.CreatedAt().UTC(),
+
+		Online: nv.IsOnline().Clone(),
+
+		Tags: nv.Tags().AsSlice(),
+
+		MachineAuthorized: !nv.IsExpired(),
+		Expired:           nv.IsExpired(),
+
+		// __BEGIN_CYLONIX_ADD__
+		IsWireGuardOnly: isWireguardOnly,
+		IsJailed:        nv.IsJailed(),
+		// __END_CYLONIX_ADD__
+	}
+
+	// Set LastSeen only for offline nodes to avoid confusing Tailscale clients
+	// during rapid reconnection cycles. Online nodes should not have LastSeen set
+	// as this can make clients interpret them as "not online" despite Online=true.
+	if nv.LastSeen().Valid() && nv.IsOnline().Valid() && !nv.IsOnline().Get() {
+		lastSeen := nv.LastSeen().Get()
+		tNode.LastSeen = &lastSeen
+	}
+
+	return &tNode, nil
+}
+
+// __BEGIN_CYLONIX_ADD__
+
+// SliceMap is a small generic helper used throughout cylonix code for mapping
+// a slice with an error-returning function, short-circuiting on first error.
+func SliceMap[T1, T2 any](from []T1, fn func(T1) (T2, error)) ([]T2, error) {
 	if from == nil {
 		return nil, nil
 	}
-	list := make([]T2, 0, len(from))
+	out := make([]T2, 0, len(from))
 	for _, v := range from {
-		to, err := mapFn(v)
+		m, err := fn(v)
 		if err != nil {
 			return nil, err
 		}
-		list = append(list, to)
+		out = append(out, m)
 	}
-	return list, nil
+	return out, nil
 }
 
+// SliceFind returns elements of from that satisfy testFn.
 func SliceFind[T any](from []T, testFn func(T) bool) []T {
-	list := make([]T, 0, len(from))
+	out := make([]T, 0, len(from))
 	for _, v := range from {
 		if testFn(v) {
-			list = append(list, v)
+			out = append(out, v)
 		}
 	}
-	return list
+	return out
 }
 
+// EndpointStringSlice returns the node's Endpoints as a []string, convenient
+// for logging and proto emission.
 func (node *Node) EndpointStringSlice() []string {
-	ss, _ := SliceMap(node.Endpoints, func(ep netip.AddrPort) (string, error) {
-		return ep.String(), nil
-	})
-	return ss
+	out := make([]string, len(node.Endpoints))
+	for i, ep := range node.Endpoints {
+		out[i] = ep.String()
+	}
+	return out
 }
 
-func ParseProtoHostinfo(protoHostinfo *v1.Hostinfo) (*tailcfg.Hostinfo, error) {
-    if protoHostinfo == nil {
-        return nil, nil
-    }
-
-    hi := &tailcfg.Hostinfo{
-        IPNVersion:      protoHostinfo.IpnVersion,
-        FrontendLogID:   protoHostinfo.FrontendLogId,
-        BackendLogID:    protoHostinfo.BackendLogId,
-        OS:              protoHostinfo.Os,
-        OSVersion:       protoHostinfo.OsVersion,
-        Hostname:        protoHostinfo.Hostname,
-        ShieldsUp:       protoHostinfo.ShieldsUp,
-        ShareeNode:      protoHostinfo.ShareeNode,
-        NoLogsNoSupport: protoHostinfo.NoLogsNoSupport,
-        WireIngress:     protoHostinfo.WireIngress,
-        IngressEnabled:  protoHostinfo.IngressEnabled,
-        AllowsUpdate:    protoHostinfo.AllowsUpdate,
-        Machine:         protoHostinfo.Machine,
-        GoArch:          protoHostinfo.GoArch,
-        GoArchVar:       protoHostinfo.GoArchVar,
-        GoVersion:       protoHostinfo.GoVersion,
-        Cloud:           protoHostinfo.Cloud,
-        Package:         protoHostinfo.Package,
-        DeviceModel:     protoHostinfo.DeviceModel,
-        PushDeviceToken: protoHostinfo.PushDeviceToken,
-        Distro:          protoHostinfo.Distro,
-        DistroVersion:   protoHostinfo.DistroVersion,
-        DistroCodeName:  protoHostinfo.DistroCodeName,
-        App:             protoHostinfo.App,
-        ServicesHash:    protoHostinfo.ServicesHash,
-    }
-
-    // Parse optional boolean fields
-    if protoHostinfo.Container != nil {
-        hi.Container.Set(protoHostinfo.Container.Value)
-    }
-    if protoHostinfo.Desktop != nil {
-        hi.Desktop.Set(protoHostinfo.Desktop.Value)
-    }
-    if protoHostinfo.Userspace != nil {
-        hi.Userspace.Set(protoHostinfo.Userspace.Value)
-    }
-    if protoHostinfo.UserspaceRouter != nil {
-        hi.UserspaceRouter.Set(protoHostinfo.UserspaceRouter.Value)
-    }
-    if protoHostinfo.AppConnector != nil {
-        hi.AppConnector.Set(protoHostinfo.AppConnector.Value)
-    }
-
-    // Copy string slices
-    hi.RequestTags = append([]string(nil), protoHostinfo.RequestTags...)
-    hi.WoLMACs = append([]string(nil), protoHostinfo.WolMacs...)
-    hi.SSH_HostKeys = append([]string(nil), protoHostinfo.SshHostKeys...)
-
-    // Parse RoutableIPs
-    if len(protoHostinfo.RoutableIps) > 0 {
-        hi.RoutableIPs = make([]netip.Prefix, len(protoHostinfo.RoutableIps))
-        for i, prefixStr := range protoHostinfo.RoutableIps {
-            prefix, err := netip.ParsePrefix(prefixStr)
-            if err != nil {
-                return nil, fmt.Errorf("failed to parse routable IP prefix %q: %w", prefixStr, err)
-            }
-            hi.RoutableIPs[i] = prefix
-        }
-    }
-
-    // Parse Services
-    if len(protoHostinfo.Services) > 0 {
-        hi.Services = make([]tailcfg.Service, len(protoHostinfo.Services))
-        for i, protoSvc := range protoHostinfo.Services {
-            hi.Services[i] = tailcfg.Service{
-                Proto:       tailcfg.ServiceProto(protoSvc.Proto),
-                Port:        uint16(protoSvc.Port),
-                Description: protoSvc.Description,
-            }
-        }
-    }
-
-    // Parse NetInfo
-    if protoHostinfo.NetInfo != nil {
-        hi.NetInfo = &tailcfg.NetInfo{
-            PreferredDERP: int(protoHostinfo.NetInfo.PreferredDerp),
-            LinkType:      protoHostinfo.NetInfo.LinkType,
-            FirewallMode:  protoHostinfo.NetInfo.FirewallMode,
-            HavePortMap:   protoHostinfo.NetInfo.HavePortMap,
-        }
-
-        // Parse optional boolean fields
-        if protoHostinfo.NetInfo.MappingVariesByDestIp != nil {
-            hi.NetInfo.MappingVariesByDestIP.Set(protoHostinfo.NetInfo.MappingVariesByDestIp.Value)
-        }
-        if protoHostinfo.NetInfo.HairPinning != nil {
-            hi.NetInfo.HairPinning.Set(protoHostinfo.NetInfo.HairPinning.Value)
-        }
-        if protoHostinfo.NetInfo.WorkingIpv6 != nil {
-            hi.NetInfo.WorkingIPv6.Set(protoHostinfo.NetInfo.WorkingIpv6.Value)
-        }
-        if protoHostinfo.NetInfo.OsHasIpv6 != nil {
-            hi.NetInfo.OSHasIPv6.Set(protoHostinfo.NetInfo.OsHasIpv6.Value)
-        }
-        if protoHostinfo.NetInfo.WorkingUdp != nil {
-            hi.NetInfo.WorkingUDP.Set(protoHostinfo.NetInfo.WorkingUdp.Value)
-        }
-        if protoHostinfo.NetInfo.WorkingIcmpv4 != nil {
-            hi.NetInfo.WorkingICMPv4.Set(protoHostinfo.NetInfo.WorkingIcmpv4.Value)
-        }
-        if protoHostinfo.NetInfo.Upnp != nil {
-            hi.NetInfo.UPnP.Set(protoHostinfo.NetInfo.Upnp.Value)
-        }
-        if protoHostinfo.NetInfo.Pmp != nil {
-            hi.NetInfo.PMP.Set(protoHostinfo.NetInfo.Pmp.Value)
-        }
-        if protoHostinfo.NetInfo.Pcp != nil {
-            hi.NetInfo.PCP.Set(protoHostinfo.NetInfo.Pcp.Value)
-        }
-
-        // Parse DERP latency map
-        if len(protoHostinfo.NetInfo.DerpLatency) > 0 {
-            hi.NetInfo.DERPLatency = make(map[string]float64)
-            for region, latency := range protoHostinfo.NetInfo.DerpLatency {
-                hi.NetInfo.DERPLatency[region] = latency
-            }
-        }
-    }
-
-    // Parse Location
-    if protoHostinfo.Location != nil {
-        hi.Location = &tailcfg.Location{
-            Country:     protoHostinfo.Location.Country,
-            CountryCode: protoHostinfo.Location.CountryCode,
-            City:        protoHostinfo.Location.City,
-            CityCode:    protoHostinfo.Location.CityCode,
-            Latitude:    protoHostinfo.Location.Latitude,
-            Longitude:   protoHostinfo.Location.Longitude,
-            Priority:    int(protoHostinfo.Location.Priority),
-        }
-    }
-
-    return hi, nil
+// PreloadUpdate fills unset fields on `update` from `node` so a partial
+// update struct can be safely merged onto the persisted row. Used by the
+// cylonix UpdateNode RPC handler.
+func (node *Node) PreloadUpdate(update *Node) {
+	if node == nil || update == nil {
+		return
+	}
+	if update.MachineKey.IsZero() {
+		update.MachineKey = node.MachineKey
+	}
+	if update.NodeKey.IsZero() {
+		update.NodeKey = node.NodeKey
+	}
+	if update.DiscoKey.IsZero() {
+		update.DiscoKey = node.DiscoKey
+	}
+	if update.Hostinfo == nil {
+		update.Hostinfo = node.Hostinfo
+	}
+	if update.IPv4 == nil {
+		update.IPv4 = node.IPv4
+	}
+	if update.IPv6 == nil {
+		update.IPv6 = node.IPv6
+	}
 }
 
-func (node *Node) ProtoHostinfo() *v1.Hostinfo {
-	if node.Hostinfo == nil {
+// BeforeSave is a cylonix gorm hook that stamps Capabilities with the node's
+// namespace so multi-tenant isolation is preserved without per-call checks.
+func (node *Node) BeforeSave(tx *gorm.DB) error {
+	if node.Namespace == "" {
 		return nil
 	}
-
-	hi := node.Hostinfo
-	protoHostinfo := &v1.Hostinfo{
-		IpnVersion:      hi.IPNVersion,
-		FrontendLogId:   hi.FrontendLogID,
-		BackendLogId:    hi.BackendLogID,
-		Os:              hi.OS,
-		OsVersion:       hi.OSVersion,
-		Hostname:        hi.Hostname,
-		ShieldsUp:       hi.ShieldsUp,
-		ShareeNode:      hi.ShareeNode,
-		NoLogsNoSupport: hi.NoLogsNoSupport,
-		WireIngress:     hi.WireIngress,
-		IngressEnabled:  hi.IngressEnabled,
-		AllowsUpdate:    hi.AllowsUpdate,
-		Machine:         hi.Machine,
-		GoArch:          hi.GoArch,
-		GoArchVar:       hi.GoArchVar,
-		GoVersion:       hi.GoVersion,
-		Cloud:           hi.Cloud,
-		Package:         hi.Package,
-		DeviceModel:     hi.DeviceModel,
-		PushDeviceToken: hi.PushDeviceToken,
-		Distro:          hi.Distro,
-		DistroVersion:   hi.DistroVersion,
-		DistroCodeName:  hi.DistroCodeName,
-		App:             hi.App,
-		ServicesHash:    hi.ServicesHash,
+	for i := range node.Capabilities {
+		c := &node.Capabilities[i]
+		if c.Namespace != "" && c.Namespace != node.Namespace {
+			return fmt.Errorf("namespace mismatch for capability %q: node=%v cap=%v",
+				c.Name, node.Namespace, c.Namespace)
+		}
+		c.Namespace = node.Namespace
 	}
-
-	// Convert optional boolean fields
-	if v, ok := hi.Container.Get(); ok {
-		protoHostinfo.Container = wrapperspb.Bool(v)
-	}
-	if v, ok := hi.Desktop.Get(); ok {
-		protoHostinfo.Desktop = wrapperspb.Bool(v)
-	}
-	if v, ok := hi.Userspace.Get(); ok {
-		protoHostinfo.Userspace = wrapperspb.Bool(v)
-	}
-	if v, ok := hi.UserspaceRouter.Get(); ok {
-		protoHostinfo.UserspaceRouter = wrapperspb.Bool(v)
-	}
-	if v, ok := hi.AppConnector.Get(); ok {
-		protoHostinfo.AppConnector = wrapperspb.Bool(v)
-	}
-
-	// Convert string slices
-	protoHostinfo.RequestTags = append([]string(nil), hi.RequestTags...)
-	protoHostinfo.WolMacs = append([]string(nil), hi.WoLMACs...)
-	protoHostinfo.SshHostKeys = append([]string(nil), hi.SSH_HostKeys...)
-
-	// Convert RoutableIPs
-	if len(hi.RoutableIPs) > 0 {
-		protoHostinfo.RoutableIps = make([]string, len(hi.RoutableIPs))
-		for i, prefix := range hi.RoutableIPs {
-			protoHostinfo.RoutableIps[i] = prefix.String()
-		}
-	}
-
-	// Convert Services
-	if len(hi.Services) > 0 {
-		protoHostinfo.Services = make([]*v1.Service, len(hi.Services))
-		for i, svc := range hi.Services {
-			protoHostinfo.Services[i] = &v1.Service{
-				Proto:       string(svc.Proto),
-				Port:        uint32(svc.Port),
-				Description: svc.Description,
-			}
-		}
-	}
-
-	// Convert NetInfo
-	if hi.NetInfo != nil {
-		protoHostinfo.NetInfo = &v1.NetInfo{
-			PreferredDerp: int32(hi.NetInfo.PreferredDERP),
-			LinkType:      hi.NetInfo.LinkType,
-			FirewallMode:  hi.NetInfo.FirewallMode,
-			HavePortMap:   hi.NetInfo.HavePortMap,
-		}
-
-		// Convert optional boolean fields using google.protobuf.BoolValue
-		if v, ok := hi.NetInfo.MappingVariesByDestIP.Get(); ok {
-			protoHostinfo.NetInfo.MappingVariesByDestIp = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.HairPinning.Get(); ok {
-			protoHostinfo.NetInfo.HairPinning = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.WorkingIPv6.Get(); ok {
-			protoHostinfo.NetInfo.WorkingIpv6 = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.OSHasIPv6.Get(); ok {
-			protoHostinfo.NetInfo.OsHasIpv6 = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.WorkingUDP.Get(); ok {
-			protoHostinfo.NetInfo.WorkingUdp = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.WorkingICMPv4.Get(); ok {
-			protoHostinfo.NetInfo.WorkingIcmpv4 = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.UPnP.Get(); ok {
-			protoHostinfo.NetInfo.Upnp = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.PMP.Get(); ok {
-			protoHostinfo.NetInfo.Pmp = wrapperspb.Bool(v)
-		}
-		if v, ok := hi.NetInfo.PCP.Get(); ok {
-			protoHostinfo.NetInfo.Pcp = wrapperspb.Bool(v)
-		}
-
-		// Convert DERP latency map
-		if len(hi.NetInfo.DERPLatency) > 0 {
-			protoHostinfo.NetInfo.DerpLatency = make(map[string]float64)
-			for region, latency := range hi.NetInfo.DERPLatency {
-				protoHostinfo.NetInfo.DerpLatency[region] = latency
-			}
-		}
-	}
-
-	// Convert Location
-	if hi.Location != nil {
-		protoHostinfo.Location = &v1.Location{
-			Country:     hi.Location.Country,
-			CountryCode: hi.Location.CountryCode,
-			City:        hi.Location.City,
-			CityCode:    hi.Location.CityCode,
-			Latitude:    hi.Location.Latitude,
-			Longitude:   hi.Location.Longitude,
-			Priority:    int32(hi.Location.Priority),
-		}
-	}
-
-	return protoHostinfo
+	return nil
 }
 
-func (node *Node) ProtoRouteSpecs() []*v1.RouteSpec {
-	list, _ := SliceMap(node.Routes, func(r Route) (*v1.RouteSpec, error) {
-		return &v1.RouteSpec{
-			Id:	        uint64(r.ID),
-			Prefix:     netip.Prefix(r.Prefix).String(),
-			Advertised: r.Advertised,
-			Enabled:    r.Enabled,
-			IsPrimary:  r.IsPrimary,
-		}, nil
-	})
-	return list
-}
-func (node *Node) ProtoCapabilities() []string {
-	list, _ := SliceMap(node.Capabilities, func(c Capability) (string, error) {
-		return c.Name, nil
-	})
-	return list
-}
-func ParseProtoCapabilities(namespace string, caps []string) []Capability {
-	list, _ := SliceMap(caps, func(c string) (Capability, error) {
-		return Capability{Name: c, Namespace: namespace}, nil
-	})
-	return list
-}
-func ParseProtoRouteSpecs(nodeID uint64, userID *uint, namespace string, routes []*v1.RouteSpec) ([]Route, error) {
-	return SliceMap(routes, func(r *v1.RouteSpec) (Route, error) {
-		prefix, err := netip.ParsePrefix(r.Prefix)
-		if err != nil {
-			return Route{}, err
-		}
-		route := Route{
-			NodeID:     nodeID,
-			Prefix:     IPPrefix(prefix),
-			Advertised: r.Advertised,
-			Enabled:    r.Enabled,
-			IsPrimary:  r.IsPrimary,
-		}
-		if (r.Id > 0) {
-			route.ID = uint(r.Id)
-		}
-		return route, nil
-	})
-}
-func ParseProtoNode(p *v1.Node, forUpdate bool) (*Node, error) {
-	var (
-		machineKey key.MachinePublic
-		nodeKey    key.NodePublic
-		discoKey   key.DiscoPublic
-		ipv4       *netip.Addr
-		ipv6       *netip.Addr
-		user       User
-		endpoints  []netip.AddrPort
-		online     bool = p.Online
-	)
-	if !forUpdate || p.MachineKey != "" {
-		if err := machineKey.UnmarshalText([]byte(p.MachineKey)); err != nil {
-			return nil, fmt.Errorf("failed to parse machine key %v: %w", p.MachineKey, err)
-		}
-	}
-	if !forUpdate || p.NodeKey != "" {
-		if err := nodeKey.UnmarshalText([]byte(p.NodeKey)); err != nil {
-			return nil, fmt.Errorf("failed to parse node key %v: %w", p.NodeKey, err)
-		}
-	}
-	if !forUpdate || p.DiscoKey != "" {
-		if err := discoKey.UnmarshalText([]byte(p.DiscoKey)); err != nil {
-			return nil, fmt.Errorf("failed to parse disco key %v: %w", p.DiscoKey, err)
-		}
-	}
-	if !forUpdate || p.User != nil {
-		if err := user.FromProto(p.User); err != nil {
-			return nil, fmt.Errorf("failed to parse user %v: %w", p.User, err)
-		}
-	}
-
-	for _, addr := range p.IpAddresses {
-		ip, err := netip.ParseAddr(addr)
-		if err != nil {
-			return nil, err
-		}
-		if ip.Is4() {
-			ipv4 = &ip
-		} else if ip.Is6() {
-			ipv6 = &ip
-		}
-	}
-
-	for _, v := range p.Endpoints {
-		ep, err := netip.ParseAddrPort(v)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse addr/port %v: %w", ep, err)
-		}
-		endpoints = append(endpoints, ep)
-	}
-
-	routes, err := ParseProtoRouteSpecs(p.Id, &user.ID, p.Namespace, p.Routes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse route specs: %w", err)
-	}
-
-	hi, err := ParseProtoHostinfo(p.Hostinfo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse hostinfo: %w", err)
-	}
-	if hi == nil && !forUpdate {
-		hi = &tailcfg.Hostinfo{Hostname: p.Name}
-	}
-
-	n := &Node{
-		ID:              NodeID(p.Id),
-		MachineKey:      machineKey,
-		NodeKey:         nodeKey,
-		DiscoKey:        discoKey,
-		IPv4:            ipv4,
-		IPv6:            ipv6,
-		Hostname:        p.Name,
-		Hostinfo:        hi,
-		GivenName:       p.GivenName,
-		User:            user,
-		ForcedTags:      p.ForcedTags,
-		RegisterMethod:  nodeRegisterMethodFromV1Enum(p.RegisterMethod),
-		Namespace:       p.Namespace,
-		StableID:        p.StableId,
-		IsWireguardOnly: p.WireguardOnly,
-		Endpoints:       endpoints,
-		Routes:          routes,
-		CapVersion:      p.CapVersion,
-		Capabilities:    ParseProtoCapabilities(p.Namespace, p.Capabilities),
-		NetworkDomain:   p.NetworkDomain,
-		IsOnline:        &online,
-		Health:          p.Health,
-	}
-
-	if p.PreAuthKey != nil {
-		authKey := &PreAuthKey{}
-		if err := authKey.FromProto(p.PreAuthKey); err != nil {
-			return nil, err
-		}
-		n.AuthKey = authKey
-	}
-
-	if p.LastSeen.IsValid() {
-		t := p.LastSeen.AsTime()
-		n.LastSeen = &t
-	}
-
-	// Online node overrides LastSeen field.
-	if p.Online {
-		n.LastSeen = nil
-	}
-
-	if p.Expiry.IsValid() {
-		t := p.Expiry.AsTime()
-		n.Expiry = &t
-	}
-
-	return n, nil
-}
-
-func nodeRegisterMethodFromV1Enum(m v1.RegisterMethod) string {
-	switch m {
-	case v1.RegisterMethod_REGISTER_METHOD_AUTH_KEY:
-		return "authkey"
-	case v1.RegisterMethod_REGISTER_METHOD_OIDC:
-		return "oidc"
-	case v1.RegisterMethod_REGISTER_METHOD_CLI:
-		return "cli"
-	default:
-		return ""
-	}
-}
-
-func (node *Node) InfoLog() *zerolog.Event {
-	if node == nil {
-		return nil
-	}
-	return node.addLogFields(log.Info())
-}
-func (node *Node) ErrorLog(err error) *zerolog.Event {
-	if node == nil {
-		return nil
-	}
-	return node.addLogFields(log.Error().Err(err))
-}
+// DebugLog returns a pre-populated zerolog debug event with the node's
+// identity fields. Cylonix code uses this from multiple packages to keep
+// Save-path logging consistent.
 func (node *Node) DebugLog() *zerolog.Event {
-	if node == nil {
-		return nil
-	}
-	return node.addLogFields(log.Debug())
-}
-func (node *Node) addLogFields(event *zerolog.Event) *zerolog.Event {
-	if node == nil {
-		return event
-	}
-	return event.
-		Caller(2).
-		Str("machine-key", node.MachineKey.ShortString()).
-		Str("node-key", node.NodeKey.ShortString()).
+	evt := log.Debug().
 		Str("node", node.Hostname).
-		Str("given-name", node.GivenName).
-		Str("network-domain", node.NetworkDomain).
+		Str("machine_key", node.MachineKey.ShortString()).
+		Str("node_key", node.NodeKey.ShortString()).
+		Uint64("id", uint64(node.ID)).
 		Str("namespace", node.Namespace).
-		Str("user", node.User.Name)
-}
-func(node *Node) ProtoShareToUsers() []string {
-	if node == nil {
-		return nil
+		Str("network_domain", node.NetworkDomain)
+	if node.User != nil {
+		evt = evt.Str("user", node.User.Name)
 	}
-	var users []string
-	for _, u := range node.AcceptedShareTo {
-		name := u.Name
-		if u.LoginName != nil {
-			name = *u.LoginName
-		}
-		users = append(users, name)
-	}
-	return users
+	return evt
 }
 
-type RegistrationCacheNodeInfo struct {
-	Node     Node
-	FollowUp string
-}
-
-// __END_CYLONIX_MOD__
+// __END_CYLONIX_ADD__

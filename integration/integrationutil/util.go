@@ -3,14 +3,38 @@ package integrationutil
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"path/filepath"
+	"time"
 
+	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/integration/dockertestutil"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
+	"tailscale.com/tailcfg"
 )
+
+// PeerSyncTimeout returns the timeout for peer synchronization based on environment:
+// 60s for dev, 120s for CI.
+func PeerSyncTimeout() time.Duration {
+	if util.IsCI() {
+		return 120 * time.Second
+	}
+	return 60 * time.Second
+}
+
+// PeerSyncRetryInterval returns the retry interval for peer synchronization checks.
+func PeerSyncRetryInterval() time.Duration {
+	return 100 * time.Millisecond
+}
 
 func WriteFileToContainer(
 	pool *dockertest.Pool,
@@ -92,4 +116,114 @@ func FetchPathFromContainer(
 	}
 
 	return buf.Bytes(), nil
+}
+
+// nolint
+func CreateCertificate(hostname string) ([]byte, []byte, error) {
+	// From:
+	// https://shaneutt.com/blog/golang-ca-and-signed-cert-go/
+
+	ca := &x509.Certificate{
+		SerialNumber: big.NewInt(2019),
+		Subject: pkix.Name{
+			Organization: []string{"Headscale testing INC"},
+			Country:      []string{"NL"},
+			Locality:     []string{"Leiden"},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(60 * time.Hour),
+		IsCA:      true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+			x509.ExtKeyUsageServerAuth,
+		},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+
+	caPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cert := &x509.Certificate{
+		SerialNumber: big.NewInt(1658),
+		Subject: pkix.Name{
+			CommonName:   hostname,
+			Organization: []string{"Headscale testing INC"},
+			Country:      []string{"NL"},
+			Locality:     []string{"Leiden"},
+		},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(60 * time.Minute),
+		SubjectKeyId: []byte{1, 2, 3, 4, 6},
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		DNSNames:     []string{hostname},
+	}
+
+	certPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certBytes, err := x509.CreateCertificate(
+		rand.Reader,
+		cert,
+		ca,
+		&certPrivKey.PublicKey,
+		caPrivKey,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certPEM := new(bytes.Buffer)
+
+	err = pem.Encode(certPEM, &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certBytes,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certPrivKeyPEM := new(bytes.Buffer)
+
+	err = pem.Encode(certPrivKeyPEM, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(certPrivKey),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return certPEM.Bytes(), certPrivKeyPEM.Bytes(), nil
+}
+
+func BuildExpectedOnlineMap(all map[types.NodeID][]tailcfg.MapResponse) map[types.NodeID]map[types.NodeID]bool {
+	res := make(map[types.NodeID]map[types.NodeID]bool)
+	for nid, mrs := range all {
+		res[nid] = make(map[types.NodeID]bool)
+		for _, mr := range mrs {
+			for _, peer := range mr.Peers {
+				if peer.Online != nil {
+					res[nid][types.NodeID(peer.ID)] = *peer.Online
+				}
+			}
+
+			for _, peer := range mr.PeersChanged {
+				if peer.Online != nil {
+					res[nid][types.NodeID(peer.ID)] = *peer.Online
+				}
+			}
+
+			for _, peer := range mr.PeersChangedPatch {
+				if peer.Online != nil {
+					res[nid][types.NodeID(peer.NodeID)] = *peer.Online
+				}
+			}
+		}
+	}
+	return res
 }

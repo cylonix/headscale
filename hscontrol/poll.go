@@ -1,24 +1,21 @@
 package hscontrol
 
 import (
-	"cmp"
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
-	"net/netip"
-	"sort"
-	"strings"
 	"time"
 
-	"github.com/juanfont/headscale/hscontrol/db"
-	"github.com/juanfont/headscale/hscontrol/mapper"
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/sasha-s/go-deadlock"
-	xslices "golang.org/x/exp/slices"
-	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
+	"tailscale.com/util/zstdframe"
 )
 
 const (
@@ -34,11 +31,10 @@ type mapSession struct {
 	req    tailcfg.MapRequest
 	ctx    context.Context
 	capVer tailcfg.CapabilityVersion
-	mapper *mapper.Mapper
 
 	cancelChMu deadlock.Mutex
 
-	ch           chan types.StateUpdate
+	ch           chan *tailcfg.MapResponse
 	cancelCh     chan struct{}
 	cancelChOpen bool
 
@@ -47,11 +43,6 @@ type mapSession struct {
 
 	node *types.Node
 	w    http.ResponseWriter
-
-	warnf  func(string, ...any)
-	infof  func(string, ...any)
-	tracef func(string, ...any)
-	errf   func(error, string, ...any)
 }
 
 func (h *Headscale) newMapSession(
@@ -60,38 +51,10 @@ func (h *Headscale) newMapSession(
 	w http.ResponseWriter,
 	node *types.Node,
 ) *mapSession {
-	warnf, infof, tracef, errf := logPollFunc(req, node)
-
-	// __BEGIN_CYLONIX_MOD__
-	if node != nil && req.Hostinfo != nil && node.Hostname != req.Hostinfo.Hostname {
-		if err := h.db.MaybeUpdateNodeGivenName(node, req.Hostinfo); err != nil {
-			errf(err, "Could not update node given name from request")
-			return nil
-		}
-	}
-	if node != nil && req.Version != 0 {
-		capVersion := uint32(req.Version)
-		if err := h.db.MaybeUpdateNodeCapVersion(node, capVersion); err != nil {
-			errf(err, "Could not update node capability version from request")
-			return nil
-		}
-	}
-	// __END_CYLONIX_MOD__
-
-	var updateChan chan types.StateUpdate
-	if req.Stream {
-		// Use a buffered channel in case a node is not fully ready
-		// to receive a message to make sure we dont block the entire
-		// notifier.
-		updateChan = make(chan types.StateUpdate, h.cfg.Tuning.NodeMapSessionBufferedChanSize)
-		updateChan <- types.StateUpdate{
-			Type: types.StateFullUpdate,
-
-			Namespace:     node.Namespace,     // __CYLONIX_ADD__
-			NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
-		}
-	}
-
+	// Cylonix hostname/cap-version syncing used to happen here via
+	// h.db.MaybeUpdateNodeGivenName / MaybeUpdateNodeCapVersion; in v0.28
+	// those semantics moved into state.UpdateNodeFromMapRequest invoked by
+	// serve()/serveLongPoll().
 	ka := keepAliveInterval + (time.Duration(rand.IntN(9000)) * time.Millisecond)
 
 	return &mapSession{
@@ -101,53 +64,22 @@ func (h *Headscale) newMapSession(
 		w:      w,
 		node:   node,
 		capVer: req.Version,
-		mapper: h.mapper,
 
-		ch:           updateChan,
+		ch:           make(chan *tailcfg.MapResponse, h.cfg.Tuning.NodeMapSessionBufferedChanSize),
 		cancelCh:     make(chan struct{}),
 		cancelChOpen: true,
 
 		keepAlive:       ka,
 		keepAliveTicker: nil,
-
-		// Loggers
-		warnf:  warnf,
-		infof:  infof,
-		tracef: tracef,
-		errf:   errf,
-	}
-}
-
-func (m *mapSession) close() {
-	m.cancelChMu.Lock()
-	defer m.cancelChMu.Unlock()
-
-	if !m.cancelChOpen {
-		mapResponseClosed.WithLabelValues("chanclosed").Inc()
-		return
-	}
-
-	m.tracef("mapSession (%p) sending message on cancel chan", m)
-	select {
-	case m.cancelCh <- struct{}{}:
-		mapResponseClosed.WithLabelValues("sent").Inc()
-		m.tracef("mapSession (%p) sent message on cancel chan", m)
-	case <-time.After(30 * time.Second):
-		mapResponseClosed.WithLabelValues("timeout").Inc()
-		m.tracef("mapSession (%p) timed out sending close message", m)
 	}
 }
 
 func (m *mapSession) isStreaming() bool {
-	return m.req.Stream && !m.req.ReadOnly
+	return m.req.Stream
 }
 
 func (m *mapSession) isEndpointUpdate() bool {
-	return !m.req.Stream && !m.req.ReadOnly && m.req.OmitPeers
-}
-
-func (m *mapSession) isReadOnlyUpdate() bool {
-	return !m.req.Stream && m.req.OmitPeers && m.req.ReadOnly
+	return !m.req.Stream && m.req.OmitPeers
 }
 
 func (m *mapSession) resetKeepAlive() {
@@ -160,6 +92,8 @@ func (m *mapSession) beforeServeLongPoll() {
 	}
 }
 
+// afterServeLongPoll is called when a long-polling session ends and the node
+// is disconnected.
 func (m *mapSession) afterServeLongPoll() {
 	if m.node != nil && m.node.IsEphemeral() { // __CYLONIX_MOD__
 		m.h.ephemeralGC.Schedule(m.node.ID, m.h.cfg.EphemeralNodeInactivityTimeout)
@@ -168,40 +102,30 @@ func (m *mapSession) afterServeLongPoll() {
 
 // serve handles non-streaming requests.
 func (m *mapSession) serve() {
-	// TODO(kradalby): A set todos to harden:
-	// - func to tell the stream to die, readonly -> false, !stream && omitpeers -> false, true
-
 	// This is the mechanism where the node gives us information about its
 	// current configuration.
 	//
-	// If OmitPeers is true, Stream is false, and ReadOnly is false,
-	// then te server will let clients update their endpoints without
+	// Process the MapRequest to update node state (endpoints, hostinfo, etc.)
+	c, err := m.h.state.UpdateNodeFromMapRequest(m.node.ID, m.req)
+	if err != nil {
+		httpError(m.w, err)
+		return
+	}
+
+	m.h.Change(c)
+
+	// If OmitPeers is true and Stream is false
+	// then the server will let clients update their endpoints without
 	// breaking existing long-polling (Stream == true) connections.
 	// In this case, the server can omit the entire response; the client
 	// only checks the HTTP response status code.
 	//
 	// This is what Tailscale calls a Lite update, the client ignores
 	// the response and just wants a 200.
-	// !req.stream && !req.ReadOnly && req.OmitPeers
-	//
-	// TODO(kradalby): remove ReadOnly when we only support capVer 68+
+	// !req.stream && req.OmitPeers
 	if m.isEndpointUpdate() {
-		m.handleEndpointUpdate()
-
-		return
-	}
-
-	// ReadOnly is whether the client just wants to fetch the
-	// MapResponse, without updating their Endpoints. The
-	// Endpoints field will be ignored and LastSeen will not be
-	// updated and peers will not be notified of changes.
-	//
-	// The intended use is for clients to discover the DERP map at
-	// start-up before their first real endpoint update.
-	if m.isReadOnlyUpdate() {
-		m.handleReadOnlyRequest()
-
-		return
+		m.w.WriteHeader(http.StatusOK)
+		mapResponseEndpointUpdates.WithLabelValues("ok").Inc()
 	}
 }
 
@@ -212,6 +136,8 @@ func (m *mapSession) serve() {
 func (m *mapSession) serveLongPoll() {
 	m.beforeServeLongPoll()
 
+	log.Trace().Caller().Uint64("node.id", m.node.ID.Uint64()).Str("node.name", m.node.Hostname).Msg("Long poll session started because client connected")
+
 	// Clean up the session when the client disconnects
 	defer func() {
 		m.cancelChMu.Lock()
@@ -219,57 +145,86 @@ func (m *mapSession) serveLongPoll() {
 		close(m.cancelCh)
 		m.cancelChMu.Unlock()
 
-		// only update node status if the node channel was removed.
-		// in principal, it will be removed, but the client rapidly
-		// reconnects, the channel might be of another connection.
-		// In that case, it is not closed and the node is still online.
-		if m.node != nil && m.h.nodeNotifier.RemoveNode(m.node.ID, m.ch) { // Node may be deleted during the poll. __CYLONIX_MOD__
-			// Failover the node's routes if any.
-			m.h.updateNodeOnlineStatus(false, m.node)
-			m.pollFailoverRoutes("node closing connection", m.node)
+		_ = m.h.mapBatcher.RemoveNode(m.node.ID, m.ch)
+
+		// When a node disconnects, it might rapidly reconnect (e.g. mobile clients, network weather).
+		// Instead of immediately marking the node as offline, we wait a few seconds to see if it reconnects.
+		// If it does reconnect, the existing mapSession will be replaced and the node remains online.
+		// If it doesn't reconnect within the timeout, we mark it as offline.
+		//
+		// This avoids flapping nodes in the UI and unnecessary churn in the network.
+		// This is not my favourite solution, but it kind of works in our eventually consistent world.
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		disconnected := true
+		// Wait up to 10 seconds for the node to reconnect.
+		// 10 seconds was arbitrary chosen as a reasonable time to reconnect.
+		for range 10 {
+			if m.h.mapBatcher.IsConnected(m.node.ID) {
+				disconnected = false
+				break
+			}
+			<-ticker.C
 		}
 
-		m.afterServeLongPoll()
-		m.infof("node has disconnected, mapSession: %p, chan: %p", m, m.ch)
+		if disconnected {
+			disconnectChanges, err := m.h.state.Disconnect(m.node.ID)
+			if err != nil {
+				m.errf(err, "Failed to disconnect node %s", m.node.Hostname)
+			}
+
+			m.h.Change(disconnectChanges...)
+			m.afterServeLongPoll()
+			m.infof("node has disconnected, mapSession: %p, chan: %p", m, m.ch)
+		}
 	}()
 
-	// From version 68, all streaming requests can be treated as read only.
-	// TODO: Remove when we drop support for 1.48
-	if m.capVer < 68 {
-		// Error has been handled/written to client in the func
-		// return
-		err := m.handleSaveNode()
-		if err != nil {
-			mapResponseWriteUpdatesInStream.WithLabelValues("error").Inc()
-
-			m.close()
-			return
-		}
-		mapResponseWriteUpdatesInStream.WithLabelValues("ok").Inc()
-	}
-
 	// Set up the client stream
-	m.h.pollNetMapStreamWG.Add(1)
-	defer m.h.pollNetMapStreamWG.Done()
-
-	m.pollFailoverRoutes("node connected", m.node)
-
-	// Upgrade the writer to a ResponseController
-	rc := http.NewResponseController(m.w)
-
-	// Longpolling will break if there is a write timeout,
-	// so it needs to be disabled.
-	rc.SetWriteDeadline(time.Time{})
+	m.h.clientStreamsOpen.Add(1)
+	defer m.h.clientStreamsOpen.Done()
 
 	ctx, cancel := context.WithCancel(context.WithValue(m.ctx, nodeNameContextKey, m.node.Hostname))
 	defer cancel()
 
 	m.keepAliveTicker = time.NewTicker(m.keepAlive)
 
-	m.h.nodeNotifier.AddNode(m.node.ID, m.ch)
-	go m.h.updateNodeOnlineStatus(true, m.node)
+	// Process the initial MapRequest to update node state (endpoints, hostinfo, etc.)
+	// This must be done BEFORE calling Connect() to ensure routes are properly synchronized.
+	// When nodes reconnect, they send their hostinfo with announced routes in the MapRequest.
+	// We need this data in NodeStore before Connect() sets up the primary routes, because
+	// SubnetRoutes() calculates the intersection of announced and approved routes. If we
+	// call Connect() first, SubnetRoutes() returns empty (no announced routes yet), causing
+	// the node to be incorrectly removed from AvailableRoutes.
+	mapReqChange, err := m.h.state.UpdateNodeFromMapRequest(m.node.ID, m.req)
+	if err != nil {
+		m.errf(err, "failed to update node from initial MapRequest")
+		return
+	}
+
+	// Connect the node after its state has been updated.
+	// We send two separate change notifications because these are distinct operations:
+	// 1. UpdateNodeFromMapRequest: processes the client's reported state (routes, endpoints, hostinfo)
+	// 2. Connect: marks the node online and recalculates primary routes based on the updated state
+	// While this results in two notifications, it ensures route data is synchronized before
+	// primary route selection occurs, which is critical for proper HA subnet router failover.
+	connectChanges := m.h.state.Connect(m.node.ID)
 
 	m.infof("node has connected, mapSession: %p, chan: %p", m, m.ch)
+
+	// TODO(kradalby): Redo the comments here
+	// Add node to batcher so it can receive updates,
+	// adding this before connecting it to the state ensure that
+	// it does not miss any updates that might be sent in the split
+	// time between the node connecting and the batcher being ready.
+	if err := m.h.mapBatcher.AddNode(m.node.ID, m.ch, m.capVer); err != nil {
+		m.errf(err, "failed to add node to batcher")
+		log.Error().Uint64("node.id", m.node.ID.Uint64()).Str("node.name", m.node.Hostname).Err(err).Msg("AddNode failed in poll session")
+		return
+	}
+	log.Debug().Caller().Uint64("node.id", m.node.ID.Uint64()).Str("node.name", m.node.Hostname).Msg("AddNode succeeded in poll session because node added to batcher")
+
+	m.h.Change(mapReqChange)
+	m.h.Change(connectChanges...)
 
 	// Loop through updates and continuously send them to the
 	// client.
@@ -282,157 +237,29 @@ func (m *mapSession) serveLongPoll() {
 			return
 
 		case <-ctx.Done():
-			m.tracef("poll context done")
+			m.tracef("poll context done chan:%p", m.ch)
 			mapResponseEnded.WithLabelValues("done").Inc()
 			return
 
 		// Consume updates sent to node
 		case update, ok := <-m.ch:
+			m.tracef("received update from channel, ok: %t", ok)
 			if !ok {
 				m.tracef("update channel closed, streaming session is likely being replaced")
 				return
 			}
 
-			m.tracef("received stream update: %s %s", update.Type.String(), update.Message)
-			mapResponseUpdateReceived.WithLabelValues(update.Type.String()).Inc()
-
-			var data []byte
-			var err error
-			var lastMessage string
-
-			// Ensure the node object is updated, for example, there
-			// might have been a hostinfo update in a side channel
-			// which contains data needed to generate a map response.
-			m.node, err = m.h.db.GetNodeByID(m.node.ID)
-			if err != nil {
-				m.errf(err, "Could not get machine from db")
-
+			if err := m.writeMap(update); err != nil {
+				m.errf(err, "cannot write update to client")
 				return
 			}
 
-			// __BEGIN_CYLONIX_MOD__
-			pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
-			if err != nil {
-				m.infof("Could not get ACL policy: %v", err)
-				//return
-			}
-
-			// __END_CYLONIX_MOD__
-
-			updateType := "full"
-			switch update.Type {
-			case types.StateFullUpdate:
-				m.tracef("Sending Full MapResponse")
-				data, err = m.mapper.FullMapResponse(m.req, m.node, pol, fmt.Sprintf("from mapSession: %p, stream: %t", m, m.isStreaming()))
-			case types.StatePeerChanged:
-				changed := make(map[types.NodeID]bool, len(update.ChangeNodes))
-
-				for _, nodeID := range update.ChangeNodes {
-					changed[nodeID] = true
-				}
-
-				lastMessage = update.Message
-				m.tracef(fmt.Sprintf("Sending Changed MapResponse: %v", lastMessage))
-				data, err = m.mapper.PeerChangedResponse(m.req, m.node, changed, update.ChangePatches, pol, lastMessage)
-				updateType = "change"
-
-			case types.StatePeerChangedPatch:
-				m.tracef(fmt.Sprintf("Sending Changed Patch MapResponse: %v", lastMessage))
-				data, err = m.mapper.PeerChangedPatchResponse(m.req, m.node, update.ChangePatches, pol)
-				updateType = "patch"
-			case types.StatePeerRemoved:
-				changed := make(map[types.NodeID]bool, len(update.Removed))
-
-				for _, nodeID := range update.Removed {
-					changed[nodeID] = false
-				}
-				m.tracef(fmt.Sprintf("Sending Changed MapResponse: %v", lastMessage))
-				data, err = m.mapper.PeerChangedResponse(m.req, m.node, changed, update.ChangePatches, pol, lastMessage)
-				updateType = "remove"
-			case types.StateSelfUpdate:
-				lastMessage = update.Message
-				m.tracef(fmt.Sprintf("Sending Changed MapResponse: %v", lastMessage))
-				// create the map so an empty (self) update is sent
-				data, err = m.mapper.PeerChangedResponse(m.req, m.node, make(map[types.NodeID]bool), update.ChangePatches, pol, lastMessage)
-				updateType = "remove"
-			case types.StateDERPUpdated:
-				m.tracef("Sending DERPUpdate MapResponse")
-				data, err = m.mapper.DERPMapResponse(m.req, m.node, m.h.DERPMap)
-				updateType = "derp"
-			}
-
-			if err != nil {
-				m.errf(err, "Could not get the create map update")
-
-				return
-			}
-
-			// Only send update if there is change
-			if data != nil {
-				startWrite := time.Now()
-				_, err = m.w.Write(data)
-				if err != nil {
-					// __BEGIN_CYLONIX_ADD__
-					// Suppress logging stream closed by client
-					if strings.Contains(err.Error(), "http2: stream closed") {
-						m.tracef("stream closed by client, stopping mapSession: %p", m)
-						return
-					}
-					if strings.Contains(err.Error(), "client disconnected") {
-						m.tracef("client disconnected, stopping mapSession: %p", m)
-						return
-					}
-					// __END_CYLONIX_ADD__
-					mapResponseSent.WithLabelValues("error", updateType).Inc()
-					m.errf(err, "could not write the map response(%s), for mapSession: %p", update.Type.String(), m)
-					return
-				}
-
-				err = rc.Flush()
-				if err != nil {
-					// __BEGIN_CYLONIX_ADD__
-					// Suppress logging stream closed by client
-					if strings.Contains(err.Error(), "http2: stream closed") {
-						m.tracef("stream closed by client, stopping mapSession: %p", m)
-						return
-					}
-					if strings.Contains(err.Error(), "client disconnected") {
-						m.tracef("client disconnected, stopping mapSession: %p", m)
-						return
-					}
-					// __END_CYLONIX_ADD__
-					mapResponseSent.WithLabelValues("error", updateType).Inc()
-					m.errf(err, "flushing the map response to client, for mapSession: %p", m)
-					return
-				}
-
-				log.Trace().Str("node", m.node.Hostname).TimeDiff("timeSpent", time.Now(), startWrite).Str("mkey", m.node.MachineKey.String()).Msg("finished writing mapresp to node")
-
-				if debugHighCardinalityMetrics {
-					mapResponseLastSentSeconds.WithLabelValues(updateType, m.node.ID.String()).Set(float64(time.Now().Unix()))
-				}
-				mapResponseSent.WithLabelValues("ok", updateType).Inc()
-				m.tracef("update sent")
-				m.resetKeepAlive()
-			}
+			m.tracef("update sent")
+			m.resetKeepAlive()
 
 		case <-m.keepAliveTicker.C:
-			data, err := m.mapper.KeepAliveResponse(m.req, m.node)
-			if err != nil {
-				m.errf(err, "Error generating the keep alive msg")
-				mapResponseSent.WithLabelValues("error", "keepalive").Inc()
-				return
-			}
-			_, err = m.w.Write(data)
-			if err != nil {
-				m.errf(err, "Cannot write keep alive message")
-				mapResponseSent.WithLabelValues("error", "keepalive").Inc()
-				return
-			}
-			err = rc.Flush()
-			if err != nil {
-				m.errf(err, "flushing keep alive to client, for mapSession: %p", m)
-				mapResponseSent.WithLabelValues("error", "keepalive").Inc()
+			if err := m.writeMap(&keepAlive); err != nil {
+				m.errf(err, "cannot write keep alive")
 				return
 			}
 
@@ -440,65 +267,41 @@ func (m *mapSession) serveLongPoll() {
 				mapResponseLastSentSeconds.WithLabelValues("keepalive", m.node.ID.String()).Set(float64(time.Now().Unix()))
 			}
 			mapResponseSent.WithLabelValues("ok", "keepalive").Inc()
+			m.resetKeepAlive()
 		}
 	}
 }
 
-func (m *mapSession) pollFailoverRoutes(where string, node *types.Node) {
-	update, err := db.Write(m.h.db.DB, func(tx *gorm.DB) (*types.StateUpdate, error) {
-		return db.FailoverNodeRoutesIfNecessary(tx, m.h.nodeNotifier.LikelyConnectedMap(), node)
-	})
+// writeMap writes the map response to the client.
+// It handles compression if requested and any headers that need to be set.
+// It also handles flushing the response if the ResponseWriter
+// implements http.Flusher.
+func (m *mapSession) writeMap(msg *tailcfg.MapResponse) error {
+	jsonBody, err := json.Marshal(msg)
 	if err != nil {
-		m.errf(err, fmt.Sprintf("failed to ensure failover routes, %s", where))
-
-		return
+		return fmt.Errorf("marshalling map response: %w", err)
 	}
 
-	if update != nil && !update.Empty() {
-		ctx := types.NotifyCtx(context.Background(), fmt.Sprintf("poll-%s-routes-ensurefailover", strings.ReplaceAll(where, " ", "-")), node.Hostname)
-		m.h.nodeNotifier.NotifyWithIgnore(ctx, *update, node.ID)
-	}
-}
-
-// updateNodeOnlineStatus records the last seen status of a node and notifies peers
-// about change in their online/offline status.
-// It takes a StateUpdateType of either StatePeerOnlineChanged or StatePeerOfflineChanged.
-func (h *Headscale) updateNodeOnlineStatus(online bool, node *types.Node) {
-	change := &tailcfg.PeerChange{
-		NodeID: tailcfg.NodeID(node.ID),
-		Online: &online,
+	if m.req.Compress == util.ZstdCompression {
+		jsonBody = zstdframe.AppendEncode(nil, jsonBody, zstdframe.FastestCompression)
 	}
 
-	if !online {
-		now := time.Now()
+	data := make([]byte, reservedResponseHeaderSize)
+	//nolint:gosec // G115: JSON response size will not exceed uint32 max
+	binary.LittleEndian.PutUint32(data, uint32(len(jsonBody)))
+	data = append(data, jsonBody...)
 
-		// lastSeen is only relevant if the node is disconnected.
-		node.LastSeen = &now
-		change.LastSeen = &now
+	startWrite := time.Now()
 
-		err := h.db.Write(func(tx *gorm.DB) error {
-			return db.SetLastSeen(tx, node.ID, *node.LastSeen)
-		})
-		if err != nil {
-			log.Error().Err(err).Msg("Cannot update node LastSeen")
+/* __BEGIN_CYLONIX_LEGACY_REMOVED__
+   The cylonix pollFailoverRoutes / handleEndpointUpdate / handleSaveNode
+   helpers below depended on removed v0.28 APIs (h.nodeNotifier,
+   h.db.SaveNodeRoutes, h.db.EnableAutoApprovedRoutes, types.StateUpdate
+   fan-out). Their responsibilities have moved into
+   state.UpdateNodeFromMapRequest / state.AutoApproveRoutes and the
+   mapBatcher. The original source is preserved as a comment below.
 
-			return
-		}
-	}
-
-	ctx := types.NotifyCtx(context.Background(), "poll-nodeupdate-onlinestatus", node.Hostname)
-	h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
-		Type: types.StatePeerChangedPatch,
-		ChangePatches: []*tailcfg.PeerChange{
-			change,
-		},
-
-		Namespace: node.Namespace,         // __CYLONIX_ADD__
-		NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
-	}, node.ID)
-}
-
-func (m *mapSession) handleEndpointUpdate() {
+func (m *mapSession) handleEndpointUpdate_legacy() {
 	m.tracef("received endpoint update")
 
 	change := m.node.PeerChangeFromMapRequest(m.req)
@@ -679,192 +482,59 @@ func (m *mapSession) handleSaveNode() error {
 			ChangeNodes: []types.NodeID{m.node.ID},
 			Message:     "called from handlePoll -> pre-68-update-while-stream",
 
-			Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
-			NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
+			Namespace:     m.node.Namespace,
+			NetworkDomain: m.node.NetworkDomain,
 		},
 		m.node.ID)
+*/
+// __END_CYLONIX_LEGACY_REMOVED__
+
+	_, err = m.w.Write(data)
+	if err != nil {
+		return err
+	}
+
+	if m.isStreaming() {
+		if f, ok := m.w.(http.Flusher); ok {
+			f.Flush()
+		} else {
+			m.errf(nil, "ResponseWriter does not implement http.Flusher, cannot flush")
+		}
+	}
+
+	log.Trace().
+		Caller().
+		Str("node.name", m.node.Hostname).
+		Uint64("node.id", m.node.ID.Uint64()).
+		Str("chan", fmt.Sprintf("%p", m.ch)).
+		TimeDiff("timeSpent", time.Now(), startWrite).
+		Str("machine.key", m.node.MachineKey.String()).
+		Bool("keepalive", msg.KeepAlive).
+		Msgf("finished writing mapresp to node chan(%p)", m.ch)
 
 	return nil
 }
 
-func (m *mapSession) handleReadOnlyRequest() {
-	m.tracef("Client asked for a lite update, responding without peers")
-
-	// __BEGIN_CYLONIX_MOD__
-	pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
-	if err != nil {
-		m.errf(err, "Could not get ACL policy")
-		return
-	}
-
-	mapResp, err := m.mapper.ReadOnlyMapResponse(m.req, m.node, pol)
-	// __END_CYLONIX_MOD__
-	if err != nil {
-		m.errf(err, "Failed to create MapResponse")
-		http.Error(m.w, "", http.StatusInternalServerError)
-		mapResponseReadOnly.WithLabelValues("error").Inc()
-		return
-	}
-
-	m.w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	m.w.WriteHeader(http.StatusOK)
-	_, err = m.w.Write(mapResp)
-	if err != nil {
-		m.errf(err, "Failed to write response")
-		mapResponseReadOnly.WithLabelValues("error").Inc()
-		return
-	}
-
-	m.w.WriteHeader(http.StatusOK)
-	mapResponseReadOnly.WithLabelValues("ok").Inc()
-
-	return
+var keepAlive = tailcfg.MapResponse{
+	KeepAlive: true,
 }
 
-func logTracePeerChange(hostname string, hostinfoChange bool, change *tailcfg.PeerChange) {
-	trace := log.Trace().Uint64("node.id", uint64(change.NodeID)).Str("hostname", hostname)
-
-	if change.Key != nil {
-		trace = trace.Str("node_key", change.Key.ShortString())
-	}
-
-	if change.DiscoKey != nil {
-		trace = trace.Str("disco_key", change.DiscoKey.ShortString())
-	}
-
-	if change.Online != nil {
-		trace = trace.Bool("online", *change.Online)
-	}
-
-	if change.Endpoints != nil {
-		eps := make([]string, len(change.Endpoints))
-		for idx, ep := range change.Endpoints {
-			eps[idx] = ep.String()
-		}
-
-		trace = trace.Strs("endpoints", eps)
-	}
-
-	if hostinfoChange {
-		trace = trace.Bool("hostinfo_changed", hostinfoChange)
-	}
-
-	if change.DERPRegion != 0 {
-		trace = trace.Int("derp_region", change.DERPRegion)
-	}
-
-	trace.Time("last_seen", *change.LastSeen).Msg("PeerChange received")
+// logf adds common mapSession context to a zerolog event.
+func (m *mapSession) logf(event *zerolog.Event) *zerolog.Event {
+	return event.
+		Bool("omitPeers", m.req.OmitPeers).
+		Bool("stream", m.req.Stream).
+		Uint64("node.id", m.node.ID.Uint64()).
+		Str("node.name", m.node.Hostname)
 }
 
-func peerChangeEmpty(chng tailcfg.PeerChange) bool {
-	return chng.Key == nil &&
-		chng.DiscoKey == nil &&
-		chng.Online == nil &&
-		chng.Endpoints == nil &&
-		chng.DERPRegion == 0 &&
-		chng.LastSeen == nil &&
-		chng.KeyExpiry == nil
-}
+//nolint:zerologlint // logf returns *zerolog.Event which is properly terminated with Msgf
+func (m *mapSession) infof(msg string, a ...any) { m.logf(log.Info().Caller()).Msgf(msg, a...) }
 
-func logPollFunc(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-) (func(string, ...any), func(string, ...any), func(string, ...any), func(error, string, ...any)) {
-	return func(msg string, a ...any) {
-			log.Warn().
-				Caller(1).
-				Bool("readOnly", mapRequest.ReadOnly).
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.GivenName). // __CYLONIX_MOD__
-				Msgf(msg, a...)
-		},
-		func(msg string, a ...any) {
-			log.Info().
-				Caller(1).
-				Bool("readOnly", mapRequest.ReadOnly).
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.GivenName). // __CYLONIX_MOD__
-				Msgf(msg, a...)
-		},
-		func(msg string, a ...any) {
-			log.Trace().
-				Caller(1).
-				Bool("readOnly", mapRequest.ReadOnly).
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.GivenName). // __CYLONIX_MOD__
-				Msgf(msg, a...)
-		},
-		func(err error, msg string, a ...any) {
-			log.Error().
-				Caller(1).
-				Bool("readOnly", mapRequest.ReadOnly).
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.GivenName). // __CYLONIX_MOD__
-				Str("namespace", node.Namespace). // __CYLONIX_MOD__
-				Str("user", node.User.Name).      // __CYLONIX_MOD__
-				Err(err).
-				Msgf(msg, a...)
-		}
-}
+//nolint:zerologlint // logf returns *zerolog.Event which is properly terminated with Msgf
+func (m *mapSession) tracef(msg string, a ...any) { m.logf(log.Trace().Caller()).Msgf(msg, a...) }
 
-// hostInfoChanged reports if hostInfo has changed in two ways,
-// - first bool reports if an update needs to be sent to nodes
-// - second reports if there has been changes to routes
-// the caller can then use this info to save and update nodes
-// and routes as needed.
-func hostInfoChanged(old, new *tailcfg.Hostinfo) (bool, bool) {
-	if old.Equal(new) {
-		return false, false
-	}
-
-	// Routes
-	oldRoutes := old.RoutableIPs
-	newRoutes := new.RoutableIPs
-
-	sort.Slice(oldRoutes, func(i, j int) bool {
-		return comparePrefix(oldRoutes[i], oldRoutes[j]) > 0
-	})
-	sort.Slice(newRoutes, func(i, j int) bool {
-		return comparePrefix(newRoutes[i], newRoutes[j]) > 0
-	})
-
-	if !xslices.Equal(oldRoutes, newRoutes) {
-		return true, true
-	}
-
-	// Services is mostly useful for discovery and not critical,
-	// except for peerapi, which is how nodes talk to eachother.
-	// If peerapi was not part of the initial mapresponse, we
-	// need to make sure its sent out later as it is needed for
-	// Taildrop.
-	// TODO(kradalby): Length comparison is a bit naive, replace.
-	if len(old.Services) != len(new.Services) {
-		return true, false
-	}
-
-	return false, false
-}
-
-// TODO(kradalby): Remove after go 1.23, will be in stdlib.
-// Compare returns an integer comparing two prefixes.
-// The result will be 0 if p == p2, -1 if p < p2, and +1 if p > p2.
-// Prefixes sort first by validity (invalid before valid), then
-// address family (IPv4 before IPv6), then prefix length, then
-// address.
-func comparePrefix(p, p2 netip.Prefix) int {
-	if c := cmp.Compare(p.Addr().BitLen(), p2.Addr().BitLen()); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(p.Bits(), p2.Bits()); c != 0 {
-		return c
-	}
-	return p.Addr().Compare(p2.Addr())
+//nolint:zerologlint // logf returns *zerolog.Event which is properly terminated with Msgf
+func (m *mapSession) errf(err error, msg string, a ...any) {
+	m.logf(log.Error().Caller()).Err(err).Msgf(msg, a...)
 }

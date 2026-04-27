@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -11,11 +12,11 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/juanfont/headscale/hscontrol/capver"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
-	"gorm.io/gorm"
+	"gorm.io/gorm" // __CYLONIX_ADD__ retained for gorm.ErrRecordNotFound in cylonix handlers
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpserver"
 	"tailscale.com/tailcfg"
@@ -33,9 +34,6 @@ const (
 	// of length. Then that many bytes of JSON-encoded tailcfg.EarlyNoise.
 	// The early payload is optional. Some servers may not send it... But we do!
 	earlyPayloadMagic = "\xff\xff\xffTS"
-
-	// EarlyNoise was added in protocol version 49.
-	earlyNoiseCapabilityVersion = 49
 )
 
 type noiseServer struct {
@@ -110,9 +108,9 @@ func (h *Headscale) NoiseUpgradeHandler(
 		log.Debug().Err(err).Str("request", string(v)).Msg("Noise upgrade failed")
 		// Even though noise upgrade failed, the HTTP connection has been
 		// hijacked already. Do not write to the writer.
-		//http.Error(writer, err.Error(), http.StatusInternalServerError)
+		// Note: upstream writes httpError(writer, fmt.Errorf("noise upgrade failed: %w", err))
+		// here; cylonix suppresses it to avoid log floods on bad clients.
 		// __END_CYLONIX_MOD__
-
 		return
 	}
 
@@ -134,6 +132,10 @@ func (h *Headscale) NoiseUpgradeHandler(
 
 	router.HandleFunc("/machine/register", noiseServer.NoiseRegistrationHandler).
 		Methods(http.MethodPost)
+
+	// Endpoints outside of the register endpoint must use getAndValidateNode to
+	// get the node to ensure that the MachineKey matches the Node setting up the
+	// connection.
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
 
 	// __BEGIN_CYLONIX_ADD__
@@ -152,13 +154,9 @@ func (h *Headscale) NoiseUpgradeHandler(
 			Msg("Unhandled request received on Noise connection")
 
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("404 Not Found"))
+		_, _ = w.Write([]byte("404 Not Found"))
 	})
 	// __END_CYLONIX_ADD__
-
-	server := http.Server{
-		ReadTimeout: types.HTTPTimeout,
-	}
 
 	noiseServer.httpBaseConfig = &http.Server{
 		Handler:           router,
@@ -166,14 +164,16 @@ func (h *Headscale) NoiseUpgradeHandler(
 	}
 	noiseServer.http2Server = &http2.Server{}
 
-	server.Handler = h2c.NewHandler(router, noiseServer.http2Server)
-
 	noiseServer.http2Server.ServeConn(
 		noiseConn,
 		&http2.ServeConnOpts{
 			BaseConfig: noiseServer.httpBaseConfig,
 		},
 	)
+}
+
+func unsupportedClientError(version tailcfg.CapabilityVersion) error {
+	return fmt.Errorf("unsupported client version: %s (%d)", capver.TailscaleVersion(version), version)
 }
 
 func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) (err error) {
@@ -194,12 +194,8 @@ func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) (err er
 		Str("challenge", ns.challenge.Public().String()).
 		Msg("earlyNoise called")
 
-	if protocolVersion < earlyNoiseCapabilityVersion {
-		log.Trace().
-			Caller().
-			Msgf("protocol version %d does not support early noise", protocolVersion)
-
-		return nil
+	if !isSupportedVersion(tailcfg.CapabilityVersion(protocolVersion)) {
+		return unsupportedClientError(tailcfg.CapabilityVersion(protocolVersion))
 	}
 
 	earlyJSON, err := json.Marshal(&tailcfg.EarlyNoise{
@@ -231,9 +227,34 @@ func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) (err er
 	return nil
 }
 
-const (
-	MinimumCapVersion tailcfg.CapabilityVersion = 61
-)
+func isSupportedVersion(version tailcfg.CapabilityVersion) bool {
+	return version >= capver.MinSupportedCapabilityVersion
+}
+
+func rejectUnsupported(
+	writer http.ResponseWriter,
+	version tailcfg.CapabilityVersion,
+	mkey key.MachinePublic,
+	nkey key.NodePublic,
+) bool {
+	// Reject unsupported versions
+	if !isSupportedVersion(version) {
+		log.Error().
+			Caller().
+			Int("minimum_cap_ver", int(capver.MinSupportedCapabilityVersion)).
+			Int("client_cap_ver", int(version)).
+			Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
+			Str("client_version", capver.TailscaleVersion(version)).
+			Str("node.key", nkey.ShortString()).
+			Str("machine.key", mkey.ShortString()).
+			Msg("unsupported client connected")
+		http.Error(writer, unsupportedClientError(version).Error(), http.StatusBadRequest)
+
+		return true
+	}
+
+	return false
+}
 
 // NoisePollNetMapHandler takes care of /machine/:id/map using the Noise protocol
 //
@@ -248,15 +269,6 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
 ) {
-	log.Trace().
-		Str("handler", "NoisePollNetMap").
-		Msg("PollNetMapHandler called")
-
-	log.Trace().
-		Any("headers", req.Header).
-		Caller().
-		Msg("Headers")
-
 	body, _ := io.ReadAll(req.Body)
 
 	// __BEGIN_CYLONIX_ADD__
@@ -266,8 +278,9 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	}
 	// __END_CYLONIX_ADD__
 
-	mapRequest := tailcfg.MapRequest{}
+	var mapRequest tailcfg.MapRequest
 	if err := json.Unmarshal(body, &mapRequest); err != nil {
+		// __BEGIN_CYLONIX_MOD__
 		sub := len(body)
 		if sub > 200 {
 			sub = 200
@@ -275,29 +288,20 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		log.Error().
 			Caller().
 			Err(err).
-			Str("namespace", namespace). // __CYLONIX_ADD__
-			Str("network_domain", ns.networkDomain). // __CYLONIX_ADD__
-			Str("body", string(body[:sub])). // __CYLONIX_ADD__
-			Int("body_length", len(body)). // __CYLONIX_ADD__
+			Str("namespace", namespace).
+			Str("network_domain", ns.networkDomain).
+			Str("body", string(body[:sub])).
+			Int("body_length", len(body)).
 			Msg("Cannot parse MapRequest")
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
-
+		// __END_CYLONIX_MOD__
+		httpError(writer, err)
 		return
 	}
 
 	// Reject unsupported versions
-	if mapRequest.Version < MinimumCapVersion {
-		log.Info().
-			Caller().
-			Int("min_version", int(MinimumCapVersion)).
-			Int("client_version", int(mapRequest.Version)).
-			Msg("unsupported client connected")
-		http.Error(writer, "Internal error", http.StatusBadRequest)
-
+	if rejectUnsupported(writer, mapRequest.Version, ns.machineKey, mapRequest.NodeKey) {
 		return
 	}
-
-	ns.nodeKey = mapRequest.NodeKey
 
 	// __BEGIN_CYLONIX_MOD__
 	hostname := ""
@@ -306,41 +310,45 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	}
 	// __END_CYLONIX_MOD__
 
-	node, err := ns.headscale.db.GetNodeByNodeKey(mapRequest.NodeKey) // __CYLONIX_MOD__
+	nv, err := ns.getAndValidateNode(mapRequest)
 	if err != nil {
+		// __BEGIN_CYLONIX_MOD__
 		log.Error().
 			Str("handler", "NoisePollNetMap").
-			Err(err). // __CYLONIX_ADD__
-			Str("hostname", hostname). // __CYLONIX_ADD__
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_ADD__
-			Msgf("Failed to fetch node from the database with node key: %s", mapRequest.NodeKey.String())
+			Err(err).
+			Str("hostname", hostname).
+			Str("namespace", req.Header.Get("namespace")).
+			Msgf("Failed to fetch node with node key: %s", mapRequest.NodeKey.String())
 
-		// __BEGIN_CYLONIX_MOD__
-		msg := "Internal error"
-		code := http.StatusInternalServerError
+		// Cylonix-specific Recover hook for missing nodes: if an authorized
+		// NodeHandler is configured, give it a chance to re-attach the node
+		// before we 404 the client.
 		if ns.headscale.cfg.NodeHandler != nil && errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := ns.headscale.cfg.NodeHandler.Recover(ns.conn.Peer(), mapRequest.NodeKey); err != nil {
-				log.Error().Err(err).
+			if recErr := ns.headscale.cfg.NodeHandler.Recover(ns.conn.Peer(), mapRequest.NodeKey); recErr != nil {
+				log.Error().Err(recErr).
 					Str("namespace", req.Header.Get("namespace")).
 					Str("machine-key", ns.conn.Peer().ShortString()).
 					Str("node-key", mapRequest.NodeKey.ShortString()).
 					Str("hostname", hostname).
 					Msg("Failed to recover.")
-				msg = "Failed to find node"
+				http.Error(writer, "Failed to find node", http.StatusUnauthorized)
 			} else {
-				msg = "Machine needs approval"
+				http.Error(writer, "Machine needs approval", http.StatusUnauthorized)
 			}
-			code = http.StatusUnauthorized
+			return
 		}
-		http.Error(writer, msg, code)
 		// __END_CYLONIX_MOD__
+		httpError(writer, err)
 		return
 	}
 
-	ns.networkDomain = node.NetworkDomain // __CYLONIX_ADD__
-	ns.namespace = node.Namespace         // __CYLONIX_ADD__
+	ns.nodeKey = nv.NodeKey()
+	// __BEGIN_CYLONIX_ADD__
+	ns.networkDomain = nv.NetworkDomain()
+	ns.namespace = nv.Namespace()
+	// __END_CYLONIX_ADD__
 
-	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, node)
+	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, nv.AsStruct())
 	sess.tracef("a node sending a MapRequest with Noise protocol")
 	if !sess.isStreaming() {
 		sess.serve()
@@ -386,7 +394,7 @@ func (ns *noiseServer) NoiseExitNodeHandler(
 		Str("exit_node_id", exitNodeID).
 		Msg("ExitNodeHandler parameters")
 
-	node, err := ns.headscale.db.GetNodeByNodeKey(requestedNodeKey) // __CYLONIX_MOD__
+	node, err := ns.headscale.state.DB().GetNodeByNodeKey(requestedNodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().Err(err).
 			Str("handler", "ExitNodeHandler").
@@ -449,7 +457,7 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 		Str("error", update.Error).
 		Msg("UpdateHealthHandler parameters")
 
-	nodeLite, err := ns.headscale.db.GetNodeByNodeKeyLite(update.NodeKey) // __CYLONIX_MOD__
+	nodeLite, err := ns.headscale.state.DB().GetNodeByNodeKeyLite(update.NodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		// Throttle error logs: only log once per 5 minutes per node key.
 		healthErrLogMu.Lock()
@@ -471,7 +479,7 @@ func (ns *noiseServer) NoiseUpdateHealthHandler(
 		return
 	}
 
-	err = ns.headscale.db.UpdateNodeHealth(nodeLite, &update)
+	err = ns.headscale.state.DB().UpdateNodeHealth(nodeLite, &update)
 	if err != nil {
 		log.Error().
 			Str("handler", "UpdateHealthHandler").
@@ -529,7 +537,7 @@ func (ns *noiseServer) NoiseCapHandler(
 		Str("op", op).
 		Msg("CapHandler parameters")
 
-	nodeLite, err := ns.headscale.db.GetNodeByNodeKeyLite(requestedNodeKey) // __CYLONIX_MOD__
+	nodeLite, err := ns.headscale.state.DB().GetNodeByNodeKeyLite(requestedNodeKey) // __CYLONIX_MOD__
 	if err != nil {
 		log.Error().Err(err).
 			Str("handler", "CapHandler").
@@ -547,7 +555,7 @@ func (ns *noiseServer) NoiseCapHandler(
 	} else {
 		delCapabilities = append(delCapabilities, cap)
 	}
-	err = ns.headscale.db.UpdateNode(
+	err = ns.headscale.state.DB().UpdateNode(
 		nodeLite.ID,
 		nodeLite.Namespace,
 		&types.Node{},
@@ -572,3 +580,82 @@ func (ns *noiseServer) NoiseCapHandler(
 		Msg("Node capabilities updated successfully")
 }
 // __END_CYLONIX_ADD__
+
+func regErr(err error) *tailcfg.RegisterResponse {
+	return &tailcfg.RegisterResponse{Error: err.Error()}
+}
+
+// NoiseRegistrationHandler handles the actual registration process of a node.
+func (ns *noiseServer) NoiseRegistrationHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	if req.Method != http.MethodPost {
+		httpError(writer, errMethodNotAllowed)
+
+		return
+	}
+
+	registerRequest, registerResponse := func() (*tailcfg.RegisterRequest, *tailcfg.RegisterResponse) {
+		var resp *tailcfg.RegisterResponse
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return &tailcfg.RegisterRequest{}, regErr(err)
+		}
+		var regReq tailcfg.RegisterRequest
+		if err := json.Unmarshal(body, &regReq); err != nil {
+			return &regReq, regErr(err)
+		}
+
+		ns.nodeKey = regReq.NodeKey
+
+		resp, err = ns.headscale.handleRegister(req.Context(), regReq, ns.conn.Peer())
+		if err != nil {
+			var httpErr HTTPError
+			if errors.As(err, &httpErr) {
+				resp = &tailcfg.RegisterResponse{
+					Error: httpErr.Msg,
+				}
+				return &regReq, resp
+			}
+
+			return &regReq, regErr(err)
+		}
+
+		return &regReq, resp
+	}()
+
+	// Reject unsupported versions
+	if rejectUnsupported(writer, registerRequest.Version, ns.machineKey, registerRequest.NodeKey) {
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(writer).Encode(registerResponse); err != nil {
+		log.Error().Caller().Err(err).Msg("NoiseRegistrationHandler: failed to encode RegisterResponse")
+		return
+	}
+
+	// Ensure response is flushed to client
+	if flusher, ok := writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// getAndValidateNode retrieves the node from the database using the NodeKey
+// and validates that it matches the MachineKey from the Noise session.
+func (ns *noiseServer) getAndValidateNode(mapRequest tailcfg.MapRequest) (types.NodeView, error) {
+	nv, ok := ns.headscale.state.GetNodeByNodeKey(mapRequest.NodeKey)
+	if !ok {
+		return types.NodeView{}, NewHTTPError(http.StatusNotFound, "node not found", nil)
+	}
+
+	// Validate that the MachineKey in the Noise session matches the one associated with the NodeKey.
+	if ns.machineKey != nv.MachineKey() {
+		return types.NodeView{}, NewHTTPError(http.StatusNotFound, "node key in request does not match the one associated with this machine key", nil)
+	}
+
+	return nv, nil
+}

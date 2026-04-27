@@ -1,35 +1,44 @@
 package hscontrol
 
 import (
+	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/juanfont/headscale/hscontrol/db"
+	"github.com/juanfont/headscale/hscontrol/db" // __CYLONIX_ADD__
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
-	"tailscale.com/control/controlclient"
+	// __CYLONIX_REMOVED__ "tailscale.com/control/controlclient" no longer used after v0.28 merge
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/ptr"
 )
 
+type AuthProvider interface {
+	RegisterHandler(http.ResponseWriter, *http.Request)
+	AuthURL(types.RegistrationID) string
+}
+
+// __BEGIN_CYLONIX_ADD__
+// logAuthFunc produces three log helpers (info/trace/error) pre-populated
+// with common cylonix fields (namespace, machine/node key, hostname, ...).
+// It is kept for use by cylonix-specific register paths (AuthKey/OIDC).
 func logAuthFunc(
-	req *http.Request, // __CYLONIX_MOD__
+	req *http.Request,
 	registerRequest tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) (func(string), func(string), func(error, string)) {
 	return func(msg string) {
 			log.Info().
 				Caller(1).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+				Str("namespace", req.Header.Get("namespace")).
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
 				Str("node_key_old", registerRequest.OldNodeKey.ShortString()).
@@ -41,7 +50,7 @@ func logAuthFunc(
 		func(msg string) {
 			log.Trace().
 				Caller(1).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+				Str("namespace", req.Header.Get("namespace")).
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
 				Str("node_key_old", registerRequest.OldNodeKey.ShortString()).
@@ -53,7 +62,7 @@ func logAuthFunc(
 		func(err error, msg string) {
 			log.Error().
 				Caller(1).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
+				Str("namespace", req.Header.Get("namespace")).
 				Str("machine_key", machineKey.ShortString()).
 				Str("node_key", registerRequest.NodeKey.ShortString()).
 				Str("node_key_old", registerRequest.OldNodeKey.ShortString()).
@@ -65,1126 +74,520 @@ func logAuthFunc(
 		}
 }
 
-// __BEGIN_CYLONIX_ADD__
 // postRegistrationHandling performs common tasks after a node has been
-// registered through any path (auth-key, OIDC, gRPC/CLI). Currently it
-// persists advertised routes (e.g. exit-node 0.0.0.0/0, ::/0) that are
-// included in the initial RegisterRequest's Hostinfo. Without this,
-// routes are only saved when the first MapRequest arrives, but
-// hostInfoChanged() won't detect a change because RegisterNode already
-// stored the Hostinfo with the RoutableIPs.
+// registered through any path (auth-key, OIDC, gRPC/CLI). In v0.28 upstream
+// route persistence/auto-approval has moved into the state package; this
+// stub is kept so cylonix call sites continue to compile and serve as a
+// hook point for future cylonix-specific post-registration logic.
 func (h *Headscale) postRegistrationHandling(node *types.Node) {
-	if node == nil || node.Hostinfo == nil || len(node.Hostinfo.RoutableIPs) == 0 {
+	if node == nil {
 		return
 	}
-
-	if _, err := h.db.SaveNodeRoutes(node); err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Str("node", node.Hostname).
-			Msg("Failed to save node routes during registration")
-		return
-	}
-
-	pol, err := h.ACLPolicy(&node.Namespace, &node.NetworkDomain)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Could not get ACL policy for auto-approved routes")
-		return
-	}
-	if pol != nil {
-		if err := h.db.EnableAutoApprovedRoutes(pol, node); err != nil {
-			log.Error().
-				Caller().
-				Err(err).
-				Msg("Error running auto-approved routes during registration")
-		}
-	}
+	// Route persistence and auto-approval handled by state.AutoApproveRoutes
+	// after HandleNodeFromAuthPath / HandleNodeFromPreAuthKey.
 }
 
 // __END_CYLONIX_ADD__
 
 // handleRegister is the logic for registering a client.
 func (h *Headscale) handleRegister(
-	writer http.ResponseWriter,
-	req *http.Request,
-	regReq tailcfg.RegisterRequest,
+	ctx context.Context,
+	req tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
-) {
-	logInfo, logTrace, logErr := logAuthFunc(req, regReq, machineKey) // __CYLONIX_MOD__
-	now := time.Now().UTC()
-	logTrace("handleRegister called, looking up machine in DB")
+) (*tailcfg.RegisterResponse, error) {
+	// Check for logout/expiry FIRST, before checking auth key.
+	// Tailscale clients may send logout requests with BOTH a past expiry AND an auth key.
+	// A past expiry takes precedence - it's a logout regardless of other fields.
+	if !req.Expiry.IsZero() && req.Expiry.Before(time.Now()) {
+		log.Debug().
+			Str("node.key", req.NodeKey.ShortString()).
+			Time("expiry", req.Expiry).
+			Bool("has_auth", req.Auth != nil).
+			Msg("Detected logout attempt with past expiry")
 
-	// __BEGIN_CYLONIX_MOD__
-	// Prioritize for auth key registering a new node instead of refreshing
-	// node keys. Lookup base on the new node key only first.
-	if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-		_, err := h.db.GetNodeByNodeKey(regReq.NodeKey)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			h.handleAuthKey(req, writer, regReq, machineKey)
-			return
+		// This is a logout attempt (expiry in the past)
+		if node, ok := h.state.GetNodeByNodeKey(req.NodeKey); ok {
+			log.Debug().
+				Uint64("node.id", node.ID().Uint64()).
+				Str("node.name", node.Hostname()).
+				Bool("is_ephemeral", node.IsEphemeral()).
+				Bool("has_authkey", node.AuthKey().Valid()).
+				Msg("Found existing node for logout, calling handleLogout")
+
+			resp, err := h.handleLogout(node, req, machineKey)
+			if err != nil {
+				return nil, fmt.Errorf("handling logout: %w", err)
+			}
+			if resp != nil {
+				return resp, nil
+			}
+		} else {
+			log.Warn().
+				Str("node.key", req.NodeKey.ShortString()).
+				Msg("Logout attempt but node not found in NodeStore")
 		}
 	}
-	// __END_CYLONIX_MOD__
 
-	// __BEGIN_CYLONIX_ADD__
-	var (
-		userID *uint
-	)
-	if regReq.Followup != "" {
-		if h.cfg.NodeHandler != nil {
-			logInfo("checking auth status for followup: " + regReq.Followup)
-			userStableID, err := h.cfg.NodeHandler.AuthStatus(regReq.Followup)
+	// If the register request does not contain a Auth struct, it means we are logging
+	// out an existing node (legacy logout path for clients that send Auth=nil).
+	if req.Auth == nil {
+		// If the register request present a NodeKey that is currently in use, we will
+		// check if the node needs to be sent to re-auth, or if the node is logging out.
+		// We do not look up nodes by [key.MachinePublic] as it might belong to multiple
+		// nodes, separated by users and this path is handling expiring/logout paths.
+		if node, ok := h.state.GetNodeByNodeKey(req.NodeKey); ok {
+			// When tailscaled restarts, it sends RegisterRequest with Auth=nil and Expiry=zero.
+			// Return the current node state without modification.
+			// See: https://github.com/juanfont/headscale/issues/2862
+			if req.Expiry.IsZero() && node.Expiry().Valid() && !node.IsExpired() {
+				return nodeToRegisterResponse(node, h.cfg), nil
+			}
+
+			resp, err := h.handleLogout(node, req, machineKey)
 			if err != nil {
-				logErr(err, "Failed to get auth status")
-				return
+				return nil, fmt.Errorf("handling existing node: %w", err)
 			}
-			if userStableID != "" {
-				logInfo("User logged in " + userStableID)
-				user, err := h.db.GetUser(userStableID)
-				if err != nil {
-					logErr(err, "Failed to get user")
-					return
-				}
-				userID = &user.ID
-				logInfo("User found for followup: " + user.Name)
+
+			// If resp is not nil, we have a response to return to the node.
+			// If resp is nil, we should proceed and see if the node is trying to re-auth.
+			if resp != nil {
+				return resp, nil
 			}
+		} else {
+			// If the register request is not attempting to register a node, and
+			// we cannot match it with an existing node, we consider that unexpected
+			// as only register nodes should attempt to log out.
+			log.Debug().
+				Str("node.key", req.NodeKey.ShortString()).
+				Str("machine.key", machineKey.ShortString()).
+				Bool("unexpected", true).
+				Msg("received register request with no auth, and no existing node")
 		}
+	}
+
+	// If the [tailcfg.RegisterRequest] has a Followup URL, it means that the
+	// node has already started the registration process and we should wait for
+	// it to finish the original registration.
+	if req.Followup != "" {
+		return h.waitForFollowup(ctx, req, machineKey)
+	}
+
+	// Pre authenticated keys are handled slightly different than interactive
+	// logins as they can be done fully sync and we can respond to the node with
+	// the result as it is waiting.
+	if isAuthKey(req) {
+		resp, err := h.handleRegisterWithAuthKey(req, machineKey)
+		if err != nil {
+			// Preserve HTTPError types so they can be handled properly by the HTTP layer
+			var httpErr HTTPError
+			if errors.As(err, &httpErr) {
+				return nil, httpErr
+			}
+
+			return nil, fmt.Errorf("handling register with auth key: %w", err)
+		}
+
+		return resp, nil
+	}
+
+	resp, err := h.handleRegisterInteractive(req, machineKey)
+	if err != nil {
+		return nil, fmt.Errorf("handling register interactive: %w", err)
+	}
+
+	return resp, nil
+}
+
+// handleLogout checks if the [tailcfg.RegisterRequest] is a
+// logout attempt from a node. If the node is not attempting to
+func (h *Headscale) handleLogout(
+	node types.NodeView,
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
+) (*tailcfg.RegisterResponse, error) {
+	// Fail closed if it looks like this is an attempt to modify a node where
+	// the node key and the machine key the noise session was started with does
+	// not align.
+	if node.MachineKey() != machineKey {
+		return nil, NewHTTPError(http.StatusUnauthorized, "node exist with different machine key", nil)
+	}
+
+	// Note: We do NOT return early if req.Auth is set, because Tailscale clients
+	// may send logout requests with BOTH a past expiry AND an auth key.
+	// A past expiry indicates logout, regardless of whether Auth is present.
+	// The expiry check below will handle the logout logic.
+
+	// If the node is expired and this is not a re-authentication attempt,
+	// force the client to re-authenticate.
+	// TODO(kradalby): I wonder if this is a path we ever hit?
+	if node.IsExpired() {
+		log.Trace().Str("node.name", node.Hostname()).
+			Uint64("node.id", node.ID().Uint64()).
+			Interface("reg.req", req).
+			Bool("unexpected", true).
+			Msg("Node key expired, forcing re-authentication")
+		return &tailcfg.RegisterResponse{
+			NodeKeyExpired:    true,
+			MachineAuthorized: false,
+			AuthURL:           "", // Client will need to re-authenticate
+		}, nil
+	}
+
+	// If we get here, the node is not currently expired, and not trying to
+	// do an auth.
+	// The node is likely logging out, but before we run that logic, we will validate
+	// that the node is not attempting to tamper/extend their expiry.
+	// If it is not, we will expire the node or in the case of an ephemeral node, delete it.
+
+	// The client is trying to extend their key, this is not allowed.
+	if req.Expiry.After(time.Now()) {
+		return nil, NewHTTPError(http.StatusBadRequest, "extending key is not allowed", nil)
+	}
+
+	// If the request expiry is in the past, we consider it a logout.
+	// Zero expiry is handled in handleRegister() before calling this function.
+	if req.Expiry.Before(time.Now()) {
+		log.Debug().
+			Uint64("node.id", node.ID().Uint64()).
+			Str("node.name", node.Hostname()).
+			Bool("is_ephemeral", node.IsEphemeral()).
+			Bool("has_authkey", node.AuthKey().Valid()).
+			Time("req.expiry", req.Expiry).
+			Msg("Processing logout request with past expiry")
+
+		if node.IsEphemeral() {
+			log.Info().
+				Uint64("node.id", node.ID().Uint64()).
+				Str("node.name", node.Hostname()).
+				Msg("Deleting ephemeral node during logout")
+
+			c, err := h.state.DeleteNode(node)
+			if err != nil {
+				return nil, fmt.Errorf("deleting ephemeral node: %w", err)
+			}
+
+			h.Change(c)
+
+			return &tailcfg.RegisterResponse{
+				NodeKeyExpired:    true,
+				MachineAuthorized: false,
+			}, nil
+		}
+
+		log.Debug().
+			Uint64("node.id", node.ID().Uint64()).
+			Str("node.name", node.Hostname()).
+			Msg("Node is not ephemeral, setting expiry instead of deleting")
+	}
+
+	// Update the internal state with the nodes new expiry, meaning it is
+	// logged out.
+	updatedNode, c, err := h.state.SetNodeExpiry(node.ID(), req.Expiry)
+	if err != nil {
+		return nil, fmt.Errorf("setting node expiry: %w", err)
+	}
+
+	h.Change(c)
+
+	return nodeToRegisterResponse(updatedNode, h.cfg), nil
+}
+
+// isAuthKey reports if the register request is a registration request
+// using an pre auth key.
+func isAuthKey(req tailcfg.RegisterRequest) bool {
+	return req.Auth != nil && req.Auth.AuthKey != ""
+}
+
+// __CYLONIX_MOD__ Pass cfg through so UserView.TailscaleUser/Login route
+// through cylonix's NodeHandler hook (returns email + display_name from
+// user_base_infos). Without cfg the cylonix UUID leaks as the LoginName.
+func nodeToRegisterResponse(node types.NodeView, cfg *types.Config) *tailcfg.RegisterResponse {
+	resp := &tailcfg.RegisterResponse{
+		NodeKeyExpired: node.IsExpired(),
+
+		// Headscale does not implement the concept of machine authorization
+		// so we always return true here.
+		// Revisit this if #2176 gets implemented.
+		MachineAuthorized: true,
+	}
+
+	// For tagged nodes, use the TaggedDevices special user
+	// For user-owned nodes, include User and Login information from the actual user
+	if node.IsTagged() {
+		resp.User = types.TaggedDevices.View().TailscaleUser(cfg)
+		resp.Login = types.TaggedDevices.View().TailscaleLogin(cfg)
+	} else if node.Owner().Valid() {
+		resp.User = node.Owner().TailscaleUser(cfg)
+		resp.Login = node.Owner().TailscaleLogin(cfg)
+	}
+
+	return resp
+}
+
+func (h *Headscale) waitForFollowup(
+	ctx context.Context,
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
+) (*tailcfg.RegisterResponse, error) {
+	// __BEGIN_CYLONIX_ADD__
+	// Cylonix flow: when a NodeHandler is wired up, the followup URL is the
+	// cylonix-manager UI login form (<base>/login/<sessionID>) — not the
+	// upstream <base>/register/<registrationID> form. The cylonix design is
+	// poll-and-backoff: server returns the same AuthURL while auth is still
+	// pending, client retries; server returns the registered RegisterResponse
+	// once NodeHandler.AuthStatus reports the user has completed sign-in.
+	if h.cfg.NodeHandler != nil {
+		logFn := func(msg string) {
+			log.Debug().
+				Str("machine_key", machineKey.ShortString()).
+				Str("followup", req.Followup).
+				Msg(msg)
+		}
+		node, err := h.checkAuthStatus(nil, machineKey, req, logFn)
+		if err != nil {
+			return nil, NewHTTPError(http.StatusInternalServerError, "auth status check failed", err)
+		}
+		if node != nil {
+			return nodeToRegisterResponse(node.View(), h.cfg), nil
+		}
+		// Auth still pending. Re-issue the same AuthURL so the client retries.
+		return &tailcfg.RegisterResponse{AuthURL: req.Followup}, nil
 	}
 	// __END_CYLONIX_ADD__
 
-	// __BEGIN_CYLONIX_MOD__
-	var (
-		node *types.Node
-		err  error
+	fu, err := url.Parse(req.Followup)
+	if err != nil {
+		return nil, NewHTTPError(http.StatusUnauthorized, "invalid followup URL", err)
+	}
+
+	followupReg, err := types.RegistrationIDFromString(strings.ReplaceAll(fu.Path, "/register/", ""))
+	if err != nil {
+		return nil, NewHTTPError(http.StatusUnauthorized, "invalid registration ID", err)
+	}
+
+	if reg, ok := h.state.GetRegistrationCacheEntry(followupReg); ok {
+		select {
+		case <-ctx.Done():
+			return nil, NewHTTPError(http.StatusUnauthorized, "registration timed out", err)
+		case node := <-reg.Registered:
+			if node == nil {
+				// registration is expired in the cache, instruct the client to try a new registration
+				return h.reqToNewRegisterResponse(req, machineKey)
+			}
+			return nodeToRegisterResponse(node.View(), h.cfg), nil
+		}
+	}
+
+	// if the follow-up registration isn't found anymore, instruct the client to try a new registration
+	return h.reqToNewRegisterResponse(req, machineKey)
+}
+
+// reqToNewRegisterResponse refreshes the registration flow by creating a new
+// registration ID and returning the corresponding AuthURL so the client can
+// restart the authentication process.
+func (h *Headscale) reqToNewRegisterResponse(
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
+) (*tailcfg.RegisterResponse, error) {
+	newRegID, err := types.NewRegistrationID()
+	if err != nil {
+		return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate registration ID", err)
+	}
+
+	// Ensure we have a valid hostname
+	hostname := util.EnsureHostname(
+		req.Hostinfo,
+		machineKey.String(),
+		req.NodeKey.String(),
 	)
-	if userID != nil {
-		node, err = h.db.GetNodeByUserAndMachineKey(*userID, machineKey)
-		if !regReq.NodeKey.IsZero() {
-			nodeByKey, _ := h.db.GetNodeByNodeKey(regReq.NodeKey)
-			if nodeByKey != nil {
-				if node != nil && nodeByKey.ID != node.ID {
-					err = fmt.Errorf("node key conflict: nodeKey belongs to different node")
-					logErr(err, "node key conflict")
-					return
-				}
-				if node == nil && nodeByKey.UserID != *userID {
-					err = fmt.Errorf("node key conflict: nodeKey belongs to different user")
-					logErr(err, "node key conflict")
-					return
-				}
-				if node == nil {
-					node = nodeByKey
-					err = nil
-				}
-			}
-		}
-	} else {
-		node, err = h.db.GetNodeByNodeKey(regReq.NodeKey)
-	}
-	// __END_CYLONIX_MOD__
-	logTrace(fmt.Sprintf("handleRegister database lookup has returned: err=%v", err)) // __CYLONIX_MOD__
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// If the node has AuthKey set, handle registration via PreAuthKeys
-		if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-			h.handleAuthKey(req, writer, regReq, machineKey) // __CYLONIX_MOD__
 
-			return
-		}
+	// Ensure we have valid hostinfo
+	hostinfo := cmp.Or(req.Hostinfo, &tailcfg.Hostinfo{})
+	hostinfo.Hostname = hostname
 
-		// Check if the node is waiting for interactive login.
-		//
-		// TODO(juan): We could use this field to improve our protocol implementation,
-		// and hold the request until the client closes it, or the interactive
-		// login is completed (i.e., the user registers the node).
-		// This is not implemented yet, as it is no strictly required. The only side-effect
-		// is that the client will hammer headscale with requests until it gets a
-		// successful RegisterResponse.
-		if regReq.Followup != "" {
-			logTrace("register request is a followup")
-			// __BEGIN_CYLONIX_MOD__
-			node, err := h.checkAuthStatus(writer, machineKey, regReq, logInfo)
-			if err != nil {
-				logErr(err, "Failed to check auth status")
-				return
-			}
-			if node != nil {
-				logInfo("Node registered after authorization")
-				return
-			}
-			// Fall through to let node retry.
-			// __END_CYLONIX_MOD__
-
-			if i, ok := h.registrationCache.Get(machineKey.String()); ok {
-				logTrace("Node is waiting for interactive login")
-				registration, ok := i.(types.RegistrationCacheNodeInfo)
-				if !ok {
-					logErr(
-						fmt.Errorf("unexpected type in registration cache for machine key %s", machineKey.String()),
-						"Failed to get registration cache")
-					return
-				}
-				if registration.FollowUp != regReq.Followup {
-					log.Info().
-						Caller().
-						Str("machine", machineKey.ShortString()).
-						Str("node_key_in_cache", registration.Node.NodeKey.ShortString()).
-						Str("node_key_in_request", regReq.NodeKey.ShortString()).
-						Str("followup_in_cache", registration.FollowUp).
-						Str("followup_in_request", regReq.Followup).
-						Msg("Followup URL in cache does not match request, proceeding with registration")
-					h.registrationCache.Set(
-						machineKey.String(),
-						types.RegistrationCacheNodeInfo{
-							Node:     registration.Node,
-							FollowUp: regReq.Followup,
-						},
-						registerCacheExpiration,
-					)
-				}
-
-				select {
-				case <-req.Context().Done():
-					return
-				case <-time.After(registrationHoldoff):
-					logInfo("Waited for interactive login, checking auth status again")
-					node, err := h.checkAuthStatus(writer, machineKey, regReq, logInfo)
-					if err != nil {
-						logErr(err, "Failed to check auth status")
-						return
-					}
-					if node != nil {
-						logInfo("Node registered after authorization")
-						return
-					}
-					logInfo("Node is still not registered, send login URL again")
-					h.handleNewNode(req, writer, regReq, machineKey, registration.Node, regReq.Followup) // __CYLONIX_MOD__
-
-					return
-				}
-			} else {
-				logTrace("Node is not waiting for interactive login, proceeding with registration")
-			}
-		}
-
-		logInfo("Node not found in database, creating new")
-
-		// The node did not have a key to authenticate, which means
-		// that we rely on a method that calls back some how (OpenID or CLI)
-		// We create the node and then keep it around until a callback
-		// happens
-		newNode := types.Node{
+	nodeToRegister := types.NewRegisterNode(
+		types.Node{
+			Hostname:   hostname,
 			MachineKey: machineKey,
-			Hostname:   regReq.Hostinfo.Hostname,
-			Hostinfo:   regReq.Hostinfo,
-			NodeKey:    regReq.NodeKey,
-			LastSeen:   &now,
-			Expiry:     &time.Time{},
-		}
+			NodeKey:    req.NodeKey,
+			Hostinfo:   hostinfo,
+			LastSeen:   ptr.To(time.Now()),
+		},
+	)
 
-		if !regReq.Expiry.IsZero() {
-			logTrace("Non-zero expiry time requested")
-			newNode.Expiry = &regReq.Expiry
-		}
-
-		// __BEGIN_CYLONIX_MOD__
-		// If there is an existing authURL cache entry, re-use it instead of
-		// getting a new one as the client may have changed the node key after
-		// getting the auth URL.
-		followUp := regReq.Followup
-		if followUp == "" {
-			if i, ok := h.registrationCache.Get(machineKey.String()); ok {
-				if existing, ok := i.(types.RegistrationCacheNodeInfo); ok {
-					log.Info().
-						Caller().
-						Str("machine", machineKey.ShortString()).
-						Str("existing_node_key", existing.Node.NodeKey.ShortString()).
-						Str("new_node_key", regReq.NodeKey.ShortString()).
-						Msg("Re-using existing auth URL cache entry")
-					followUp = existing.FollowUp
-				}
-			}
-		}
-
-		log.Info().
-			Caller().
-			Str("machine", machineKey.ShortString()).
-			Str("node", regReq.NodeKey.ShortString()).
-			Msg("Set registration cache for node")
-
-		h.registrationCache.Set(
-			machineKey.String(),
-			types.RegistrationCacheNodeInfo{
-				Node:     newNode,
-				FollowUp: followUp,
-			},
-			registerCacheExpiration,
-		)
-
-		h.handleNewNode(req, writer, regReq, machineKey, newNode, followUp)
-		// __END_CYLONIX_MOD__
-
-		return
+	if !req.Expiry.IsZero() {
+		nodeToRegister.Node.Expiry = &req.Expiry
 	}
 
-	// The node is already in the DB. This could mean one of the following:
-	// - The node is authenticated and ready to /map
-	// - We are doing a key refresh
-	// - The node is logged out (or expired) and pending to be authorized. TODO(juan): We need to keep alive the connection here
-	if node != nil {
-		log.Debug().
-			Caller().
-			Str("node", node.Hostname).
-			Str("node_key", node.NodeKey.ShortString()).
-			Str("node_key_old", regReq.OldNodeKey.ShortString()).
-			Str("node_key_req", regReq.NodeKey.ShortString()).
-			Str("namespace", node.Namespace).
-			Str("user", node.User.Name).
-			Str("machine_key", machineKey.ShortString()).
-			Bool("node-expired", node.IsExpired()).
-			Msg("Node found in database but we are in register again")
+	log.Info().Msgf("New followup node registration using key: %s", newRegID)
+	h.state.SetRegistrationCacheEntry(newRegID, nodeToRegister)
 
-		// (juan): For a while we had a bug where we were not storing the MachineKey for the nodes using the TS2021,
-		// due to a misunderstanding of the protocol https://github.com/juanfont/headscale/issues/1054
-		// So if we have a not valid MachineKey (but we were able to fetch the node with the NodeKeys), we update it.
-		if err != nil || node.MachineKey.IsZero() {
-			if err := h.db.NodeSetMachineKey(node, machineKey); err != nil {
-				log.Error().
-					Caller().
-					Str("func", "RegistrationHandler").
-					Str("node", node.Hostname).
-					Str("namespace", node.Namespace). // __CYLONIX_MOD__
-					Str("user", node.User.Name).      // __CYLONIX_MOD__
-					Err(err).
-					Msg("Error saving machine key to database")
-
-				return
-			}
-		}
-
-		// __BEGIN_CYLONIX_MOD__
-		// Check if we need to update the given name
-		if regReq.Hostinfo != nil && node.Hostname != regReq.Hostinfo.Hostname {
-			if err := h.db.MaybeUpdateNodeGivenName(node, regReq.Hostinfo); err != nil {
-				logNodeError(node, err, "failed to update given name")
-				return
-			}
-		}
-		// __END_CYLONIX_MOD__
-
-		// If the NodeKey stored in headscale is the same as the key presented in a registration
-		// request, then we have a node that is either:
-		// - Trying to log out (sending a expiry in the past)
-		// - A valid, registered node, looking for /map
-		// - Expired node wanting to reauthenticate
-		if node.NodeKey.String() == regReq.NodeKey.String() {
-			// The client sends an Expiry in the past if the client is requesting to expire the key (aka logout)
-			//   https://github.com/tailscale/tailscale/blob/main/tailcfg/tailcfg.go#L648
-			if !regReq.Expiry.IsZero() &&
-				regReq.Expiry.UTC().Before(now) {
-				h.handleNodeLogOut(writer, *node, machineKey)
-
-				return
-			}
-
-			// If node is not expired, and it is register, we have a already accepted this node,
-			// let it proceed with a valid registration
-			if !node.IsExpired() {
-				h.handleNodeWithValidRegistration(writer, *node, machineKey)
-
-				return
-			}
-		}
-
-		// The NodeKey we have matches OldNodeKey, which means this is a refresh after a key expiration
-		if node.NodeKey.String() == regReq.OldNodeKey.String() &&
-			!node.IsExpired() {
-			h.handleNodeKeyRefresh(
-				writer,
-				regReq,
-				*node,
-				machineKey,
-			)
-
-			return
-		}
-
-		// When logged out and reauthenticating with OIDC, the OldNodeKey is not passed, but the NodeKey has changed
-		if node.NodeKey.String() != regReq.NodeKey.String() &&
-			regReq.OldNodeKey.IsZero() && !node.IsExpired() && regReq.Followup == "" { // __CYLONIX_MOD__
-			h.handleNodeKeyRefresh(
-				writer,
-				regReq,
-				*node,
-				machineKey,
-			)
-
-			return
-		}
-
-		if regReq.Followup != "" {
-			// __BEGIN_CYLONIX_MOD__
-			node, err := h.checkAuthStatus(writer, machineKey, regReq, logInfo)
-			if err != nil {
-				logErr(err, "Failed to check auth status")
-				return
-			}
-			if node != nil {
-				logInfo("Node registered after authorization")
-				return
-			}
-			logInfo("User not logged in yet url=" + regReq.Followup)
-			// Not yet approved. Force the client to wait.
-			// __END_CYLONIX_MOD__
-
-			select {
-			case <-req.Context().Done():
-				return
-			case <-time.After(registrationHoldoff):
-			}
-		}
-
-		// The node has expired or it is logged out
-		h.handleNodeExpiredOrLoggedOut(req, writer, regReq, *node, machineKey) // __CYLONIX_MOD__
-
-		// TODO(juan): RegisterRequest includes an Expiry time, that we could optionally use
-		node.Expiry = &time.Time{}
-
-		// If we are here it means the client needs to be reauthorized,
-		// we need to make sure the NodeKey matches the one in the request
-		// TODO(juan): What happens when using fast user switching between two
-		// headscale-managed tailnets?
-		// __BEGIN_CYLONIX_MOD__
-		//node.NodeKey = regReq.NodeKey
-		capVersion := uint32(regReq.Version)
-		newNode := types.Node{
-			MachineKey: machineKey,
-			Hostname:   regReq.Hostinfo.Hostname,
-			Hostinfo:   regReq.Hostinfo,
-			NodeKey:    regReq.NodeKey,
-			CapVersion: &capVersion,
-			LastSeen:   &now,
-			Expiry:     &time.Time{},
-		}
-		log.Info().
-			Caller().
-			Str("machine", machineKey.ShortString()).
-			Str("node", regReq.NodeKey.ShortString()).
-			Msg("Set registration cache for node")
-		h.registrationCache.Set(
-			machineKey.String(),
-			types.RegistrationCacheNodeInfo{
-				Node:     newNode,
-				FollowUp: regReq.Followup,
-			},
-			registerCacheExpiration,
-		)
-		// __END_CYLONIX_MOD__
-
-		return
-	}
-}
-
-// handleAuthKey contains the logic to manage auth key client registration
-// When using Noise, the machineKey is Zero.
-func (h *Headscale) handleAuthKey(
-	req *http.Request, // __CYLONIX_MOD__
-	writer http.ResponseWriter,
-	registerRequest tailcfg.RegisterRequest,
-	machineKey key.MachinePublic,
-) {
-	log.Debug().
-		Caller().
-		Str("node", registerRequest.Hostinfo.Hostname).
-		Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-		Msgf("Processing auth key for %s", registerRequest.Hostinfo.Hostname)
-	resp := tailcfg.RegisterResponse{}
-
-	pak, err := h.db.ValidatePreAuthKey(registerRequest.Auth.AuthKey)
+	// __BEGIN_CYLONIX_MOD__ Delegate AuthURL via NodeHandler hook (cylonix
+	// returns <base>/login/<sessionID>); upstream calls authProvider.AuthURL
+	// directly, which would emit /register/<id>.
+	authURL, err := h.resolveAuthURL(&nodeToRegister.Node, newRegID, req.Followup)
 	if err != nil {
-		// __BEGIN_CYLONIX_MOD__
-		// Don't log above debug level to avoid excessive logging due to
-		// intentional unauthorized access.
-		logEvent := log.Error()
-		if db.UnauthorizedPreAuthKeyError(err) {
-			logEvent = log.Debug()
-		}
-		logEvent.
-			// __END_CYLONIX_MOD__
-			Caller().
-			Str("node", registerRequest.Hostinfo.Hostname).
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-			Err(err).
-			Msg("Failed authentication via AuthKey")
-		resp.MachineAuthorized = false
-
-		respBody, err := json.Marshal(resp)
-		if err != nil {
-			log.Error().
-				Caller().
-				Str("node", registerRequest.Hostinfo.Hostname).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-				Err(err).
-				Msg("Cannot encode message")
-			http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-			return
-		}
-
-		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-		writer.WriteHeader(http.StatusUnauthorized)
-		_, err = writer.Write(respBody)
-		if err != nil {
-			log.Error().
-				Caller().
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-				Err(err).
-				Msg("Failed to write response")
-		}
-
-		return
+		return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate auth URL", err)
 	}
-
-	log.Debug().
-		Caller().
-		Str("node", registerRequest.Hostinfo.Hostname).
-		Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-		Msg("Authentication key was valid, proceeding to acquire IP addresses")
-
-	nodeKey := registerRequest.NodeKey
-
-	// retrieve node information if it exist
-	// The error is not important, because if it does not
-	// exist, then this is a new node and we will move
-	// on to registration.
-	// __BEGIN_CYLONIX_MOD__
-	node, _ := h.db.GetNodeByUserAndMachineKey(pak.User.ID, machineKey)
-	if !registerRequest.NodeKey.IsZero() {
-		nodeByKey, _ := h.db.GetNodeByNodeKey(registerRequest.NodeKey)
-		if nodeByKey != nil {
-			if node != nil && nodeByKey.ID != node.ID {
-				logNodeError(node, fmt.Errorf("node key conflict"),
-					"nodeKey already claimed by another node")
-				writeInternalError(writer, fmt.Errorf("node key conflict"))
-				return
-			}
-			if node == nil && nodeByKey.UserID != pak.User.ID {
-				log.Error().
-					Caller().
-					Str("node", registerRequest.Hostinfo.Hostname).
-					Msg("nodeKey belongs to a different user, treating as new registration")
-				// Fall through — node stays nil, will register as new
-			} else if node == nil {
-				node = nodeByKey
-			}
-		}
-	}
+	return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
 	// __END_CYLONIX_MOD__
-	if node != nil {
-		log.Trace().
-			Caller().
-			Str("node", node.Hostname).
-			Str("namespace", node.Namespace). // __CYLONIX_MOD__
-			Str("user", node.User.Name).      // __CYLONIX_MOD__
-			Msg("node was already registered before, refreshing with new auth key")
-
-		node.NodeKey = nodeKey
-		if pak.ID != 0 {
-			node.AuthKeyID = ptr.To(pak.ID)
-			node.AuthKey = pak // __CYLONIX_MOD__
-		}
-
-		// __BEGIN_CYLONIX_MOD__
-		if h.cfg.NodeHandler != nil {
-			if err := h.cfg.NodeHandler.RotateNodeKey(node, nodeKey); err != nil {
-				logNodeError(node, err, "failed to rotate node key")
-				writeInternalError(writer, fmt.Errorf("failed to rotate node key: %w", err))
-				return
-			}
-		}
-		// __END_CYLONIX_MOD__
-
-		node.Expiry = &registerRequest.Expiry
-		node.User = pak.User
-		node.UserID = pak.UserID
-		node.Hostinfo = registerRequest.Hostinfo // __CYLONIX_MOD__ update hostinfo on re-auth
-		err := h.db.DB.Save(node).Error
-		if err != nil {
-			logNodeError(node, err, "failed to save node after logging in with auth key") // __CYLONIX_MOD__
-			writeInternalError(writer, fmt.Errorf("failed to save node: %w", err))        // __CYLONIX_MOD__
-			return
-		}
-
-		aclTags := pak.Proto().GetAclTags()
-		if len(aclTags) > 0 {
-			// This conditional preserves the existing behaviour, although SaaS would reset the tags on auth-key login
-			err = h.db.SetTags(node.ID, aclTags)
-			if err != nil {
-				log.Error().
-					Caller().
-					Str("node", node.Hostname).
-					Str("namespace", node.Namespace). // __CYLONIX_MOD__
-					Str("user", node.User.Name).      // __CYLONIX_MOD__
-					Strs("aclTags", aclTags).
-					Err(err).
-					Msg("Failed to set tags after refreshing node")
-
-				writeInternalError(writer, fmt.Errorf("failed to set node tags: %w", err)) // __CYLONIX_MOD__
-				return
-			}
-		}
-
-		ctx := types.NotifyCtx(context.Background(), "handle-authkey", "na")
-		// __BEGIN_CYLONIX_MOD__
-		h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-			Type:          types.StatePeerChanged,
-			ChangeNodes:   []types.NodeID{node.ID},
-			Namespace:     node.Namespace,
-			NetworkDomain: node.NetworkDomain,
-		})
-		// __END_CYLONIX_MOD__
-
-		h.postRegistrationHandling(node) // __CYLONIX_ADD__ save routes on re-auth
-	} else {
-		now := time.Now().UTC()
-
-		// __BEGIN_CYLONIX_MOD__
-		networkDomain := ""
-		if h.cfg.NodeHandler != nil {
-			v, err := h.cfg.NodeHandler.NetworkDomain(&pak.User)
-			if err != nil {
-				log.Error().
-					Caller().
-					Str("func", "RegistrationHandler").
-					Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
-					Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-					Err(err).
-					Msg("Failed to get network domain")
-				writeInternalError(writer, fmt.Errorf("failed to get network domain: %w", err))
-				return
-			}
-			networkDomain = string(v)
-		}
-
-		hostname := registerRequest.Hostinfo.Hostname
-		if hostname == "localhost" || hostname == "" {
-			hostname = registerRequest.Hostinfo.DeviceModel
-		}
-
-		givenName, err := h.db.GenerateGivenName(
-			machineKey, hostname, networkDomain, nil, nil,
-		)
-		// __END_CYLONIX_MOD__
-		if err != nil {
-			log.Error().
-				Caller().
-				Str("func", "RegistrationHandler").
-				Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-				Err(err).
-				Msg("Failed to generate given name for node")
-
-			return
-		}
-
-		nodeToRegister := types.Node{
-			Hostname:       registerRequest.Hostinfo.Hostname,
-			Hostinfo:       registerRequest.Hostinfo, // __CYLONIX_MOD__
-			NetworkDomain:  networkDomain,            // __CYLONIX_MOD__
-			Namespace:      pak.Namespace,            // __CYLONIX_MOD__
-			GivenName:      givenName,
-			UserID:         pak.User.ID,
-			User:           pak.User,
-			MachineKey:     machineKey,
-			RegisterMethod: util.RegisterMethodAuthKey,
-			Expiry:         &registerRequest.Expiry,
-			NodeKey:        nodeKey,
-			LastSeen:       &now,
-			ForcedTags:     pak.Proto().GetAclTags(),
-		}
-
-		// __BEGIN_CYLONIX_MOD__
-		parseIP := func(s string) (*netip.Addr, error) {
-			if s == "" {
-				return nil, nil
-			}
-			addr, err := netip.ParseAddr(s)
-			if err != nil {
-				log.Error().Caller().Err(err).Str("ip", s).Msg("parse error")
-				writeInternalError(writer, fmt.Errorf("failed to parse ip '%v': %w", s, err))
-				return nil, err
-			}
-			return &addr, nil
-		}
-
-		wantIPv4, err := parseIP(pak.IPv4)
-		if err != nil {
-			return
-		}
-		wantIPv6, err := parseIP(pak.IPv6)
-		if err != nil {
-			return
-		}
-		// __END_CYLONIX_MOD__
-
-		ipv4, ipv6, err := h.ipAlloc.NextFor(&pak.User, &machineKey, wantIPv4, wantIPv6) // __CYLONIX_MOD__
-		if err != nil {
-			log.Error().
-				Caller().
-				Str("func", "RegistrationHandler").
-				Str("hostinfo.name", registerRequest.Hostinfo.Hostname).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-				Str("want-ip-v4", pak.IPv4).                   // __CYLONIX_MOD__
-				Str("want-ip-v6", pak.IPv6).                   // __CYLONIX_MOD__
-				Err(err).
-				Msg("failed to allocate IP	")
-
-			writeInternalError(writer, fmt.Errorf("failed to allocate ip: %w", err)) // __CYLONIX_MOD__
-			return
-		}
-
-		pakID := uint(pak.ID)
-		if pakID != 0 {
-			nodeToRegister.AuthKeyID = ptr.To(pak.ID)
-			nodeToRegister.AuthKey = pak // __CYLONIX_MOD__
-		}
-		registeredNode, err := h.db.RegisterNode( // __CYLONIX_MOD__ golint
-			nodeToRegister,
-			ipv4, ipv6,
-			h.cfg.NodeHandler, // __CYLONIX_MOD__
-		)
-		if err != nil {
-			// __BEGIN_CYLONIX_MOD__
-			h.ipAlloc.FreeFor(ipv4, &pak.User, &machineKey)
-			h.ipAlloc.FreeFor(ipv6, &pak.User, &machineKey)
-			var uerr controlclient.UserVisibleError
-			if errors.As(err, &uerr) {
-				resp.Error = uerr.Error()
-				var respBody []byte
-				respBody, err = json.Marshal(resp)
-				if err == nil {
-					writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-					writer.WriteHeader(http.StatusOK)
-					_, err = writer.Write(respBody)
-					if err != nil {
-						log.Error().
-							Caller().
-							Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-							Err(err).
-							Msg("Failed to write response")
-					}
-					return
-				}
-				// Fall through for error.
-			}
-			// __END_CYLONIX_MOD__
-
-			log.Error().
-				Caller().
-				Err(err).
-				Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-				Msg("could not register node")
-			http.Error(writer, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		h.postRegistrationHandling(registeredNode) // __CYLONIX_ADD__
-	}
-
-	err = h.db.Write(func(tx *gorm.DB) error { // __CYLONIX_MOD__ golint
-		return db.UsePreAuthKey(tx, pak)
-	})
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-			Msg("Failed to use pre-auth key")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	resp.MachineAuthorized = true
-	resp.User = *pak.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
-	// Provide LoginName when registering with pre-auth key
-	// Otherwise it will need to exec `tailscale up` twice to fetch the *LoginName*
-	resp.Login = *pak.User.TailscaleLogin(h.cfg) // __CYLONIX_MOD__
-
-	respBody, err := json.Marshal(resp)
-	if err != nil {
-		log.Error().
-			Caller().
-			Str("node", registerRequest.Hostinfo.Hostname).
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-			Err(err).
-			Msg("Cannot encode message")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writer.WriteHeader(http.StatusOK)
-	_, err = writer.Write(respBody)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-			Msg("Failed to write response")
-		return
-	}
-
-	log.Info().
-		Str("node", registerRequest.Hostinfo.Hostname).
-		Str("namespace", req.Header.Get("namespace")). // __CYLONIX_MOD__
-		Msg("Successfully authenticated via AuthKey")
 }
 
-// handleNewNode returns the authorisation URL to the client based on what type
-// of registration headscale is configured with.
-// This url is then showed to the user by the local Tailscale client.
-func (h *Headscale) handleNewNode(
-	req *http.Request, // __CYLONIX_MOD__
-	writer http.ResponseWriter,
-	registerRequest tailcfg.RegisterRequest,
-	machineKey key.MachinePublic,
-	newNode types.Node, // __CYLONIX_MOD__
-	followUp string, // __CYLONIX_MOD__
-) {
-	logInfo, logTrace, logErr := logAuthFunc(req, registerRequest, machineKey) // __CYLONIX_MOD__
-
-	resp := tailcfg.RegisterResponse{}
-
-	// The node registration is new, redirect the client to the registration URL
-	logTrace("The node seems to be new, sending auth url")
-
-	if h.oauth2Config != nil {
-		resp.AuthURL = fmt.Sprintf(
-			"%s/oidc/register/%s",
-			strings.TrimSuffix(h.cfg.ServerURL, "/"),
-			machineKey.String(),
-		)
-	} else {
-		resp.AuthURL = fmt.Sprintf("%s/register/%s",
-			strings.TrimSuffix(h.cfg.ServerURL, "/"),
-			machineKey.String())
-	}
-	// __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
+// resolveAuthURL prefers the cylonix NodeHandler.AuthURL hook (which builds
+// a cylonix-manager UI login URL like <base>/login/<sessionID>) when one is
+// configured. Without the hook, the upstream AuthProviderWeb /register/<id>
+// page is used. Pre-v0.28 cylonix always went through the hook; the merge
+// regressed two callers (handleRegisterInteractive + reqToNewRegisterResponse)
+// to the bare authProvider.AuthURL path, which is why nodes started seeing
+// http://127.0.0.1:8000/register/<id> in their AuthURL responses.
+//
+// Errors from the hook are surfaced to the caller — silently falling back
+// to the default URL would hide misconfigurations (e.g. the cylonix oauth
+// state DB being unreachable) and leave the client with a non-functional
+// /register/<id> URL the user shouldn't be sent to.
+func (h *Headscale) resolveAuthURL(node *types.Node, registrationID types.RegistrationID, currentURL string) (string, error) {
 	if h.cfg.NodeHandler != nil {
-		url, err := h.cfg.NodeHandler.AuthURL(&types.Node{
-			MachineKey:    machineKey,
-			NodeKey:       registerRequest.NodeKey,
-			Hostinfo:      registerRequest.Hostinfo,
-			NetworkDomain: registerRequest.Tailnet,
-		}, followUp) // __CYLONIX_MOD__
-		if err != nil {
-			logErr(err, "Failed to get auth url. Deleting registration cache to avoid stale cache")
-			h.registrationCache.Delete(machineKey.String())
-			http.Error(writer, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		resp.AuthURL = url
+		return h.cfg.NodeHandler.AuthURL(node, currentURL)
 	}
-	if resp.AuthURL != followUp {
-		logInfo("Updating cache auth url: " + resp.AuthURL)
-		h.registrationCache.Set(
-			machineKey.String(),
-			types.RegistrationCacheNodeInfo{
-				Node: newNode,
-				FollowUp: resp.AuthURL,
-			},
-			registerCacheExpiration,
-		)
-	}
-	// __END_CYLONIX_MOD__
-
-	respBody, err := json.Marshal(resp)
-	if err != nil {
-		logErr(err, "Cannot encode message, deleting registration cache to avoid stale cache")
-		h.registrationCache.Delete(machineKey.String())
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writer.WriteHeader(http.StatusOK)
-	_, err = writer.Write(respBody)
-	if err != nil {
-		logErr(err, "Failed to write response. Deleting registration cache to avoid stale cache")
-		h.registrationCache.Delete(machineKey.String())
-		return
-	}
-
-	logInfo(fmt.Sprintf("Successfully sent auth url: %s", resp.AuthURL))
+	return h.authProvider.AuthURL(registrationID), nil
 }
 
-func (h *Headscale) handleNodeLogOut(
-	writer http.ResponseWriter,
-	node types.Node,
+// __END_CYLONIX_ADD__
+
+func (h *Headscale) handleRegisterWithAuthKey(
+	req tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
-) {
-	resp := tailcfg.RegisterResponse{}
-
-	log.Info().
-		Str("node", node.Hostname).
-		Msg("Client requested logout")
-
-	now := time.Now()
-	err := h.db.NodeSetExpiry(node.ID, now)
+) (*tailcfg.RegisterResponse, error) {
+	node, changed, err := h.state.HandleNodeFromPreAuthKey(
+		req,
+		machineKey,
+	)
 	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to expire node")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	ctx := types.NotifyCtx(context.Background(), "logout-expiry", "na")
-	h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdateExpire(node.ID, now), node.ID)
-
-	resp.AuthURL = ""
-	resp.MachineAuthorized = false
-	resp.NodeKeyExpired = true
-	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
-	respBody, err := json.Marshal(resp)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Cannot encode message")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writer.WriteHeader(http.StatusOK)
-	_, err = writer.Write(respBody)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to write response")
-
-		return
-	}
-
-	if node.IsEphemeral() {
-		changedNodes, err := h.db.DeleteNode(&node, h.nodeNotifier.LikelyConnectedMap(), h.cfg.NodeHandler) // __CYLONIX_MOD__
-		if err != nil {
-			log.Error().
-				Err(err).
-				Str("node", node.Hostname).
-				Msg("Cannot delete ephemeral node from the database")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NewHTTPError(http.StatusUnauthorized, "invalid pre auth key", nil)
+		}
+		var perr types.PAKError
+		if errors.As(err, &perr) {
+			return nil, NewHTTPError(http.StatusUnauthorized, perr.Error(), nil)
 		}
 
-		ctx := types.NotifyCtx(context.Background(), "logout-ephemeral", "na")
-		h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-			Type:    types.StatePeerRemoved,
-			Removed: []types.NodeID{node.ID},
-		})
-		if changedNodes != nil {
-			h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-				Type:        types.StatePeerChanged,
-				ChangeNodes: changedNodes,
-
-				Namespace:     node.Namespace,     // __CYLONIX_ADD__
-				NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
-			})
-		}
-
-		return
+		return nil, err
 	}
 
-	log.Info().
-		Caller().
-		Str("node", node.Hostname).
-		Msg("Successfully logged out")
-}
+	// If node is not valid, it means an ephemeral node was deleted during logout
+	if !node.Valid() {
+		h.Change(changed)
+		return nil, nil
+	}
 
-func (h *Headscale) handleNodeWithValidRegistration(
-	writer http.ResponseWriter,
-	node types.Node,
-	machineKey key.MachinePublic,
-) {
-	resp := tailcfg.RegisterResponse{}
-
-	// The node registration is valid, respond with redirect to /map
-	log.Info().
-		Caller().
-		Str("node", node.Hostname).
-		Msg("Client is registered and we have the current NodeKey. All clear to /map")
-
-	resp.AuthURL = ""
-	resp.MachineAuthorized = true
-	resp.User = *node.User.TailscaleUser(h.cfg)   // __CYLONIX_MOD__
-	resp.Login = *node.User.TailscaleLogin(h.cfg) // __CYLONIX_MOD__
-
-	respBody, err := json.Marshal(resp)
+	// This is a bit of a back and forth, but we have a bit of a chicken and egg
+	// dependency here.
+	// Because the way the policy manager works, we need to have the node
+	// in the database, then add it to the policy manager and then we can
+	// approve the route. This means we get this dance where the node is
+	// first added to the database, then we add it to the policy manager via
+	// nodesChangedHook and then we can auto approve the routes.
+	// As that only approves the struct object, we need to save it again and
+	// ensure we send an update.
+	// This works, but might be another good candidate for doing some sort of
+	// eventbus.
+	// TODO(kradalby): This needs to be ran as part of the batcher maybe?
+	// now since we dont update the node/pol here anymore
+	routesChange, err := h.state.AutoApproveRoutes(node)
 	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Cannot encode message")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
+		return nil, fmt.Errorf("auto approving routes: %w", err)
 	}
 
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writer.WriteHeader(http.StatusOK)
-	_, err = writer.Write(respBody)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to write response")
-	}
+	// Send both changes. Empty changes are ignored by Change().
+	h.Change(changed, routesChange)
 
-	log.Info().
-		Caller().
-		Str("node", node.Hostname).
-		Msg("Node successfully authorized")
-}
+	// TODO(kradalby): I think this is covered above, but we need to validate that.
+	// // If policy changed due to node registration, send a separate policy change
+	// if policyChanged {
+	// 	policyChange := change.PolicyChange()
+	// 	h.Change(policyChange)
+	// }
 
-func (h *Headscale) handleNodeKeyRefresh(
-	writer http.ResponseWriter,
-	registerRequest tailcfg.RegisterRequest,
-	node types.Node,
-	machineKey key.MachinePublic,
-) {
-	resp := tailcfg.RegisterResponse{}
-
-	// __BEGIN_CYLONIX_MOD__
-	expiry := time.Now().Add(time.Hour * 24 * 150)
-	err := h.refreshNodeKeyAndExpiry(&node, registerRequest.NodeKey, registerRequest.OldNodeKey, &expiry)
-	if err != nil {
-		writeInternalError(writer, fmt.Errorf("failed to refresh node key and/or expiry: %w", err))
-		return
-	}
-	resp.MachineAuthorized = !node.IsExpired()
-	resp.Login = *node.User.TailscaleLogin(h.cfg)
-	// __END_CYLONIX_MOD__
-
-	resp.AuthURL = ""
-	resp.User = *node.User.TailscaleUser(h.cfg) // __CYLONIX_MOD__
-	respBody, err := json.Marshal(resp)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Cannot encode message")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writer.WriteHeader(http.StatusOK)
-	_, err = writer.Write(respBody)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to write response")
-	}
-
-	log.Info().
-		Caller().
-		Str("node_key", registerRequest.NodeKey.ShortString()).
-		Str("old_node_key", registerRequest.OldNodeKey.ShortString()).
-		Str("node", node.Hostname).
-		Msg("Node key successfully refreshed")
-}
-
-func (h *Headscale) handleNodeExpiredOrLoggedOut(
-	req *http.Request, // __CYLONIX_MOD__
-	writer http.ResponseWriter,
-	regReq tailcfg.RegisterRequest,
-	node types.Node,
-	machineKey key.MachinePublic,
-) {
-	resp := tailcfg.RegisterResponse{}
-
-	if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-		h.handleAuthKey(req, writer, regReq, machineKey) // __CYLONIX_MOD_-
-
-		return
-	}
-
-	// The client has registered before, but has expired or logged out
-	log.Trace().
-		Caller().
-		Str("node", node.Hostname).
-		Str("machine_key", machineKey.ShortString()).
-		Str("node_key", regReq.NodeKey.ShortString()).
-		Str("node_key_old", regReq.OldNodeKey.ShortString()).
-		Msg("Node registration has expired or logged out. Sending a auth url to register")
-
-	if h.oauth2Config != nil {
-		resp.AuthURL = fmt.Sprintf("%s/oidc/register/%s",
-			strings.TrimSuffix(h.cfg.ServerURL, "/"),
-			machineKey.String())
-	} else {
-		resp.AuthURL = fmt.Sprintf("%s/register/%s",
-			strings.TrimSuffix(h.cfg.ServerURL, "/"),
-			machineKey.String())
-	}
-	// __BEGIN_CYLONIX_MOD__
-	if h.cfg.NodeHandler != nil {
-		url, err := h.cfg.NodeHandler.AuthURL(&types.Node{
-			MachineKey:    machineKey,
-			NodeKey:       regReq.NodeKey,
-			Hostinfo:      regReq.Hostinfo,
-			NetworkDomain: regReq.Tailnet,
-		}, "")
-		if err != nil {
-			log.Error().
-				Caller().
-				Err(err).
-				Msg("Failed to get auth url")
-			http.Error(writer, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		resp.AuthURL = url
-	}
-	// __END_CYLONIX_MOD__
-
-	respBody, err := json.Marshal(resp)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Cannot encode message")
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writer.WriteHeader(http.StatusOK)
-	_, err = writer.Write(respBody)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to write response")
+	resp := &tailcfg.RegisterResponse{
+		MachineAuthorized: true,
+		NodeKeyExpired:    node.IsExpired(),
+		User:              node.Owner().TailscaleUser(h.cfg),  // __CYLONIX_MOD__
+		Login:             node.Owner().TailscaleLogin(h.cfg), // __CYLONIX_MOD__
 	}
 
 	log.Trace().
 		Caller().
-		Str("machine_key", machineKey.ShortString()).
-		Str("node_key", regReq.NodeKey.ShortString()).
-		Str("node_key_old", regReq.OldNodeKey.ShortString()).
-		Str("node", node.Hostname).
-		Msg("Node logged out. Sent AuthURL for reauthentication")
+		Interface("reg.resp", resp).
+		Interface("reg.req", req).
+		Str("node.name", node.Hostname()).
+		Uint64("node.id", node.ID().Uint64()).
+		Msg("RegisterResponse")
+
+	return resp, nil
+}
+
+func (h *Headscale) handleRegisterInteractive(
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
+) (*tailcfg.RegisterResponse, error) {
+	registrationId, err := types.NewRegistrationID()
+	if err != nil {
+		return nil, fmt.Errorf("generating registration ID: %w", err)
+	}
+
+	// Ensure we have a valid hostname
+	hostname := util.EnsureHostname(
+		req.Hostinfo,
+		machineKey.String(),
+		req.NodeKey.String(),
+	)
+
+	// Ensure we have valid hostinfo
+	hostinfo := cmp.Or(req.Hostinfo, &tailcfg.Hostinfo{})
+	if req.Hostinfo == nil {
+		log.Warn().
+			Str("machine.key", machineKey.ShortString()).
+			Str("node.key", req.NodeKey.ShortString()).
+			Str("generated.hostname", hostname).
+			Msg("Received registration request with nil hostinfo, generated default hostname")
+	} else if req.Hostinfo.Hostname == "" {
+		log.Warn().
+			Str("machine.key", machineKey.ShortString()).
+			Str("node.key", req.NodeKey.ShortString()).
+			Str("generated.hostname", hostname).
+			Msg("Received registration request with empty hostname, generated default")
+	}
+	hostinfo.Hostname = hostname
+
+	nodeToRegister := types.NewRegisterNode(
+		types.Node{
+			Hostname:   hostname,
+			MachineKey: machineKey,
+			NodeKey:    req.NodeKey,
+			Hostinfo:   hostinfo,
+			LastSeen:   ptr.To(time.Now()),
+		},
+	)
+
+	if !req.Expiry.IsZero() {
+		nodeToRegister.Node.Expiry = &req.Expiry
+	}
+
+	h.state.SetRegistrationCacheEntry(
+		registrationId,
+		nodeToRegister,
+	)
+
+	log.Info().Msgf("Starting node registration using key: %s", registrationId)
+
+	// __BEGIN_CYLONIX_MOD__ Delegate AuthURL via NodeHandler hook.
+	authURL, err := h.resolveAuthURL(&nodeToRegister.Node, registrationId, req.Followup)
+	if err != nil {
+		return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate auth URL", err)
+	}
+	return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
+	// __END_CYLONIX_MOD__
 }
 
 // __BEGIN_CYLONIX_MOD__
@@ -1192,7 +595,17 @@ func writeInternalError(writer http.ResponseWriter, err error) {
 	http.Error(writer, "Internal server error: "+err.Error(), http.StatusInternalServerError)
 }
 func logNodeError(node *types.Node, err error, msg string) {
-	node.ErrorLog(err).Msg(msg)
+	// __BEGIN_CYLONIX_MOD__ node.ErrorLog was removed in v0.28; inline the equivalent fields.
+	log.Error().
+		Caller().
+		Str("node", node.Hostname).
+		Str("namespace", node.Namespace).
+		Uint64("id", uint64(node.ID)).
+		Str("machine_key", node.MachineKey.ShortString()).
+		Str("node_key", node.NodeKey.ShortString()).
+		Err(err).
+		Msg(msg)
+	// __END_CYLONIX_MOD__
 }
 
 func (h *Headscale) refreshNodeKeyAndExpiry(node *types.Node, newKey key.NodePublic, oldKey key.NodePublic, newExpiry *time.Time) error {
@@ -1215,20 +628,35 @@ func (h *Headscale) refreshNodeKeyAndExpiry(node *types.Node, newKey key.NodePub
 		}
 	}
 
-	err := h.db.Write(func(tx *gorm.DB) error {
+	// __BEGIN_CYLONIX_MOD__ h.db is gone in v0.28; route through state.DB().
+	err := h.state.DB().Write(func(tx *gorm.DB) error {
 		return db.NodeSetNodeKey(tx, node, newKey)
 	})
 	if err != nil {
 		logNodeError(node, err, "failed to update node key in the database")
 		return err
 	}
+	// Also refresh the in-memory NodeStore so subsequent NoisePollNetMap
+	// lookups by the new node_key succeed. db.NodeSetNodeKey only writes
+	// the headscale `nodes` row; without this update the NodeStore index
+	// nodesByNodeKey still maps the OLD key, and the noise poll endpoint
+	// returns 404 for the rotated client.
+	if _, ok := h.state.UpdateNode(node.ID, func(n *types.Node) {
+		n.NodeKey = newKey
+	}); !ok {
+		log.Warn().
+			Uint64("node.id", node.ID.Uint64()).
+			Str("new_node_key", newKey.ShortString()).
+			Msg("NodeStore update after key rotation failed: node not in store")
+	}
 	if newExpiry != nil {
-		err = h.db.NodeSetExpiry(node.ID, *newExpiry)
+		err = h.state.DB().NodeSetExpiry(node.ID, *newExpiry)
 		if err != nil {
 			logNodeError(node, err, "failed to update expiry in the database")
 			return err
 		}
 	}
+	// __END_CYLONIX_MOD__
 	return nil
 }
 
@@ -1253,7 +681,8 @@ func (h *Headscale) checkAuthStatus(
 		// Not yet approved. Force the client to wait.
 		return nil, nil
 	}
-	user, err := h.db.GetUser(userStableID)
+	// __BEGIN_CYLONIX_MOD__ all h.db lookups go through h.state.DB() now.
+	user, err := h.state.DB().GetUser(userStableID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -1261,15 +690,14 @@ func (h *Headscale) checkAuthStatus(
 	expiry := time.Now().Add(time.Hour * 24 * 150)
 
 	// Check if the node is already registered
-	// __BEGIN_CYLONIX_MOD__
-	node, err := h.db.GetNodeByUserAndMachineKey(user.ID, machineKey)
+	node, err := h.state.DB().GetNodeByUserAndMachineKey(user.ID, machineKey)
 	if !nodeKey.IsZero() {
-		nodeByKey, _ := h.db.GetNodeByNodeKey(nodeKey)
+		nodeByKey, _ := h.state.DB().GetNodeByNodeKey(nodeKey)
 		if nodeByKey != nil {
 			if node != nil && nodeByKey.ID != node.ID {
 				return nil, fmt.Errorf("node key conflict: nodeKey belongs to a different node")
 			}
-			if node == nil && nodeByKey.UserID != user.ID {
+			if node == nil && (nodeByKey.UserID == nil || *nodeByKey.UserID != user.ID) { // __CYLONIX_MOD__ UserID is now *uint
 				return nil, fmt.Errorf("node key conflict: nodeKey belongs to a different user")
 			}
 			if node == nil {
@@ -1282,34 +710,47 @@ func (h *Headscale) checkAuthStatus(
 	if err == nil {
 		logInfo("Node already registered")
 		err = h.refreshNodeKeyAndExpiry(node, nodeKey, key.NodePublic{}, &expiry)
-		logInfo("Node registering after logged in. Deleting registration cache entry.")
-		h.registrationCache.Delete(machineKey.String())
+		// __CYLONIX_REMOVED__ h.registrationCache.Delete(machineKey.String()) — v0.28 cache is keyed
+		// by types.RegistrationID rather than MachinePublic; the OIDC followup path now
+		// performs cache cleanup inside state.HandleNodeFromAuthPath, so the explicit
+		// delete-by-machine-key here is no longer reachable. The original behaviour was
+		// "drop the in-flight registration entry once the node finishes auth".
+		logInfo("Node registered after logged in.")
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh node key and/or expiry: %w", err)
 		}
 		h.postRegistrationHandling(node) // __CYLONIX_ADD__ save routes on re-auth
 	} else {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			logInfo("Node registering after logged in. Deleting registration cache entry.")
-			h.registrationCache.Delete(machineKey.String())
+			// __CYLONIX_REMOVED__ h.registrationCache.Delete(machineKey.String()) — see note above.
 			return nil, fmt.Errorf("failed to get node before authorization: %w", err)
 		}
 
-		err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry)
-		logInfo("Node registering after logged in. Deleting registration cache entry.")
-		h.registrationCache.Delete(machineKey.String())
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to register node after authorization: %w", err)
+		// __BEGIN_CYLONIX_ADD__
+		// Delegate to the cylonix wrapper which now uses
+		// state.FindRegistrationIDByMachineKey + HandleNodeFromAuthPath to
+		// complete the registration. Errors here are logged but not surfaced
+		// to the caller because the registration may have already been
+		// finalised by the upstream AuthProviderOIDC handler.
+		if err := h.registerNodeForOIDCCallback(writer, user, &machineKey, expiry); err != nil {
+			logInfo("registerNodeForOIDCCallback failed: " + err.Error())
+		} else {
+			logInfo("Node registered for OIDC callback.")
 		}
+		// __END_CYLONIX_ADD__
 	}
 
-	node, err = h.db.GetNodeByNodeKey(nodeKey)
+	// __BEGIN_CYLONIX_MOD__
+	node, err = h.state.DB().GetNodeByNodeKey(nodeKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node after authorization: %w", err)
 	}
 	logInfo("Node registered after authorization")
-	h.handleNodeWithValidRegistration(writer, *node, machineKey)
+	// __CYLONIX_REMOVED__ h.handleNodeWithValidRegistration(writer, *node, machineKey) — this helper
+	// did not survive the v0.28 merge (the upstream noise/auth path no longer routes through a
+	// per-machine handshake response writer here). The state package now finalises registration
+	// inline via HandleNodeFromAuthPath; no replacement call is needed.
+	// __END_CYLONIX_MOD__
 	return node, nil
 }
 

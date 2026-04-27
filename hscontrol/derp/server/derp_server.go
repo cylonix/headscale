@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -12,11 +15,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"tailscale.com/derp"
+	"tailscale.com/derp/derpserver"
+	"tailscale.com/envknob"
 	"tailscale.com/net/stun"
+	"tailscale.com/net/wsconn"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -25,13 +32,21 @@ import (
 // server that the DERP HTTP client does not want the HTTP 101 response
 // headers and it will begin writing & reading the DERP protocol immediately
 // following its HTTP request.
-const fastStartHeader = "Derp-Fast-Start"
+const (
+	fastStartHeader  = "Derp-Fast-Start"
+	DerpVerifyScheme = "headscale-derp-verify"
+)
+
+// debugUseDERPIP is a debug-only flag that causes the DERP server to resolve
+// hostnames to IP addresses when generating the DERP region configuration.
+// This is useful for integration testing where DNS resolution may be unreliable.
+var debugUseDERPIP = envknob.Bool("HEADSCALE_DEBUG_DERP_USE_IP")
 
 type DERPServer struct {
 	serverURL     string
 	key           key.NodePrivate
 	cfg           *types.DERPConfig
-	tailscaleDERP *derp.Server
+	tailscaleDERP *derpserver.Server
 }
 
 func NewDERPServer(
@@ -40,7 +55,12 @@ func NewDERPServer(
 	cfg *types.DERPConfig,
 ) (*DERPServer, error) {
 	log.Trace().Caller().Msg("Creating new embedded DERP server")
-	server := derp.NewServer(derpKey, util.TSLogfWrapper()) // nolint // zerolinter complains
+	server := derpserver.New(derpKey, util.TSLogfWrapper()) // nolint // zerolinter complains
+
+	if cfg.ServerVerifyClients {
+		server.SetVerifyClientURL(DerpVerifyScheme + "://verify")
+		server.SetVerifyClientURLFailOpen(false)
+	}
 
 	return &DERPServer{
 		serverURL:     serverURL,
@@ -57,7 +77,10 @@ func (d *DERPServer) GenerateRegion() (tailcfg.DERPRegion, error) {
 	}
 	var host string
 	var port int
-	host, portStr, err := net.SplitHostPort(serverURL.Host)
+	var portStr string
+
+	// Extract hostname and port from URL
+	host, portStr, err = net.SplitHostPort(serverURL.Host)
 	if err != nil {
 		if serverURL.Scheme == "https" {
 			host = serverURL.Host
@@ -73,6 +96,19 @@ func (d *DERPServer) GenerateRegion() (tailcfg.DERPRegion, error) {
 		}
 	}
 
+	// If debug flag is set, resolve hostname to IP address
+	if debugUseDERPIP {
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			log.Error().Caller().Err(err).Msgf("Failed to resolve DERP hostname %s to IP, using hostname", host)
+		} else if len(ips) > 0 {
+			// Use the first IP address
+			ipStr := ips[0].String()
+			log.Info().Caller().Msgf("HEADSCALE_DEBUG_DERP_USE_IP: Resolved %s to %s", host, ipStr)
+			host = ipStr
+		}
+	}
+
 	localDERPregion := tailcfg.DERPRegion{
 		RegionID:   d.cfg.ServerRegionID,
 		RegionCode: d.cfg.ServerRegionCode,
@@ -80,7 +116,7 @@ func (d *DERPServer) GenerateRegion() (tailcfg.DERPRegion, error) {
 		Avoid:      false,
 		Nodes: []*tailcfg.DERPNode{
 			{
-				Name:     fmt.Sprintf("%d", d.cfg.ServerRegionID),
+				Name:     strconv.Itoa(d.cfg.ServerRegionID),
 				RegionID: d.cfg.ServerRegionID,
 				HostName: host,
 				DERPPort: port,
@@ -126,12 +162,62 @@ func (d *DERPServer) DERPHandler(
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Failed to write response")
+				Msg("Failed to write HTTP response")
 		}
 
 		return
 	}
 
+	if strings.Contains(req.Header.Get("Sec-Websocket-Protocol"), "derp") {
+		d.serveWebsocket(writer, req)
+	} else {
+		d.servePlain(writer, req)
+	}
+}
+
+func (d *DERPServer) serveWebsocket(writer http.ResponseWriter, req *http.Request) {
+	websocketConn, err := websocket.Accept(writer, req, &websocket.AcceptOptions{
+		Subprotocols:   []string{"derp"},
+		OriginPatterns: []string{"*"},
+		// Disable compression because DERP transmits WireGuard messages that
+		// are not compressible.
+		// Additionally, Safari has a broken implementation of compression
+		// (see https://github.com/nhooyr/websocket/issues/218) that makes
+		// enabling it actively harmful.
+		CompressionMode: websocket.CompressionDisabled,
+	})
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Failed to upgrade websocket request")
+
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusInternalServerError)
+
+		_, err = writer.Write([]byte("Failed to upgrade websocket request"))
+		if err != nil {
+			log.Error().
+				Caller().
+				Err(err).
+				Msg("Failed to write HTTP response")
+		}
+
+		return
+	}
+	defer websocketConn.Close(websocket.StatusInternalError, "closing")
+	if websocketConn.Subprotocol() != "derp" {
+		websocketConn.Close(websocket.StatusPolicyViolation, "client must speak the derp subprotocol")
+
+		return
+	}
+
+	wc := wsconn.NetConn(req.Context(), websocketConn, websocket.MessageBinary, req.RemoteAddr)
+	brw := bufio.NewReadWriter(bufio.NewReader(wc), bufio.NewWriter(wc))
+	d.tailscaleDERP.Accept(req.Context(), wc, brw, req.RemoteAddr)
+}
+
+func (d *DERPServer) servePlain(writer http.ResponseWriter, req *http.Request) {
 	fastStart := req.Header.Get(fastStartHeader) == "1"
 
 	hijacker, ok := writer.(http.Hijacker)
@@ -144,7 +230,7 @@ func (d *DERPServer) DERPHandler(
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Failed to write response")
+				Msg("Failed to write HTTP response")
 		}
 
 		return
@@ -160,7 +246,7 @@ func (d *DERPServer) DERPHandler(
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Failed to write response")
+				Msg("Failed to write HTTP response")
 		}
 
 		return
@@ -199,7 +285,7 @@ func DERPProbeHandler(
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Failed to write response")
+				Msg("Failed to write HTTP response")
 		}
 	}
 }
@@ -213,7 +299,7 @@ func DERPProbeHandler(
 // An example implementation is found here https://derp.tailscale.com/bootstrap-dns
 // Coordination server is included automatically, since local DERP is using the same DNS Name in d.serverURL.
 func DERPBootstrapDNSHandler(
-	derpMap *tailcfg.DERPMap,
+	derpMap tailcfg.DERPMapView,
 ) func(http.ResponseWriter, *http.Request) {
 	return func(
 		writer http.ResponseWriter,
@@ -224,18 +310,18 @@ func DERPBootstrapDNSHandler(
 		resolvCtx, cancel := context.WithTimeout(req.Context(), time.Minute)
 		defer cancel()
 		var resolver net.Resolver
-		for _, region := range derpMap.Regions {
-			for _, node := range region.Nodes { // we don't care if we override some nodes
-				addrs, err := resolver.LookupIP(resolvCtx, "ip", node.HostName)
+		for _, region := range derpMap.Regions().All() {
+			for _, node := range region.Nodes().All() { // we don't care if we override some nodes
+				addrs, err := resolver.LookupIP(resolvCtx, "ip", node.HostName())
 				if err != nil {
 					log.Trace().
 						Caller().
 						Err(err).
-						Msgf("bootstrap DNS lookup failed %q", node.HostName)
+						Msgf("bootstrap DNS lookup failed %q", node.HostName())
 
 					continue
 				}
-				dnsEntries[node.HostName] = addrs
+				dnsEntries[node.HostName()] = addrs
 			}
 		}
 		writer.Header().Set("Content-Type", "application/json")
@@ -245,7 +331,7 @@ func DERPBootstrapDNSHandler(
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Failed to write response")
+				Msg("Failed to write HTTP response")
 		}
 	}
 }
@@ -279,7 +365,13 @@ func serverSTUNListener(ctx context.Context, packetConn *net.UDPConn) {
 				return
 			}
 			log.Error().Caller().Err(err).Msgf("STUN ReadFrom")
-			time.Sleep(time.Second)
+
+			// Rate limit error logging - wait before retrying, but respect context cancellation
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 
 			continue
 		}
@@ -306,4 +398,30 @@ func serverSTUNListener(ctx context.Context, packetConn *net.UDPConn) {
 			continue
 		}
 	}
+}
+
+func NewDERPVerifyTransport(handleVerifyRequest func(*http.Request, io.Writer) error) *DERPVerifyTransport {
+	return &DERPVerifyTransport{
+		handleVerifyRequest: handleVerifyRequest,
+	}
+}
+
+type DERPVerifyTransport struct {
+	handleVerifyRequest func(*http.Request, io.Writer) error
+}
+
+func (t *DERPVerifyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	buf := new(bytes.Buffer)
+	if err := t.handleVerifyRequest(req, buf); err != nil {
+		log.Error().Caller().Err(err).Msg("Failed to handle client verify request: ")
+
+		return nil, err
+	}
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(buf),
+	}
+
+	return resp, nil
 }

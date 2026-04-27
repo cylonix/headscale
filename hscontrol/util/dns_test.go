@@ -2,15 +2,17 @@ package util
 
 import (
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"tailscale.com/util/dnsname"
+	"tailscale.com/util/must"
 )
 
-func TestNormalizeToFQDNRules(t *testing.T) {
+func TestNormaliseHostname(t *testing.T) {
 	type args struct {
-		name             string
-		stripEmailDomain bool
+		name string
 	}
 	tests := []struct {
 		name    string
@@ -19,129 +21,161 @@ func TestNormalizeToFQDNRules(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "normalize simple name",
-			args: args{
-				name:             "normalize-simple.name",
-				stripEmailDomain: false,
-			},
-			want:    "normalize-simple.name",
+			name:    "valid: lowercase user",
+			args:    args{name: "valid-user"},
+			want:    "valid-user",
 			wantErr: false,
 		},
 		{
-			name: "normalize an email",
-			args: args{
-				name:             "foo.bar@example.com",
-				stripEmailDomain: false,
-			},
-			want:    "foo.bar.example.com",
+			name:    "normalise: capitalized user",
+			args:    args{name: "Invalid-CapItaLIzed-user"},
+			want:    "invalid-capitalized-user",
 			wantErr: false,
 		},
 		{
-			name: "normalize an email domain should be removed",
-			args: args{
-				name:             "foo.bar@example.com",
-				stripEmailDomain: true,
-			},
-			want:    "foo.bar",
+			name:    "normalise: email as user",
+			args:    args{name: "foo.bar@example.com"},
+			want:    "foo.barexample.com",
 			wantErr: false,
 		},
 		{
-			name: "strip enabled no email passed as argument",
-			args: args{
-				name:             "not-email-and-strip-enabled",
-				stripEmailDomain: true,
-			},
-			want:    "not-email-and-strip-enabled",
+			name:    "normalise: chars in user name",
+			args:    args{name: "super-user+name"},
+			want:    "super-username",
 			wantErr: false,
 		},
 		{
-			name: "normalize complex email",
+			name: "invalid: too long name truncated leaves trailing hyphen",
 			args: args{
-				name:             "foo.bar+complex-email@example.com",
-				stripEmailDomain: false,
+				name: "super-long-useruseruser-name-that-should-be-a-little-more-than-63-chars",
 			},
-			want:    "foo.bar-complex-email.example.com",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: emoji stripped leaves trailing hyphen",
+			args:    args{name: "hostname-with-💩"},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "normalise: multiple emojis stripped",
+			args:    args{name: "node-🎉-🚀-test"},
+			want:    "node---test",
 			wantErr: false,
 		},
 		{
-			name: "user name with space",
-			args: args{
-				name:             "name space",
-				stripEmailDomain: false,
-			},
-			want:    "name-space",
-			wantErr: false,
+			name:    "invalid: only emoji becomes empty",
+			args:    args{name: "💩"},
+			want:    "",
+			wantErr: true,
 		},
 		{
-			name: "user with quote",
-			args: args{
-				name:             "Jamie's iPhone 5",
-				stripEmailDomain: false,
-			},
-			want:    "jamies-iphone-5",
-			wantErr: false,
+			name:    "invalid: emoji at start leaves leading hyphen",
+			args:    args{name: "🚀-rocket-node"},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: emoji at end leaves trailing hyphen",
+			args:    args{name: "node-test-🎉"},
+			want:    "",
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NormalizeToFQDNRules(tt.args.name, tt.args.stripEmailDomain)
+			got, err := NormaliseHostname(tt.args.name)
 			if (err != nil) != tt.wantErr {
-				t.Errorf(
-					"NormalizeToFQDNRules() error = %v, wantErr %v",
-					err,
-					tt.wantErr,
-				)
-
+				t.Errorf("NormaliseHostname() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.want {
-				t.Errorf("NormalizeToFQDNRules() = %v, want %v", got, tt.want)
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("NormaliseHostname() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCheckForFQDNRules(t *testing.T) {
-	type args struct {
-		name string
-	}
+func TestValidateHostname(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
+		name          string
+		hostname      string
+		wantErr       bool
+		errorContains string
 	}{
 		{
-			name:    "valid: user",
-			args:    args{name: "valid-user"},
-			wantErr: false,
+			name:     "valid lowercase",
+			hostname: "valid-hostname",
+			wantErr:  false,
 		},
 		{
-			name:    "invalid: capitalized user",
-			args:    args{name: "Invalid-CapItaLIzed-user"},
-			wantErr: true,
+			name:          "uppercase rejected",
+			hostname:      "MyHostname",
+			wantErr:       true,
+			errorContains: "must be lowercase",
 		},
 		{
-			name:    "invalid: email as user",
-			args:    args{name: "foo.bar@example.com"},
-			wantErr: true,
+			name:          "too short",
+			hostname:      "a",
+			wantErr:       true,
+			errorContains: "too short",
 		},
 		{
-			name:    "invalid: chars in user name",
-			args:    args{name: "super-user+name"},
-			wantErr: true,
+			name:          "too long",
+			hostname:      "a" + strings.Repeat("b", 63),
+			wantErr:       true,
+			errorContains: "too long",
 		},
 		{
-			name: "invalid: too long name for user",
-			args: args{
-				name: "super-long-useruseruser-name-that-should-be-a-little-more-than-63-chars",
-			},
-			wantErr: true,
+			name:          "emoji rejected",
+			hostname:      "hostname-💩",
+			wantErr:       true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:          "starts with hyphen",
+			hostname:      "-hostname",
+			wantErr:       true,
+			errorContains: "cannot start or end with a hyphen",
+		},
+		{
+			name:          "ends with hyphen",
+			hostname:      "hostname-",
+			wantErr:       true,
+			errorContains: "cannot start or end with a hyphen",
+		},
+		{
+			name:          "starts with dot",
+			hostname:      ".hostname",
+			wantErr:       true,
+			errorContains: "cannot start or end with a dot",
+		},
+		{
+			name:          "ends with dot",
+			hostname:      "hostname.",
+			wantErr:       true,
+			errorContains: "cannot start or end with a dot",
+		},
+		{
+			name:          "special characters",
+			hostname:      "host!@#$name",
+			wantErr:       true,
+			errorContains: "invalid characters",
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := CheckForFQDNRules(tt.args.name); (err != nil) != tt.wantErr {
-				t.Errorf("CheckForFQDNRules() error = %v, wantErr %v", err, tt.wantErr)
+			err := ValidateHostname(tt.hostname)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateHostname() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errorContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errorContains) {
+					t.Errorf("ValidateHostname() error = %v, should contain %q", err, tt.errorContains)
+				}
 			}
 		})
 	}
@@ -150,59 +184,16 @@ func TestCheckForFQDNRules(t *testing.T) {
 func TestMagicDNSRootDomains100(t *testing.T) {
 	domains := GenerateIPv4DNSRootDomain(netip.MustParsePrefix("100.64.0.0/10"))
 
-	found := false
-	for _, domain := range domains {
-		if domain == "64.100.in-addr.arpa." {
-			found = true
-
-			break
-		}
-	}
-	assert.True(t, found)
-
-	found = false
-	for _, domain := range domains {
-		if domain == "100.100.in-addr.arpa." {
-			found = true
-
-			break
-		}
-	}
-	assert.True(t, found)
-
-	found = false
-	for _, domain := range domains {
-		if domain == "127.100.in-addr.arpa." {
-			found = true
-
-			break
-		}
-	}
-	assert.True(t, found)
+	assert.Contains(t, domains, must.Get(dnsname.ToFQDN("64.100.in-addr.arpa.")))
+	assert.Contains(t, domains, must.Get(dnsname.ToFQDN("100.100.in-addr.arpa.")))
+	assert.Contains(t, domains, must.Get(dnsname.ToFQDN("127.100.in-addr.arpa.")))
 }
 
 func TestMagicDNSRootDomains172(t *testing.T) {
 	domains := GenerateIPv4DNSRootDomain(netip.MustParsePrefix("172.16.0.0/16"))
 
-	found := false
-	for _, domain := range domains {
-		if domain == "0.16.172.in-addr.arpa." {
-			found = true
-
-			break
-		}
-	}
-	assert.True(t, found)
-
-	found = false
-	for _, domain := range domains {
-		if domain == "255.16.172.in-addr.arpa." {
-			found = true
-
-			break
-		}
-	}
-	assert.True(t, found)
+	assert.Contains(t, domains, must.Get(dnsname.ToFQDN("0.16.172.in-addr.arpa.")))
+	assert.Contains(t, domains, must.Get(dnsname.ToFQDN("255.16.172.in-addr.arpa.")))
 }
 
 // Happens when netmask is a multiple of 4 bits (sounds likely).

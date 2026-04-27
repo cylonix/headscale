@@ -9,199 +9,198 @@ import "headscale/v1/user.proto";
 option go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 enum RegisterMethod {
-    REGISTER_METHOD_UNSPECIFIED = 0;
-    REGISTER_METHOD_AUTH_KEY    = 1;
-    REGISTER_METHOD_CLI         = 2;
-    REGISTER_METHOD_OIDC        = 3;
+  REGISTER_METHOD_UNSPECIFIED = 0;
+  REGISTER_METHOD_AUTH_KEY = 1;
+  REGISTER_METHOD_CLI = 2;
+  REGISTER_METHOD_OIDC = 3;
 }
 
 message Node {
-    // 9: removal of last_successful_update
-    reserved 9;
+  // 9: removal of last_successful_update
+  reserved 9;
 
-    uint64          id           = 1;
-    string          machine_key  = 2;
-    string          node_key     = 3;
-    string          disco_key    = 4;
-    repeated string ip_addresses = 5;
-    string          name         = 6;
-    User            user         = 7;
+  uint64 id = 1;
+  string machine_key = 2;
+  string node_key = 3;
+  string disco_key = 4;
+  repeated string ip_addresses = 5;
+  string name = 6;
+  User user = 7;
 
-    google.protobuf.Timestamp last_seen = 8;
-    google.protobuf.Timestamp expiry    = 10;
+  google.protobuf.Timestamp last_seen = 8;
+  google.protobuf.Timestamp expiry = 10;
 
-    PreAuthKey pre_auth_key = 11;
+  PreAuthKey pre_auth_key = 11;
 
-    google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp created_at = 12;
 
-    RegisterMethod register_method = 13;
+  RegisterMethod register_method = 13;
 
-    reserved 14 to 17;
-    // google.protobuf.Timestamp updated_at = 14;
-    // google.protobuf.Timestamp deleted_at = 15;
+  reserved 14 to 20;
+  // google.protobuf.Timestamp updated_at = 14;
+  // google.protobuf.Timestamp deleted_at = 15;
+  // bytes host_info      = 15;
+  // bytes endpoints      = 16;
+  // bytes enabled_routes = 17;
+  // 18-20: upstream v0.28 removed forced_tags/invalid_tags/valid_tags
+  //        (Tags-as-Identity model).
 
-    // bytes host_info      = 15;
-    // bytes endpoints      = 16;
-    // bytes enabled_routes = 17;
+  string given_name = 21;
+  bool online = 22;
+  repeated string approved_routes = 23;
+  repeated string available_routes = 24;
+  repeated string subnet_routes = 25;
+  repeated string tags = 26;
 
-    repeated string forced_tags  = 18;
-    repeated string invalid_tags = 19;
-    repeated string valid_tags   = 20;
-    string          given_name   = 21;
-    bool            online       = 22;
-
-    optional bool      wireguard_only = 23; // __CYLONIX_ADD__
-    optional string    stable_id      = 24; // __CYLONIX_ADD__
-    string             namespace      = 25; // __CYLONIX_ADD__
-    repeated string    endpoints      = 26; // __CYLONIX_ADD__
-    repeated RouteSpec routes         = 27; // __CYLONIX_ADD__
-    optional uint32    cap_version    = 28; // __CYLONIX_ADD__
-    repeated string    capabilities   = 29; // __CYLONIX_ADD__
-    string             network_domain = 30; // __CYLONIX_ADD__
-    optional Hostinfo  hostinfo       = 31; // __CYLONIX_ADD__
-    optional string    health         = 32; // __CYLONIX_ADD__
-    repeated string    share_to_users = 33; // __CYLONIX_ADD__
+  // __BEGIN_CYLONIX_MOD__
+  // Cylonix extensions moved from field numbers 23-33 to 30+ after upstream
+  // reclaimed 23-26 for approved_routes/available_routes/subnet_routes/tags.
+  // These carry multi-tenant and richer node metadata beyond upstream.
+  optional bool wireguard_only = 30;
+  optional string stable_id = 31;
+  string namespace = 32;
+  repeated string endpoints = 33;
+  repeated RouteSpec routes = 34;
+  optional uint32 cap_version = 35;
+  repeated string capabilities = 36;
+  string network_domain = 37;
+  optional Hostinfo hostinfo = 38;
+  optional string health = 39;
+  repeated string share_to_users = 40;
+  // Per-node tag annotations populated by the cylonix admin ListNodes path.
+  // valid_tags is the subset of `tags` that is allowed by the active policy
+  // for this node; invalid_tags is the complement. Upstream v0.28 retired
+  // these because the Tags-as-Identity model treats all tags as authoritative,
+  // but cylonix-manager surfaces them in admin UIs to flag misconfigurations
+  // (e.g., a tag that an ACL rule has disowned for the node's IP).
+  repeated string invalid_tags = 41;
+  repeated string valid_tags = 42;
+  // __END_CYLONIX_MOD__
 }
 
 message RegisterNodeRequest {
-    string user = 1;
-    string key  = 2;
-    optional string namespace = 3; // __CYLONIX_MOD__
-    optional string network   = 4; // __CYLONIX_MOD_
+  string user = 1;
+  string key = 2;
+  // __BEGIN_CYLONIX_MOD__
+  optional string namespace = 3;
+  optional string network = 4;
+  // __END_CYLONIX_MOD__
 }
 
-message RegisterNodeResponse {
-    Node node = 1;
-}
+message RegisterNodeResponse { Node node = 1; }
 
-message GetNodeRequest {
-    uint64 node_id = 1;
-}
+message GetNodeRequest { uint64 node_id = 1; }
 
-message GetNodeResponse {
-    Node node = 1;
-}
+message GetNodeResponse { Node node = 1; }
 
 message SetTagsRequest {
-    uint64          node_id = 1;
-    repeated string tags    = 2;
+  uint64 node_id = 1;
+  repeated string tags = 2;
 }
 
-message SetTagsResponse {
-    Node node = 1;
+message SetTagsResponse { Node node = 1; }
+
+message SetApprovedRoutesRequest {
+  uint64 node_id = 1;
+  repeated string routes = 2;
 }
 
-message DeleteNodeRequest {
-    uint64 node_id = 1;
-}
+message SetApprovedRoutesResponse { Node node = 1; }
+
+message DeleteNodeRequest { uint64 node_id = 1; }
 
 message DeleteNodeResponse {}
 
 message ExpireNodeRequest {
-    uint64 node_id = 1;
-    optional google.protobuf.Timestamp expiry = 2; // __CYLONIX_ADD__ 0 means disable expiry
+  uint64 node_id = 1;
+  // __BEGIN_CYLONIX_MOD__
+  // Empty timestamp means "expire now"; a future timestamp defers expiry.
+  optional google.protobuf.Timestamp expiry = 2;
+  // __END_CYLONIX_MOD__
 }
 
-message ExpireNodeResponse {
-    Node node = 1;
-}
+message ExpireNodeResponse { Node node = 1; }
 
 message RenameNodeRequest {
-    uint64 node_id  = 1;
-    string new_name = 2;
+  uint64 node_id = 1;
+  string new_name = 2;
 }
 
-message RenameNodeResponse {
-    Node node = 1;
-}
+message RenameNodeResponse { Node node = 1; }
 
 message ListNodesRequest {
-    string user = 1;
-    // __BEGIN_CYLONIX_ADD_
-    repeated uint64 node_id_list = 2;
-    optional string namespace    = 3;
-    optional string network      = 4;
-    optional bool   online_only  = 5;
-    optional string filter_by    = 6;
-    optional string filter_value = 7;
-    optional string sort_by      = 8;
-    optional string sort_desc    = 9;
-    optional uint32 page         = 10;
-    optional uint32 pageSize     = 11;
-
-    // If to list only nodes that are shared in.
-    optional bool share_in_only  = 12;
-    // __END_CYLONIX_ADD__
+  string user = 1;
+  // __BEGIN_CYLONIX_MOD__
+  repeated uint64 node_id_list = 2;
+  optional string namespace = 3;
+  optional string network = 4;
+  optional bool online_only = 5;
+  optional string filter_by = 6;
+  optional string filter_value = 7;
+  optional string sort_by = 8;
+  optional string sort_desc = 9;
+  optional uint32 page = 10;
+  optional uint32 pageSize = 11;
+  // If to list only nodes that are shared in.
+  optional bool share_in_only = 12;
+  // __END_CYLONIX_MOD__
 }
 
 message ListNodesResponse {
-    repeated Node nodes = 1;
-    uint32        total = 2; // __CYLONIX_MOD__
+  repeated Node nodes = 1;
+  uint32 total = 2; // __CYLONIX_MOD__
 }
 
-message MoveNodeRequest {
-    uint64 node_id = 1;
-    string user    = 2;
-}
-
-message MoveNodeResponse {
-    Node node = 1;
-}
+// NOTE: MoveNode RPC removed upstream in v0.28 per Tags-as-Identity model.
+// Node ownership change now requires re-registration with different tags.
 
 message DebugCreateNodeRequest {
-    string          user   = 1;
-    string          key    = 2;
-    string          name   = 3;
-    repeated string routes = 4;
-    optional string namespace = 5; // __CYLONIX_MOD__
+  string user = 1;
+  string key = 2;
+  string name = 3;
+  repeated string routes = 4;
+  optional string namespace = 5; // __CYLONIX_MOD__
 }
 
-message DebugCreateNodeResponse {
-    Node node = 1;
-}
+message DebugCreateNodeResponse { Node node = 1; }
 
 message BackfillNodeIPsRequest {
-    bool confirmed = 1;
-    optional string namespace = 2; // __CYLONIX_MOD__
+  bool confirmed = 1;
+  optional string namespace = 2; // __CYLONIX_MOD__
 }
 
-message BackfillNodeIPsResponse {
-    repeated string changes = 1;
-}
+message BackfillNodeIPsResponse { repeated string changes = 1; }
 
-// ___BEGIN_CYLONIX_MOD__
-message CreateNodeRequest {
-    Node node = 1;
-}
-message CreateNodeResponse {
-    uint64 node_id = 1;
-}
+// __BEGIN_CYLONIX_MOD__
+message CreateNodeRequest { Node node = 1; }
+message CreateNodeResponse { uint64 node_id = 1; }
 
 message UpdateNodeRequest {
-    uint64                   node_id = 1;
-    string                 namespace = 2;
-    Node                      update = 3;
-    repeated string add_capabilities = 4;
-    repeated string del_capabilities = 5;
+  uint64 node_id = 1;
+  string namespace = 2;
+  Node update = 3;
+  repeated string add_capabilities = 4;
+  repeated string del_capabilities = 5;
 }
-message UpdateNodeResponse {
-}
+message UpdateNodeResponse {}
+
+// RouteSpec provides richer per-route metadata than upstream's plain
+// `repeated string approved_routes`/`available_routes`/`subnet_routes`.
 message RouteSpec {
-    uint64 id         = 1;
-    string prefix     = 2;
-    bool   advertised = 3;
-    bool   enabled    = 4;
-    bool   is_primary = 5;
+  uint64 id = 1;
+  string prefix = 2;
+  bool advertised = 3;
+  bool enabled = 4;
+  bool is_primary = 5;
 }
 
 message UpdateNodeShareToUserRequest {
-    uint64          node_id                    = 1;
-    string          namespace                  = 2;
-    optional string add_would_share_to_user    = 3; // username
-    optional string del_would_share_to_user    = 4; // username
-    optional string add_accepted_share_to_user = 5; // username
-    optional string del_accepted_share_to_user = 6; // username
+  uint64 node_id = 1;
+  string namespace = 2;
+  optional string add_would_share_to_user = 3; // username
+  optional string del_would_share_to_user = 4; // username
+  optional string add_accepted_share_to_user = 5; // username
+  optional string del_accepted_share_to_user = 6; // username
 }
-message UpdateNodeShareToUserResponse {
-}
+message UpdateNodeShareToUserResponse {}
 // __END_CYLONIX_MOD__

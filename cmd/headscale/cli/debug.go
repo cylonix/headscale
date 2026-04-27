@@ -4,14 +4,10 @@ import (
 	"fmt"
 
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
+	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/status"
-	"tailscale.com/types/key"
-)
-
-const (
-	errPreAuthKeyMalformed = Error("key is malformed. expected 64 hex characters with `nodekey` prefix")
 )
 
 // Error is used to compare errors as per https://dave.cheney.net/2016/04/07/constant-errors
@@ -64,11 +60,9 @@ var createNodeCmd = &cobra.Command{
 		user, err := cmd.Flags().GetString("user")
 		if err != nil {
 			ErrorOutput(err, fmt.Sprintf("Error getting user: %s", err), output)
-
-			return
 		}
 
-		ctx, client, conn, cancel := getHeadscaleCLIClient()
+		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
 		defer cancel()
 		defer conn.Close()
 
@@ -79,31 +73,24 @@ var createNodeCmd = &cobra.Command{
 				fmt.Sprintf("Error getting node from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
-		machineKey, err := cmd.Flags().GetString("key")
+		registrationID, err := cmd.Flags().GetString("key")
 		if err != nil {
 			ErrorOutput(
 				err,
 				fmt.Sprintf("Error getting key from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
-		var mkey key.MachinePublic
-		err = mkey.UnmarshalText([]byte(machineKey))
+		_, err = types.RegistrationIDFromString(registrationID)
 		if err != nil {
 			ErrorOutput(
 				err,
 				fmt.Sprintf("Failed to parse machine key from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
 		routes, err := cmd.Flags().GetStringSlice("route")
@@ -113,12 +100,10 @@ var createNodeCmd = &cobra.Command{
 				fmt.Sprintf("Error getting routes from flag: %s", err),
 				output,
 			)
-
-			return
 		}
 
 		request := &v1.DebugCreateNodeRequest{
-			Key:    machineKey,
+			Key:    registrationID,
 			Name:   name,
 			User:   user,
 			Routes: routes,
@@ -128,11 +113,9 @@ var createNodeCmd = &cobra.Command{
 		if err != nil {
 			ErrorOutput(
 				err,
-				fmt.Sprintf("Cannot create node: %s", status.Convert(err).Message()),
+				"Cannot create node: "+status.Convert(err).Message(),
 				output,
 			)
-
-			return
 		}
 
 		SuccessOutput(response.GetNode(), "Node created", output)

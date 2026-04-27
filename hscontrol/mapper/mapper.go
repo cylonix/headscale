@@ -1,46 +1,35 @@
 package mapper
 
 import (
-	"context"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
 	"path"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/aws/smithy-go/ptr"
-	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/juanfont/headscale/hscontrol/db"
+	// __BEGIN_CYLONIX_ADD__
 	"github.com/juanfont/headscale/hscontrol/derp"
-	"github.com/juanfont/headscale/hscontrol/notifier"
-	"github.com/juanfont/headscale/hscontrol/policy"
-	"github.com/juanfont/headscale/hscontrol/policy/matcher"
+	// __END_CYLONIX_ADD__
+	"github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/juanfont/headscale/hscontrol/util"
-	"github.com/klauspost/compress/zstd"
+	"github.com/juanfont/headscale/hscontrol/types/change"
 	"github.com/rs/zerolog/log"
 	"github.com/tailscale/hujson"
 	"tailscale.com/envknob"
-	"tailscale.com/smallzstd"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
+	"tailscale.com/types/views"
 )
 
 const (
-	nextDNSDoHPrefix           = "https://dns.nextdns.io"
-	reservedResponseHeaderSize = 4
-	mapperIDLength             = 8
-	debugMapResponsePerm       = 0o755
+	nextDNSDoHPrefix     = "https://dns.nextdns.io"
+	mapperIDLength       = 8
+	debugMapResponsePerm = 0o755
 )
 
 var debugDumpMapResponsePath = envknob.String("HEADSCALE_DEBUG_DUMP_MAPRESPONSE_PATH")
@@ -56,17 +45,13 @@ var debugDumpMapResponsePath = envknob.String("HEADSCALE_DEBUG_DUMP_MAPRESPONSE_
 // - Create a "minifier" that removes info not needed for the node
 // - some sort of batching, wait for 5 or 60 seconds before sending
 
-type Mapper struct {
+type mapper struct {
 	// Configuration
-	// TODO(kradalby): figure out if this is the format we want this in
-	db      *db.HSDatabase
+	state   *state.State
 	cfg     *types.Config
-	derpMap *tailcfg.DERPMap
-	notif   *notifier.Notifier
+	batcher Batcher
 
-	uid     string
 	created time.Time
-	seq     uint64
 }
 
 type patch struct {
@@ -74,43 +59,59 @@ type patch struct {
 	change    *tailcfg.PeerChange
 }
 
-func NewMapper(
-	db *db.HSDatabase,
+func newMapper(
 	cfg *types.Config,
-	derpMap *tailcfg.DERPMap,
-	notif *notifier.Notifier,
-) *Mapper {
-	uid, _ := util.GenerateRandomStringDNSSafe(mapperIDLength)
+	state *state.State,
+) *mapper {
+	// uid, _ := util.GenerateRandomStringDNSSafe(mapperIDLength)
 
-	return &Mapper{
-		db:      db,
-		cfg:     cfg,
-		derpMap: derpMap,
-		notif:   notif,
+	return &mapper{
+		state: state,
+		cfg:   cfg,
 
-		uid:     uid,
 		created: time.Now(),
-		seq:     0,
 	}
 }
 
-func (m *Mapper) String() string {
-	return fmt.Sprintf("Mapper: { seq: %d, uid: %s, created: %s }", m.seq, m.uid, m.created)
-}
-
+// generateUserProfiles creates user profiles for MapResponse.
+// __CYLONIX_MOD__ takes cfg so UserView.TailscaleUserProfile can route
+// through cylonix's NodeHandler hook for the proper email/display name.
 func generateUserProfiles(
-	node *types.Node,
-	peers types.Nodes,
+	node types.NodeView,
+	peers views.Slice[types.NodeView],
+	cfg *types.Config,
 ) []tailcfg.UserProfile {
-	userMap := make(map[string]types.User)
-	userMap[node.User.Name] = node.User
-	for _, peer := range peers {
-		userMap[peer.User.Name] = peer.User // not worth checking if already is there
+	userMap := make(map[uint]*types.UserView)
+	ids := make([]uint, 0, len(userMap))
+	user := node.Owner()
+	if !user.Valid() {
+		log.Error().
+			Uint64("node.id", node.ID().Uint64()).
+			Str("node.name", node.Hostname()).
+			Msg("node has no valid owner, skipping user profile generation")
+
+		return nil
+	}
+	userID := user.Model().ID
+	userMap[userID] = &user
+	ids = append(ids, userID)
+	for _, peer := range peers.All() {
+		peerUser := peer.Owner()
+		if !peerUser.Valid() {
+			continue
+		}
+		peerUserID := peerUser.Model().ID
+		userMap[peerUserID] = &peerUser
+		ids = append(ids, peerUserID)
 	}
 
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
 	var profiles []tailcfg.UserProfile
-	for _, user := range userMap {
-		profiles = append(profiles, user.TailscaleUserProfile(nil)) // __CYLONIX_MOD__
+	for _, id := range ids {
+		if userMap[id] != nil {
+			profiles = append(profiles, userMap[id].TailscaleUserProfile(cfg))
+		}
 	}
 
 	return profiles
@@ -118,47 +119,13 @@ func generateUserProfiles(
 
 func generateDNSConfig(
 	cfg *types.Config,
-	baseDomain string,
-	node *types.Node,
-	peers types.Nodes,
+	node types.NodeView,
 ) *tailcfg.DNSConfig {
-	if cfg.DNSConfig == nil {
+	if cfg.TailcfgDNSConfig == nil {
 		return nil
 	}
 
-	dnsConfig := cfg.DNSConfig.Clone()
-
-	// __BEGIN_CYLONIX_MOD__
-	if !slices.Contains(dnsConfig.Domains, baseDomain) && baseDomain != "" {
-		dnsConfig.Domains = append(dnsConfig.Domains, baseDomain)
-	}
-	// __END_CYLONIX_MOD__
-
-	// if MagicDNS is enabled
-	if dnsConfig.Proxied {
-		if cfg.DNSUserNameInMagicDNS {
-			// Only inject the Search Domain of the current user
-			// shared nodes should use their full FQDN
-			dnsConfig.Domains = append(
-				dnsConfig.Domains,
-				fmt.Sprintf(
-					"%s.%s",
-					node.User.Name,
-					baseDomain,
-				),
-			)
-
-			userSet := mapset.NewSet[types.User]()
-			userSet.Add(node.User)
-			for _, p := range peers {
-				userSet.Add(p.User)
-			}
-			for _, user := range userSet.ToSlice() {
-				dnsRoute := fmt.Sprintf("%v.%v", user.Name, baseDomain)
-				dnsConfig.Routes[dnsRoute] = nil
-			}
-		}
-	}
+	dnsConfig := cfg.TailcfgDNSConfig.Clone()
 
 	addNextDNSMetadata(dnsConfig.Resolvers, node)
 
@@ -172,12 +139,12 @@ func generateDNSConfig(
 //
 // This will produce a resolver like:
 // `https://dns.nextdns.io/<nextdns-id>?device_name=node-name&device_model=linux&device_ip=100.64.0.1`
-func addNextDNSMetadata(resolvers []*dnstype.Resolver, node *types.Node) {
+func addNextDNSMetadata(resolvers []*dnstype.Resolver, node types.NodeView) {
 	for _, resolver := range resolvers {
 		if strings.HasPrefix(resolver.Addr, nextDNSDoHPrefix) {
 			attrs := url.Values{
-				"device_name":  []string{node.Hostname},
-				"device_model": []string{node.Hostinfo.OS},
+				"device_name":  []string{node.Hostname()},
+				"device_model": []string{node.Hostinfo().OS()},
 			}
 
 			if len(node.IPs()) > 0 {
@@ -189,691 +156,292 @@ func addNextDNSMetadata(resolvers []*dnstype.Resolver, node *types.Node) {
 	}
 }
 
-// fullMapResponse creates a complete MapResponse for a node.
-// It is a separate function to make testing easier.
-func (m *Mapper) fullMapResponse(
-	node *types.Node,
-	peers types.Nodes,
-	pol *policy.ACLPolicy,
+// fullMapResponse returns a MapResponse for the given node.
+func (m *mapper) fullMapResponse(
+	nodeID types.NodeID,
 	capVer tailcfg.CapabilityVersion,
 ) (*tailcfg.MapResponse, error) {
-	resp, err := m.baseWithConfigMapResponse(node, pol, capVer)
-	if err != nil {
-		return nil, err
-	}
+	peers := m.state.ListPeers(nodeID)
 
-	log.Info().Caller().
-		Int("peers-count", len(peers)).
-		Str("namespace", node.Namespace).               // __CYLONIX_MOD__
-		Str("user", ptr.ToString(node.User.LoginName)). // __CYLONIX_MOD__
-		Str("node", node.Hostname).                     // __CYLONIX_MOD__
-		Msg("Peers listed for full map response")       // __CYLONIX_MOD__
-
-	err = m.appendPeerChanges( // __CYLONIX_MOD__
-		resp,
-		true, // full change
-		pol,
-		node,
-		capVer,
-		peers,
-		peers,
-		m.cfg,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
+	return m.NewMapResponseBuilder(nodeID).
+		WithDebugType(fullResponseDebug).
+		WithCapabilityVersion(capVer).
+		WithSelfNode().
+		WithDERPMap().
+		WithDomain().
+		WithCollectServicesDisabled().
+		WithDebugConfig().
+		WithSSHPolicy().
+		WithDNSConfig().
+		WithUserProfiles(peers).
+		WithPacketFilters().
+		WithPeers(peers).
+		Build()
 }
 
-// FullMapResponse returns a MapResponse for the given node.
-func (m *Mapper) FullMapResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	pol *policy.ACLPolicy,
-	messages ...string,
-) ([]byte, error) {
-	peers, err := m.ListPeers(node) // __CYLONIX_MOD__
+func (m *mapper) selfMapResponse(
+	nodeID types.NodeID,
+	capVer tailcfg.CapabilityVersion,
+) (*tailcfg.MapResponse, error) {
+	ma, err := m.NewMapResponseBuilder(nodeID).
+		WithDebugType(selfResponseDebug).
+		WithCapabilityVersion(capVer).
+		WithSelfNode().
+		Build()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := m.fullMapResponse(node, peers, pol, mapRequest.Version)
-	if err != nil {
-		return nil, err
-	}
+	// Set the peers to nil, to ensure the node does not think
+	// its getting a new list.
+	ma.Peers = nil
 
-	return m.marshalMapResponse(mapRequest, resp, node, mapRequest.Compress, messages...)
+	return ma, err
 }
 
-// ReadOnlyResponse returns a MapResponse for the given node.
-// Lite means that the peers has been omitted, this is intended
-// to be used to answer MapRequests with OmitPeers set to true.
-func (m *Mapper) ReadOnlyMapResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	pol *policy.ACLPolicy,
-	messages ...string,
-) ([]byte, error) {
-	resp, err := m.baseWithConfigMapResponse(node, pol, mapRequest.Version)
-	if err != nil {
-		return nil, err
+// policyChangeResponse creates a MapResponse for policy changes.
+// It sends:
+// - PeersRemoved for peers that are no longer visible after the policy change
+// - PeersChanged for remaining peers (their AllowedIPs may have changed due to policy)
+// - Updated PacketFilters
+// - Updated SSHPolicy (SSH rules may reference users/groups that changed)
+// - Optionally, the node's own self info (when includeSelf is true)
+// This avoids the issue where an empty Peers slice is interpreted by Tailscale
+// clients as "no change" rather than "no peers".
+// When includeSelf is true, the node's self info is included so that a node
+// whose own attributes changed (e.g., tags via admin API) sees its updated
+// self info along with the new packet filters.
+func (m *mapper) policyChangeResponse(
+	nodeID types.NodeID,
+	capVer tailcfg.CapabilityVersion,
+	removedPeers []tailcfg.NodeID,
+	currentPeers views.Slice[types.NodeView],
+	includeSelf bool,
+) (*tailcfg.MapResponse, error) {
+	builder := m.NewMapResponseBuilder(nodeID).
+		WithDebugType(policyResponseDebug).
+		WithCapabilityVersion(capVer).
+		WithPacketFilters().
+		WithSSHPolicy()
+
+	if includeSelf {
+		builder = builder.WithSelfNode()
 	}
 
-	return m.marshalMapResponse(mapRequest, resp, node, mapRequest.Compress, messages...)
-}
+	if len(removedPeers) > 0 {
+		// Convert tailcfg.NodeID to types.NodeID for WithPeersRemoved
+		removedIDs := make([]types.NodeID, len(removedPeers))
+		for i, id := range removedPeers {
+			removedIDs[i] = types.NodeID(id) //nolint:gosec // NodeID types are equivalent
+		}
 
-func (m *Mapper) KeepAliveResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-) ([]byte, error) {
-	resp := m.baseMapResponse()
-	resp.KeepAlive = true
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
-}
-
-func (m *Mapper) DERPMapResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	derpMap *tailcfg.DERPMap,
-) ([]byte, error) {
-	m.derpMap = derpMap
-
-	resp := m.baseMapResponse()
-
-	// __ BEGIN_CYLONIX_MOD __
-	if err := m.setMapResponseDERPMap(&resp, node, derpMap); err != nil {
-		return nil, err
-	}
-	// __ END_CYLONIX_MOD __
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
-}
-
-func (m *Mapper) PeerChangedResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	changed map[types.NodeID]bool,
-	patches []*tailcfg.PeerChange,
-	pol *policy.ACLPolicy,
-	messages ...string,
-) ([]byte, error) {
-	resp := m.baseMapResponse()
-
-	peers, err := m.ListPeers(node) // __CYLONIX_MOD__
-	if err != nil {
-		return nil, err
+		builder.WithPeersRemoved(removedIDs...)
 	}
 
-	var removedIDs []tailcfg.NodeID
-	var changedIDs []types.NodeID
-	for nodeID, nodeChanged := range changed {
-		if nodeChanged {
-			changedIDs = append(changedIDs, nodeID)
-		} else {
-			removedIDs = append(removedIDs, nodeID.NodeID())
+	// Send remaining peers in PeersChanged - their AllowedIPs may have
+	// changed due to the policy update (e.g., different routes allowed).
+	if currentPeers.Len() > 0 {
+		builder.WithPeerChanges(currentPeers)
+	}
+
+	return builder.Build()
+}
+
+// buildFromChange builds a MapResponse from a change.Change specification.
+// This provides fine-grained control over what gets included in the response.
+func (m *mapper) buildFromChange(
+	nodeID types.NodeID,
+	capVer tailcfg.CapabilityVersion,
+	resp *change.Change,
+) (*tailcfg.MapResponse, error) {
+	if resp.IsEmpty() {
+		return nil, nil //nolint:nilnil // Empty response means nothing to send, not an error
+	}
+
+	// If this is a self-update (the changed node is the receiving node),
+	// send a self-update response to ensure the node sees its own changes.
+	if resp.OriginNode != 0 && resp.OriginNode == nodeID {
+		return m.selfMapResponse(nodeID, capVer)
+	}
+
+	builder := m.NewMapResponseBuilder(nodeID).
+		WithCapabilityVersion(capVer).
+		WithDebugType(changeResponseDebug)
+
+	if resp.IncludeSelf {
+		builder.WithSelfNode()
+	}
+
+	if resp.IncludeDERPMap {
+		builder.WithDERPMap()
+	}
+
+	if resp.IncludeDNS {
+		builder.WithDNSConfig()
+	}
+
+	if resp.IncludeDomain {
+		builder.WithDomain()
+	}
+
+	if resp.IncludePolicy {
+		builder.WithPacketFilters()
+		builder.WithSSHPolicy()
+	}
+
+	if resp.SendAllPeers {
+		peers := m.state.ListPeers(nodeID)
+		builder.WithUserProfiles(peers)
+		builder.WithPeers(peers)
+	} else {
+		if len(resp.PeersChanged) > 0 {
+			peers := m.state.ListPeers(nodeID, resp.PeersChanged...)
+			builder.WithUserProfiles(peers)
+			builder.WithPeerChanges(peers)
+		}
+
+		if len(resp.PeersRemoved) > 0 {
+			builder.WithPeersRemoved(resp.PeersRemoved...)
 		}
 	}
 
-	changedNodes := make(types.Nodes, 0, len(changedIDs))
-	for _, peer := range peers {
-		if slices.Contains(changedIDs, peer.ID) {
-			changedNodes = append(changedNodes, peer)
-		}
+	if len(resp.PeerPatches) > 0 {
+		builder.WithPeerChangedPatch(resp.PeerPatches)
 	}
 
-	log.Trace().Caller().
-		Int("peers-count", len(peers)).
-		Int("peers-changed", len(changedNodes)).
-		Msg("Peers listed") // __CYLONIX_MOD__
-
-	err = m.appendPeerChanges( // __CYLONIX_MOD__
-		&resp,
-		false, // partial change
-		pol,
-		node,
-		mapRequest.Version,
-		peers,
-		changedNodes,
-		m.cfg,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.PeersRemoved = removedIDs
-
-	// Sending patches as a part of a PeersChanged response
-	// is technically not suppose to be done, but they are
-	// applied after the PeersChanged. The patch list
-	// should _only_ contain Nodes that are not in the
-	// PeersChanged or PeersRemoved list and the caller
-	// should filter them out.
-	//
-	// From tailcfg docs:
-	// These are applied after Peers* above, but in practice the
-	// control server should only send these on their own, without
-	// the Peers* fields also set.
-	if patches != nil {
-		resp.PeersChangedPatch = patches
-	}
-
-	// Add the node itself, it might have changed, and particularly
-	// if there are no patches or changes, this is a self update.
-	tailnode, err := tailNode(node, mapRequest.Version, pol, m.cfg)
-	if err != nil {
-		return nil, err
-	}
-	resp.Node = tailnode
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress, messages...)
+	return builder.Build()
 }
 
-// PeerChangedPatchResponse creates a patch MapResponse with
-// incoming update from a state change.
-func (m *Mapper) PeerChangedPatchResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	changed []*tailcfg.PeerChange,
-	pol *policy.ACLPolicy,
-) ([]byte, error) {
-	resp := m.baseMapResponse()
-	resp.PeersChangedPatch = changed
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
-}
-
-func (m *Mapper) marshalMapResponse(
-	mapRequest tailcfg.MapRequest,
+func writeDebugMapResponse(
 	resp *tailcfg.MapResponse,
-	node *types.Node,
-	compression string,
-	messages ...string,
-) ([]byte, error) {
-	atomic.AddUint64(&m.seq, 1)
-
-	jsonBody, err := json.Marshal(resp)
+	t debugType,
+	nodeID types.NodeID,
+) {
+	body, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshalling map response: %w", err)
+		panic(err)
 	}
 
-	if debugDumpMapResponsePath != "" {
-		data := map[string]interface{}{
-			"Messages":    messages,
-			"MapRequest":  mapRequest,
-			"MapResponse": resp,
-		}
-
-		responseType := "keepalive"
-
-		switch {
-		case resp.Peers != nil && len(resp.Peers) > 0:
-			responseType = "full"
-		case resp.Peers == nil && resp.PeersChanged == nil && resp.PeersChangedPatch == nil && resp.DERPMap == nil && !resp.KeepAlive:
-			responseType = "self"
-		case resp.PeersChanged != nil && len(resp.PeersChanged) > 0:
-			responseType = "changed"
-		case resp.PeersChangedPatch != nil && len(resp.PeersChangedPatch) > 0:
-			responseType = "patch"
-		case resp.PeersRemoved != nil && len(resp.PeersRemoved) > 0:
-			responseType = "removed"
-		}
-
-		body, err := json.MarshalIndent(data, "", "  ")
-		if err != nil {
-			return nil, fmt.Errorf("marshalling map response: %w", err)
-		}
-
-		perms := fs.FileMode(debugMapResponsePerm)
-		mPath := path.Join(debugDumpMapResponsePath, node.Hostname)
-		err = os.MkdirAll(mPath, perms)
-		if err != nil {
-			panic(err)
-		}
-
-		now := time.Now().Format("2006-01-02T15-04-05.999999999")
-
-		mapResponsePath := path.Join(
-			mPath,
-			fmt.Sprintf("%s-%s-%d-%s.json", now, m.uid, atomic.LoadUint64(&m.seq), responseType),
-		)
-
-		log.Trace().Msgf("Writing MapResponse to %s", mapResponsePath)
-		err = os.WriteFile(mapResponsePath, body, perms)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	var respBody []byte
-	if compression == util.ZstdCompression {
-		respBody = zstdEncode(jsonBody)
-	} else {
-		respBody = jsonBody
-	}
-
-	data := make([]byte, reservedResponseHeaderSize)
-	binary.LittleEndian.PutUint32(data, uint32(len(respBody)))
-	data = append(data, respBody...)
-
-	return data, nil
-}
-
-func zstdEncode(in []byte) []byte {
-	encoder, ok := zstdEncoderPool.Get().(*zstd.Encoder)
-	if !ok {
-		panic("invalid type in sync pool")
-	}
-	out := encoder.EncodeAll(in, nil)
-	_ = encoder.Close()
-	zstdEncoderPool.Put(encoder)
-
-	return out
-}
-
-var zstdEncoderPool = &sync.Pool{
-	New: func() any {
-		encoder, err := smallzstd.NewEncoder(
-			nil,
-			zstd.WithEncoderLevel(zstd.SpeedFastest))
-		if err != nil {
-			panic(err)
-		}
-
-		return encoder
-	},
-}
-
-// baseMapResponse returns a tailcfg.MapResponse with
-// KeepAlive false and ControlTime set to now.
-func (m *Mapper) baseMapResponse() tailcfg.MapResponse {
-	now := time.Now()
-
-	resp := tailcfg.MapResponse{
-		KeepAlive:   false,
-		ControlTime: &now,
-		// TODO(kradalby): Implement PingRequest?
-	}
-
-	return resp
-}
-
-// baseWithConfigMapResponse returns a tailcfg.MapResponse struct
-// with the basic configuration from headscale set.
-// It is used in for bigger updates, such as full and lite, not
-// incremental.
-func (m *Mapper) baseWithConfigMapResponse(
-	node *types.Node,
-	pol *policy.ACLPolicy,
-	capVer tailcfg.CapabilityVersion,
-) (*tailcfg.MapResponse, error) {
-	resp := m.baseMapResponse()
-
-	tailnode, err := tailNode(node, capVer, pol, m.cfg)
+	perms := fs.FileMode(debugMapResponsePerm)
+	mPath := path.Join(debugDumpMapResponsePath, fmt.Sprintf("%d", nodeID))
+	err = os.MkdirAll(mPath, perms)
 	if err != nil {
-		return nil, err
-	}
-	resp.Node = tailnode
-
-	// __ BEGIN_CYLONIX_MOD __
-	if err := m.setMapResponseDERPMap(&resp, node, m.derpMap); err != nil {
-		return nil, err
-	}
-	domain := node.NetworkDomain
-	if domain == "" {
-		domain = m.cfg.BaseDomain
+		panic(err)
 	}
 
-	resp.Domain = domain
-	// __ END_CYLONIX_MOD __
+	now := time.Now().Format("2006-01-02T15-04-05.999999999")
 
-	resp.CollectServices = "true" // __CYLONIX_MOD__ For admin visibility
-	resp.KeepAlive = false
+	mapResponsePath := path.Join(
+		mPath,
+		fmt.Sprintf("%s-%s.json", now, t),
+	)
 
-	resp.Debug = &tailcfg.Debug{
-		DisableLogTail: !m.cfg.LogTail.Enabled,
+	log.Trace().Msgf("Writing MapResponse to %s", mapResponsePath)
+	err = os.WriteFile(mapResponsePath, body, perms)
+	if err != nil {
+		panic(err)
 	}
-	// __BEGIN_CYLONIX_ADD__
-	// Support selective log tail enabling based on client version.
-	if !m.cfg.LogTail.Enabled && m.cfg.LogTail.After != "" && node.Hostinfo != nil {
-		version := node.Hostinfo.IPNVersion
-		// Remove any suffix after hyphen
-		version = strings.SplitN(version, "-", 2)[0]
-		major1, min1, patch1, err1 := parseVersion(version)
-		major2, min2, patch2, err2 := parseVersion(m.cfg.LogTail.After)
-		if err1 == nil && err2 == nil {
-			if major1 > major2 || (major1 == major2 && min1 > min2) ||
-				(major1 == major2 && min1 == min2 && patch1 >= patch2) {
-				resp.Debug.DisableLogTail = false
-			}
-		}
-	}
-	// __END_CYLONIX_ADD__
-
-	return &resp, nil
 }
 
-func (m *Mapper) ListPeers(node *types.Node) (peers types.Nodes, err error) { // __CYLONIX_MOD__
-	// __BEGIN_CYLONIX_MOD__
-	if m.cfg.NodeHandler != nil {
-		var nodeIDs, onlineIDs []types.NodeID
-		peers, nodeIDs, onlineIDs, err = m.cfg.NodeHandler.Peers(node)
-		if err != nil {
-			return nil, err
-		}
-		if len(nodeIDs) > 0 {
-			list, err := m.db.ListNodesByIDList(nodeIDs)
-			if err != nil {
-				return nil, err
-			}
-			log.Trace().
-				Int("peers", len(list)).
-				Int("online_peers", len(onlineIDs)).
-				Msg("Peers-by-id listed by node handler")
-			if len(onlineIDs) > 0 {
-				for _, v := range list {
-					if v.IsOnline == nil || !*v.IsOnline {
-						if slices.Contains(onlineIDs, v.ID) {
-							online := true
-							v.IsOnline = &online
-						}
-					}
-				}
-			}
-			peers = append(peers, list...)
-		}
-		log.Trace().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
-			Msg("Peers listed by node handler")
-	} else {
-		peers, err = m.db.ListPeers(node.ID)
-		log.Trace().Uint64("node-id", uint64(node.ID)).Int("peers", len(peers)).
-			Msg("Peers listed directly from db")
+func (m *mapper) debugMapResponses() (map[types.NodeID][]tailcfg.MapResponse, error) {
+	if debugDumpMapResponsePath == "" {
+		return nil, nil
 	}
-	// __END_CYLONIX_MOD__
 
+	return ReadMapResponsesFromDirectory(debugDumpMapResponsePath)
+}
+
+func ReadMapResponsesFromDirectory(dir string) (map[types.NodeID][]tailcfg.MapResponse, error) {
+	nodes, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	// __BEGIN_CYLONIX_ADD__
-
-	// Tailscale style node sharing support.
-	// Note, This is not the same as Cylonix's vpn label based sharing for mesh
-	// network peering. A node shared in is quarantined.
-	//
-	// First, list shared in peers. i.e. nodes that are shared to the user.
-	// As a node of the user, this node will peer with all the shared in nodes
-	// of the user and put these shared in nodes in Jailed mode.
-	// And then list peers that this node is being shared to.
-	sharedInPeers, err := m.db.ListSharedInPeers(&node.User)
-	if err != nil {
-		return nil, err
-	}
-	peers = append(peers, sharedInPeers...)
-
-	// List peers that this node is being shared to.
-	sharedToPeers, err := m.db.ListSharedToPeers(node)
-	if err != nil {
-		return nil, err
-	}
-
-	// Note a field can be both shared in and shared to so we need to
-	// deduplicate here but copy the ShareeNode field from the shared to version.
-	peersMap := make(map[types.NodeID]*types.Node)
-	for _, peer := range peers {
-		peersMap[peer.ID] = peer
-	}
-	for _, peer := range sharedToPeers {
-		if existing, ok := peersMap[peer.ID]; ok {
-			// Duplicate, copy ShareeNode field
-			existing.Hostinfo.ShareeNode = true
-			continue
-		}
-		peers = append(peers, peer)
-	}
-
-	// __END_CYLONIX_ADD__
-
-	for _, peer := range peers {
-		// __BEGIN_CYLONIX_MOD__
-		if (peer.IsWireguardOnly != nil && *peer.IsWireguardOnly) ||
-			peer.DiscoKey.IsZero() {
-			if peer.IsOnline == nil || !*peer.IsOnline {
-				// Assume online if last seen is missing or within last 2 minutes
-				// If node is offline, last seen will be non-nil.
-				online := true
-				if peer.LastSeen != nil {
-					online = time.Since(*peer.LastSeen) < 2*time.Minute
-				}
-				peer.IsOnline = &online
-			}
-			continue
-		}
-		// __END_CYLONIX_MOD__
-		online := m.notif.IsLikelyConnected(peer.ID)
-		peer.IsOnline = &online
-	}
-
-	return peers, nil
-}
-
-func nodeMapToList(nodes map[uint64]*types.Node) types.Nodes {
-	ret := make(types.Nodes, 0)
-
+	result := make(map[types.NodeID][]tailcfg.MapResponse)
 	for _, node := range nodes {
-		ret = append(ret, node)
-	}
-
-	return ret
-}
-
-// appendPeerChanges mutates a tailcfg.MapResponse with all the
-// necessary changes when peers have changed.
-func (m *Mapper) appendPeerChanges( // __CYLONIX_MOD__
-	resp *tailcfg.MapResponse,
-
-	fullChange bool,
-	pol *policy.ACLPolicy,
-	node *types.Node,
-	capVer tailcfg.CapabilityVersion,
-	peers types.Nodes,
-	changed types.Nodes,
-	cfg *types.Config,
-) error {
-	packetFilter, err := pol.CompileFilterRules(append(peers, node))
-	if err != nil {
-		return err
-	}
-	grantRules, err := pol.CompileGrantRules(append(peers, node))
-	if err != nil {
-		return err
-	}
-	packetFilter = append(packetFilter, grantRules...)
-
-	sshPolicy, err := pol.CompileSSHPolicy(node, peers)
-	if err != nil {
-		return err
-	}
-
-	// If there are filter rules present, see if there are any nodes that cannot
-	// access each other at all and remove them from the peers.
-	if len(packetFilter) > 0 {
-		changed = policy.FilterNodesByACL(node, changed, packetFilter)
-	}
-
-	profiles := generateUserProfiles(node, changed)
-
-	// __BEGIN_CYLONIX_ADD__
-	if m.cfg != nil && m.cfg.NodeHandler != nil {
-		nodes := []*types.Node{node}
-		nodes = append(nodes, changed...)
-		profiles, err = m.cfg.NodeHandler.Profiles(nodes)
-		if err != nil {
-			return err
-		}
-	}
-	domain := node.NetworkDomain
-	if domain == "" {
-		domain = m.cfg.BaseDomain
-	}
-	// __END_CYLONIX_ADD__
-
-	dnsConfig := generateDNSConfig(
-		cfg,
-		domain, // __CYLONIX_MOD__
-		node,
-		peers,
-	)
-
-	// __BEGIN_CYLONIX_ADD__
-	if dnsConfig.Routes != nil {
-		dnsConfig.Routes[m.cfg.BaseDomain] = nil
-	}
-	// __END_CYLONIX_ADD__
-
-	tailPeers, err := tailNodes(changed, capVer, pol, cfg)
-	if err != nil {
-		return err
-	}
-
-	// __BEGIN_CYLONIX_ADD__
-	if m.cfg != nil && m.cfg.NodeHandler != nil {
-		err = m.cfg.NodeHandler.PeersPostProcessing(node, tailPeers, profiles)
-		if err != nil {
-			log.Error().Caller().Err(err).
-				Str("namespace", node.Namespace).
-				Str("user", ptr.ToString(node.User.LoginName)).
-				Str("node", node.GivenName).
-				Msg("PeersPostProcessing failed")
-			return err
-		}
-	}
-	// __END_CYLONIX_ADD__
-
-	// Peers is always returned sorted by Node.ID.
-	sort.SliceStable(tailPeers, func(x, y int) bool {
-		return tailPeers[x].ID < tailPeers[y].ID
-	})
-
-	if fullChange {
-		resp.Peers = tailPeers
-	} else {
-		resp.PeersChanged = tailPeers
-	}
-	// __BEGIN_CYLONIX_MOD__
-	log.Trace().Caller().
-		Str("namespace", node.Namespace).
-		Str("user", ptr.ToString(node.User.LoginName)).
-		Str("node", node.Hostname).
-		Int("tail-peers-count", len(tailPeers)).
-		Msg("mapper")
-	// __END_CYLONIX_MOD__
-
-	resp.DNSConfig = dnsConfig
-	resp.UserProfiles = profiles
-	resp.SSHPolicy = sshPolicy
-
-	// 81: 2023-11-17: MapResponse.PacketFilters (incremental packet filter updates)
-	if capVer >= 81 {
-		// Currently, we do not send incremental package filters, however using the
-		// new PacketFilters field and "base" allows us to send a full update when we
-		// have to send an empty list, avoiding the hack in the else block.
-		resp.PacketFilters = map[string][]tailcfg.FilterRule{
-			"base": reduceFilterRulesForNode(node, packetFilter),
-		}
-	} else {
-		// This is a hack to avoid sending an empty list of packet filters.
-		// Since tailcfg.PacketFilter has omitempty, any empty PacketFilter will
-		// be omitted, causing the client to consider it unchange, keeping the
-		// previous packet filter. Worst case, this can cause a node that previously
-		// has access to a node to _not_ loose access if an empty (allow none) is sent.
-		reduced := reduceFilterRulesForNode(node, packetFilter)
-		if len(reduced) > 0 {
-			resp.PacketFilter = reduced
-		} else {
-			resp.PacketFilter = packetFilter
-		}
-	}
-
-	return nil
-}
-
-func reduceFilterRulesForNode(node *types.Node, rules []tailcfg.FilterRule) []tailcfg.FilterRule {
-	reduced := policy.ReduceFilterRules(node, rules)
-
-	for _, rule := range rules {
-		if len(rule.CapGrant) == 0 {
+		if !node.IsDir() {
 			continue
 		}
 
-		match := matcher.MatchFromStrings(rule.SrcIPs, nil)
-		if match.SrcsContainsIPs(node.IPs()) {
-			reduced = append(reduced, rule)
+		nodeIDu, err := strconv.ParseUint(node.Name(), 10, 64)
+		if err != nil {
+			log.Error().Err(err).Msgf("Parsing node ID from dir %s", node.Name())
+			continue
+		}
+
+		nodeID := types.NodeID(nodeIDu)
+
+		files, err := os.ReadDir(path.Join(dir, node.Name()))
+		if err != nil {
+			log.Error().Err(err).Msgf("Reading dir %s", node.Name())
+			continue
+		}
+
+		slices.SortStableFunc(files, func(a, b fs.DirEntry) int {
+			return strings.Compare(a.Name(), b.Name())
+		})
+
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+				continue
+			}
+
+			body, err := os.ReadFile(path.Join(dir, node.Name(), file.Name()))
+			if err != nil {
+				log.Error().Err(err).Msgf("Reading file %s", file.Name())
+				continue
+			}
+
+			var resp tailcfg.MapResponse
+			err = json.Unmarshal(body, &resp)
+			if err != nil {
+				log.Error().Err(err).Msgf("Unmarshalling file %s", file.Name())
+				continue
+			}
+
+			result[nodeID] = append(result[nodeID], resp)
 		}
 	}
 
-	return reduced
+	return result, nil
 }
 
-// __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
 
+// DerpMapPolicy carries an optional cylonix per-tenant DERP overlay parsed
+// from the policy hujson blob. The builder pattern should plumb these via
+// state/PolicyManager in a later pass; for now the type is retained so
+// callers referencing it keep compiling.
 type DerpMapPolicy struct {
 	DerpMap *tailcfg.DERPMap `json:"derpMap"`
 }
 
-// GetNodeDERPMap returns the DERPMap for a node by merging the global derpmap
-// with the node specific derpmap based on the policy.
-func (m *Mapper) getNodeDERPMap(node *types.Node, derpMap *tailcfg.DERPMap) (*tailcfg.DERPMap, error) {
-	if node == nil || derpMap == nil || m.db == nil {
+// mergeDERPMapFromPolicy merges the global DERPMap with an optional per-tenant
+// DERPMap extracted from a cylonix policy blob. Returns the input DERPMap
+// unchanged if the policy is empty or does not contain a DerpMap.
+func mergeDERPMapFromPolicy(policyData string, derpMap *tailcfg.DERPMap) (*tailcfg.DERPMap, error) {
+	if derpMap == nil || policyData == "" {
 		return derpMap, nil
 	}
-	policy, err := m.db.GetPolicy(&node.Namespace, &node.NetworkDomain)
-	if err != nil {
-		if errors.Is(err, types.ErrPolicyNotFound) {
-			node.DebugLog().Msg("No policy found")
-			return derpMap, nil
-		}
-		node.ErrorLog(err).Msg("Could not get policy")
-		return nil, fmt.Errorf("could not get policy: %w", err)
-	}
-
-	v, err := hujson.Parse([]byte(policy.Data))
+	v, err := hujson.Parse([]byte(policyData))
 	if err != nil {
 		return nil, fmt.Errorf("parsing hujson, err: %w", err)
 	}
-
 	v.Standardize()
 	jsonBytes := v.Pack()
-	derpMapPolicy := DerpMapPolicy{}
-
-	if err := json.Unmarshal(jsonBytes, &derpMapPolicy); err != nil {
+	dmp := DerpMapPolicy{}
+	if err := json.Unmarshal(jsonBytes, &dmp); err != nil {
 		return nil, fmt.Errorf("unmarshalling policy, err: %w", err)
 	}
-
-	if derpMapPolicy.DerpMap == nil {
-		node.DebugLog().Msg("No derp map found in policy")
+	if dmp.DerpMap == nil {
 		return derpMap, nil
 	}
-	node.DebugLog().Msg("Merging derp maps")
-	return derp.MergeDERPMaps([]*tailcfg.DERPMap{derpMap, derpMapPolicy.DerpMap}), nil
+	return derp.MergeDERPMaps([]*tailcfg.DERPMap{derpMap, dmp.DerpMap}), nil
 }
 
-func (m *Mapper) setMapResponseDERPMap(resp *tailcfg.MapResponse, node *types.Node, derpMap *tailcfg.DERPMap) error {
-	dm, err := m.getNodeDERPMap(node, derpMap)
-	if err != nil {
-		return err
-	}
-	resp.DERPMap = dm
-	return nil
-}
-
-// TODO: only notify the peers of the user instead of the while world.
-func (m *Mapper) NotifyPeers(update types.StateUpdate) error {
-	m.notif.NotifyAll(context.Background(), update)
-	return nil
-}
-
+// parseVersion parses a dotted semver-ish client version string. Used by the
+// cylonix selective log-tail feature (wired via the builder's WithDebugConfig
+// in a later pass).
 func parseVersion(s string) (major, minor, patch int, err error) {
 	fs := strings.Split(strings.TrimSpace(s), ".")
 	if len(fs) != 3 {
@@ -893,4 +461,4 @@ func parseVersion(s string) (major, minor, patch int, err error) {
 	return ints[0], ints[1], ints[2], nil
 }
 
-// __END_CYLONIX_MOD__
+// __END_CYLONIX_ADD__

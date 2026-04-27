@@ -1,0 +1,313 @@
+package mapper
+
+import (
+	"errors"
+	"net/netip"
+	"sort"
+	"time"
+
+	"github.com/juanfont/headscale/hscontrol/policy"
+	"github.com/juanfont/headscale/hscontrol/types"
+	"tailscale.com/tailcfg"
+	"tailscale.com/types/views"
+	"tailscale.com/util/multierr"
+)
+
+// MapResponseBuilder provides a fluent interface for building tailcfg.MapResponse.
+type MapResponseBuilder struct {
+	resp   *tailcfg.MapResponse
+	mapper *mapper
+	nodeID types.NodeID
+	capVer tailcfg.CapabilityVersion
+	errs   []error
+
+	debugType debugType
+}
+
+type debugType string
+
+const (
+	fullResponseDebug   debugType = "full"
+	selfResponseDebug   debugType = "self"
+	changeResponseDebug debugType = "change"
+	policyResponseDebug debugType = "policy"
+)
+
+// NewMapResponseBuilder creates a new builder with basic fields set.
+func (m *mapper) NewMapResponseBuilder(nodeID types.NodeID) *MapResponseBuilder {
+	now := time.Now()
+	return &MapResponseBuilder{
+		resp: &tailcfg.MapResponse{
+			KeepAlive:   false,
+			ControlTime: &now,
+		},
+		mapper: m,
+		nodeID: nodeID,
+		errs:   nil,
+	}
+}
+
+// addError adds an error to the builder's error list.
+func (b *MapResponseBuilder) addError(err error) {
+	if err != nil {
+		b.errs = append(b.errs, err)
+	}
+}
+
+// hasErrors returns true if the builder has accumulated any errors.
+func (b *MapResponseBuilder) hasErrors() bool {
+	return len(b.errs) > 0
+}
+
+// WithCapabilityVersion sets the capability version for the response.
+func (b *MapResponseBuilder) WithCapabilityVersion(capVer tailcfg.CapabilityVersion) *MapResponseBuilder {
+	b.capVer = capVer
+	return b
+}
+
+// WithSelfNode adds the requesting node to the response.
+func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
+	nv, ok := b.mapper.state.GetNodeByID(b.nodeID)
+	if !ok {
+		b.addError(errors.New("node not found"))
+		return b
+	}
+
+	_, matchers := b.mapper.state.Filter()
+
+	tailnode, err := nv.TailNode(
+		b.capVer,
+		func(id types.NodeID) []netip.Prefix {
+			return policy.ReduceRoutes(nv, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
+		},
+		b.mapper.cfg)
+	if err != nil {
+		b.addError(err)
+		return b
+	}
+
+	b.resp.Node = tailnode
+
+	return b
+}
+
+func (b *MapResponseBuilder) WithDebugType(t debugType) *MapResponseBuilder {
+	if debugDumpMapResponsePath != "" {
+		b.debugType = t
+	}
+
+	return b
+}
+
+// WithDERPMap adds the DERP map to the response.
+func (b *MapResponseBuilder) WithDERPMap() *MapResponseBuilder {
+	b.resp.DERPMap = b.mapper.state.DERPMap().AsStruct()
+	return b
+}
+
+// WithDomain adds the domain configuration.
+// __BEGIN_CYLONIX_MOD__ When a NodeHandler is configured, prefer the
+// per-user network_domain (set by cylonix-manager) over the headscale
+// ServerURL hostname so each tenant sees their own tailnet name in the
+// client (e.g. "acme.cylonix.io" instead of "manage-v2.cylonix.io").
+func (b *MapResponseBuilder) WithDomain() *MapResponseBuilder {
+	if b.mapper.cfg != nil && b.mapper.cfg.NodeHandler != nil {
+		if node, ok := b.mapper.state.GetNodeByID(b.nodeID); ok && node.Owner().Valid() {
+			owner := node.Owner().AsStruct()
+			if nd, err := b.mapper.cfg.NodeHandler.NetworkDomain(owner); err == nil && len(nd) > 0 {
+				b.resp.Domain = string(nd)
+				return b
+			}
+		}
+	}
+	b.resp.Domain = b.mapper.cfg.Domain()
+	return b
+}
+
+// __END_CYLONIX_MOD__
+
+// WithCollectServicesDisabled sets the collect services flag to false.
+func (b *MapResponseBuilder) WithCollectServicesDisabled() *MapResponseBuilder {
+	b.resp.CollectServices.Set(false)
+	return b
+}
+
+// WithDebugConfig adds debug configuration
+// It disables log tailing if the mapper's LogTail is not enabled.
+func (b *MapResponseBuilder) WithDebugConfig() *MapResponseBuilder {
+	b.resp.Debug = &tailcfg.Debug{
+		DisableLogTail: !b.mapper.cfg.LogTail.Enabled,
+	}
+	return b
+}
+
+// WithSSHPolicy adds SSH policy configuration for the requesting node.
+func (b *MapResponseBuilder) WithSSHPolicy() *MapResponseBuilder {
+	node, ok := b.mapper.state.GetNodeByID(b.nodeID)
+	if !ok {
+		b.addError(errors.New("node not found"))
+		return b
+	}
+
+	sshPolicy, err := b.mapper.state.SSHPolicy(node)
+	if err != nil {
+		b.addError(err)
+		return b
+	}
+
+	b.resp.SSHPolicy = sshPolicy
+
+	return b
+}
+
+// WithDNSConfig adds DNS configuration for the requesting node.
+func (b *MapResponseBuilder) WithDNSConfig() *MapResponseBuilder {
+	node, ok := b.mapper.state.GetNodeByID(b.nodeID)
+	if !ok {
+		b.addError(errors.New("node not found"))
+		return b
+	}
+
+	b.resp.DNSConfig = generateDNSConfig(b.mapper.cfg, node)
+
+	return b
+}
+
+// WithUserProfiles adds user profiles for the requesting node and given peers.
+func (b *MapResponseBuilder) WithUserProfiles(peers views.Slice[types.NodeView]) *MapResponseBuilder {
+	node, ok := b.mapper.state.GetNodeByID(b.nodeID)
+	if !ok {
+		b.addError(errors.New("node not found"))
+		return b
+	}
+
+	b.resp.UserProfiles = generateUserProfiles(node, peers, b.mapper.cfg) // __CYLONIX_MOD__
+
+	return b
+}
+
+// WithPacketFilters adds packet filter rules based on policy.
+func (b *MapResponseBuilder) WithPacketFilters() *MapResponseBuilder {
+	node, ok := b.mapper.state.GetNodeByID(b.nodeID)
+	if !ok {
+		b.addError(errors.New("node not found"))
+		return b
+	}
+
+	// FilterForNode returns rules already reduced to only those relevant for this node.
+	// For autogroup:self policies, it returns per-node compiled rules.
+	// For global policies, it returns the global filter reduced for this node.
+	filter, err := b.mapper.state.FilterForNode(node)
+	if err != nil {
+		b.addError(err)
+		return b
+	}
+
+	// CapVer 81: 2023-11-17: MapResponse.PacketFilters (incremental packet filter updates)
+	// Currently, we do not send incremental package filters, however using the
+	// new PacketFilters field and "base" allows us to send a full update when we
+	// have to send an empty list, avoiding the hack in the else block.
+	b.resp.PacketFilters = map[string][]tailcfg.FilterRule{
+		"base": filter,
+	}
+
+	return b
+}
+
+// WithPeers adds full peer list with policy filtering (for full map response).
+func (b *MapResponseBuilder) WithPeers(peers views.Slice[types.NodeView]) *MapResponseBuilder {
+	tailPeers, err := b.buildTailPeers(peers)
+	if err != nil {
+		b.addError(err)
+		return b
+	}
+
+	b.resp.Peers = tailPeers
+
+	return b
+}
+
+// WithPeerChanges adds changed peers with policy filtering (for incremental updates).
+func (b *MapResponseBuilder) WithPeerChanges(peers views.Slice[types.NodeView]) *MapResponseBuilder {
+	tailPeers, err := b.buildTailPeers(peers)
+	if err != nil {
+		b.addError(err)
+		return b
+	}
+
+	b.resp.PeersChanged = tailPeers
+
+	return b
+}
+
+// buildTailPeers converts views.Slice[types.NodeView] to []tailcfg.Node with policy filtering and sorting.
+func (b *MapResponseBuilder) buildTailPeers(peers views.Slice[types.NodeView]) ([]*tailcfg.Node, error) {
+	node, ok := b.mapper.state.GetNodeByID(b.nodeID)
+	if !ok {
+		return nil, errors.New("node not found")
+	}
+
+	// Get unreduced matchers for peer relationship determination.
+	// MatchersForNode returns unreduced matchers that include all rules where the node
+	// could be either source or destination. This is different from FilterForNode which
+	// returns reduced rules for packet filtering (only rules where node is destination).
+	matchers, err := b.mapper.state.MatchersForNode(node)
+	if err != nil {
+		return nil, err
+	}
+
+	// If there are filter rules present, see if there are any nodes that cannot
+	// access each-other at all and remove them from the peers.
+	var changedViews views.Slice[types.NodeView]
+	if len(matchers) > 0 {
+		changedViews = policy.ReduceNodes(node, peers, matchers)
+	} else {
+		changedViews = peers
+	}
+
+	tailPeers, err := types.TailNodes(
+		changedViews, b.capVer,
+		func(id types.NodeID) []netip.Prefix {
+			return policy.ReduceRoutes(node, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
+		},
+		b.mapper.cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Peers is always returned sorted by Node.ID.
+	sort.SliceStable(tailPeers, func(x, y int) bool {
+		return tailPeers[x].ID < tailPeers[y].ID
+	})
+
+	return tailPeers, nil
+}
+
+// WithPeerChangedPatch adds peer change patches.
+func (b *MapResponseBuilder) WithPeerChangedPatch(changes []*tailcfg.PeerChange) *MapResponseBuilder {
+	b.resp.PeersChangedPatch = changes
+	return b
+}
+
+// WithPeersRemoved adds removed peer IDs.
+func (b *MapResponseBuilder) WithPeersRemoved(removedIDs ...types.NodeID) *MapResponseBuilder {
+	var tailscaleIDs []tailcfg.NodeID
+	for _, id := range removedIDs {
+		tailscaleIDs = append(tailscaleIDs, id.NodeID())
+	}
+	b.resp.PeersRemoved = tailscaleIDs
+
+	return b
+}
+
+// Build finalizes the response and returns marshaled bytes
+func (b *MapResponseBuilder) Build() (*tailcfg.MapResponse, error) {
+	if len(b.errs) > 0 {
+		return nil, multierr.New(b.errs...)
+	}
+	if debugDumpMapResponsePath != "" {
+		writeDebugMapResponse(b.resp, b.debugType, b.nodeID)
+	}
+
+	return b.resp, nil
+}

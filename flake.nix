@@ -6,190 +6,232 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-    ...
-  }: let
-    headscaleVersion =
-      if (self ? shortRev)
-      then self.shortRev
-      else "dev";
-  in
+  outputs =
+    { self
+    , nixpkgs
+    , flake-utils
+    , ...
+    }:
+    let
+      headscaleVersion = self.shortRev or self.dirtyShortRev;
+      commitHash = self.rev or self.dirtyRev;
+    in
     {
-      overlay = _: prev: let
-        pkgs = nixpkgs.legacyPackages.${prev.system};
-        buildGo = pkgs.buildGo123Module;
-      in rec {
-        headscale = buildGo rec {
-          pname = "headscale";
-          version = headscaleVersion;
-          src = pkgs.lib.cleanSource self;
+      # NixOS module
+      nixosModules = rec {
+        headscale = import ./nix/module.nix;
+        default = headscale;
+      };
 
-          # Only run unit tests when testing a build
-          checkFlags = ["-short"];
+      overlays.default = _: prev:
+        let
+          pkgs = nixpkgs.legacyPackages.${prev.stdenv.hostPlatform.system};
+          buildGo = pkgs.buildGo125Module;
+          vendorHash = "sha256-jkeB9XUTEGt58fPOMpE4/e3+JQoMQTgf0RlthVBmfG0=";
+        in
+        {
+          headscale = buildGo {
+            pname = "headscale";
+            version = headscaleVersion;
+            src = pkgs.lib.cleanSource self;
 
-          # When updating go.mod or go.sum, a new sha will need to be calculated,
-          # update this if you have a mismatch after doing a change to thos files.
-          vendorHash = "sha256-+8dOxPG/Q+wuHgRwwWqdphHOuop0W9dVyClyQuh7aRc=";
+            # Only run unit tests when testing a build
+            checkFlags = [ "-short" ];
 
-          subPackages = ["cmd/headscale"];
+            # When updating go.mod or go.sum, a new sha will need to be calculated,
+            # update this if you have a mismatch after doing a change to those files.
+            inherit vendorHash;
 
-          ldflags = ["-s" "-w" "-X github.com/juanfont/headscale/cmd/headscale/cli.Version=v${version}"];
-        };
+            subPackages = [ "cmd/headscale" ];
 
-        protoc-gen-grpc-gateway = buildGo rec {
-          pname = "grpc-gateway";
-          version = "2.22.0";
-
-          src = pkgs.fetchFromGitHub {
-            owner = "grpc-ecosystem";
-            repo = "grpc-gateway";
-            rev = "v${version}";
-            sha256 = "sha256-I1w3gfV06J8xG1xJ+XuMIGkV2/Ofszo7SCC+z4Xb6l4=";
+            meta = {
+              mainProgram = "headscale";
+            };
           };
 
-          vendorHash = "sha256-S4hcD5/BSGxM2qdJHMxOkxsJ5+Ks6m4lKHSS9+yZ17c=";
+          hi = buildGo {
+            pname = "hi";
+            version = headscaleVersion;
+            src = pkgs.lib.cleanSource self;
 
-          nativeBuildInputs = [pkgs.installShellFiles];
+            checkFlags = [ "-short" ];
+            inherit vendorHash;
 
-          subPackages = ["protoc-gen-grpc-gateway" "protoc-gen-openapiv2"];
+            subPackages = [ "cmd/hi" ];
+          };
+
+          protoc-gen-grpc-gateway = buildGo rec {
+            pname = "grpc-gateway";
+            version = "2.27.7";
+
+            src = pkgs.fetchFromGitHub {
+              owner = "grpc-ecosystem";
+              repo = "grpc-gateway";
+              rev = "v${version}";
+              sha256 = "sha256-6R0EhNnOBEISJddjkbVTcBvUuU5U3r9Hu2UPfAZDep4=";
+            };
+
+            vendorHash = "sha256-SOAbRrzMf2rbKaG9PGSnPSLY/qZVgbHcNjOLmVonycY=";
+
+            nativeBuildInputs = [ pkgs.installShellFiles ];
+
+            subPackages = [ "protoc-gen-grpc-gateway" "protoc-gen-openapiv2" ];
+          };
+
+          protobuf-language-server = buildGo rec {
+            pname = "protobuf-language-server";
+            version = "1cf777d";
+
+            src = pkgs.fetchFromGitHub {
+              owner = "lasorda";
+              repo = "protobuf-language-server";
+              rev = "1cf777de4d35a6e493a689e3ca1a6183ce3206b6";
+              sha256 = "sha256-9MkBQPxr/TDr/sNz/Sk7eoZwZwzdVbE5u6RugXXk5iY=";
+            };
+
+            vendorHash = "sha256-4nTpKBe7ekJsfQf+P6edT/9Vp2SBYbKz1ITawD3bhkI=";
+
+            subPackages = [ "." ];
+          };
+
+          # Upstream does not override buildGoModule properly,
+          # importing a specific module, so comment out for now.
+          # golangci-lint = prev.golangci-lint.override {
+          #   buildGoModule = buildGo;
+          # };
+          # golangci-lint-langserver = prev.golangci-lint.override {
+          #   buildGoModule = buildGo;
+          # };
+
+          # The package uses buildGo125Module, not the convention.
+          # goreleaser = prev.goreleaser.override {
+          #   buildGoModule = buildGo;
+          # };
+
+          gotestsum = prev.gotestsum.override {
+            buildGoModule = buildGo;
+          };
+
+          gotests = prev.gotests.override {
+            buildGoModule = buildGo;
+          };
+
+          gofumpt = prev.gofumpt.override {
+            buildGoModule = buildGo;
+          };
+
+          # gopls = prev.gopls.override {
+          #   buildGoModule = buildGo;
+          # };
         };
-
-        golangci-lint = prev.golangci-lint.override {
-          buildGoModule = buildGo;
-        };
-
-        goreleaser = prev.goreleaser.override {
-          buildGoModule = buildGo;
-        };
-
-        gotestsum = prev.gotestsum.override {
-          buildGoModule = buildGo;
-        };
-
-        gotests = prev.gotests.override {
-          buildGoModule = buildGo;
-        };
-
-        gofumpt = prev.gofumpt.override {
-          buildGoModule = buildGo;
-        };
-      };
     }
     // flake-utils.lib.eachDefaultSystem
-    (system: let
-      pkgs = import nixpkgs {
-        overlays = [self.overlay];
-        inherit system;
-      };
-      buildDeps = with pkgs; [git go_1_23 gnumake];
-      devDeps = with pkgs;
-        buildDeps
-        ++ [
-          golangci-lint
-          golines
-          nodePackages.prettier
-          goreleaser
-          nfpm
-          gotestsum
-          gotests
-          gofumpt
-          ksh
-          ko
-          yq-go
-          ripgrep
-
-          # 'dot' is needed for pprof graphs
-          # go tool pprof -http=: <source>
-          graphviz
-
-          # Protobuf dependencies
-          protobuf
-          protoc-gen-go
-          protoc-gen-go-grpc
-          protoc-gen-grpc-gateway
-          buf
-          clang-tools # clang-format
-        ];
-
-      # Add entry to build a docker image with headscale
-      # caveat: only works on Linux
-      #
-      # Usage:
-      # nix build .#headscale-docker
-      # docker load < result
-      headscale-docker = pkgs.dockerTools.buildLayeredImage {
-        name = "headscale";
-        tag = headscaleVersion;
-        contents = [pkgs.headscale];
-        config.Entrypoint = [(pkgs.headscale + "/bin/headscale")];
-      };
-    in rec {
-      # `nix develop`
-      devShell = pkgs.mkShell {
-        buildInputs =
-          devDeps
+      (system:
+      let
+        pkgs = import nixpkgs {
+          overlays = [ self.overlays.default ];
+          inherit system;
+        };
+        buildDeps = with pkgs; [ git go_1_25 gnumake ];
+        devDeps = with pkgs;
+          buildDeps
           ++ [
-            (pkgs.writeShellScriptBin
-              "nix-vendor-sri"
-              ''
-                set -eu
+            golangci-lint
+            golangci-lint-langserver
+            golines
+            nodePackages.prettier
+            nixpkgs-fmt
+            goreleaser
+            nfpm
+            gotestsum
+            gotests
+            gofumpt
+            gopls
+            ksh
+            ko
+            yq-go
+            ripgrep
+            postgresql
+            prek
 
-                OUT=$(mktemp -d -t nar-hash-XXXXXX)
-                rm -rf "$OUT"
+            # 'dot' is needed for pprof graphs
+            # go tool pprof -http=: <source>
+            graphviz
 
-                go mod vendor -o "$OUT"
-                go run tailscale.com/cmd/nardump --sri "$OUT"
-                rm -rf "$OUT"
-              '')
+            # Protobuf dependencies
+            protobuf
+            protoc-gen-go
+            protoc-gen-go-grpc
+            protoc-gen-grpc-gateway
+            buf
+            clang-tools # clang-format
+            protobuf-language-server
+          ]
+          ++ lib.optional pkgs.stdenv.isLinux [ traceroute ];
 
-            (pkgs.writeShellScriptBin
-              "go-mod-update-all"
-              ''
-                cat go.mod | ${pkgs.silver-searcher}/bin/ag "\t" | ${pkgs.silver-searcher}/bin/ag -v indirect | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.findutils}/bin/xargs go get -u
-                go mod tidy
-              '')
-          ];
+        # Add entry to build a docker image with headscale
+        # caveat: only works on Linux
+        #
+        # Usage:
+        # nix build .#headscale-docker
+        # docker load < result
+        headscale-docker = pkgs.dockerTools.buildLayeredImage {
+          name = "headscale";
+          tag = headscaleVersion;
+          contents = [ pkgs.headscale ];
+          config.Entrypoint = [ (pkgs.headscale + "/bin/headscale") ];
+        };
+      in
+      {
+        # `nix develop`
+        devShells.default = pkgs.mkShell {
+          buildInputs =
+            devDeps
+            ++ [
+              (pkgs.writeShellScriptBin
+                "nix-vendor-sri"
+                ''
+                  set -eu
 
-        shellHook = ''
-          export PATH="$PWD/result/bin:$PATH"
-        '';
-      };
+                  OUT=$(mktemp -d -t nar-hash-XXXXXX)
+                  rm -rf "$OUT"
 
-      # `nix build`
-      packages = with pkgs; {
-        inherit headscale;
-        inherit headscale-docker;
-      };
-      defaultPackage = pkgs.headscale;
+                  go mod vendor -o "$OUT"
+                  go run tailscale.com/cmd/nardump --sri "$OUT"
+                  rm -rf "$OUT"
+                '')
 
-      # `nix run`
-      apps.headscale = flake-utils.lib.mkApp {
-        drv = packages.headscale;
-      };
-      apps.default = apps.headscale;
-
-      checks = {
-        format =
-          pkgs.runCommand "check-format"
-          {
-            buildInputs = with pkgs; [
-              gnumake
-              nixpkgs-fmt
-              golangci-lint
-              nodePackages.prettier
-              golines
-              clang-tools
+              (pkgs.writeShellScriptBin
+                "go-mod-update-all"
+                ''
+                  cat go.mod | ${pkgs.silver-searcher}/bin/ag "\t" | ${pkgs.silver-searcher}/bin/ag -v indirect | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.findutils}/bin/xargs go get -u
+                  go mod tidy
+                '')
             ];
-          } ''
-            ${pkgs.nixpkgs-fmt}/bin/nixpkgs-fmt ${./.}
-            ${pkgs.golangci-lint}/bin/golangci-lint run --fix --timeout 10m
-            ${pkgs.nodePackages.prettier}/bin/prettier --write '**/**.{ts,js,md,yaml,yml,sass,css,scss,html}'
-            ${pkgs.golines}/bin/golines --max-len=88 --base-formatter=gofumpt -w ${./.}
-            ${pkgs.clang-tools}/bin/clang-format -style="{BasedOnStyle: Google, IndentWidth: 4, AlignConsecutiveDeclarations: true, AlignConsecutiveAssignments: true, ColumnLimit: 0}" -i ${./.}
+
+          shellHook = ''
+            export PATH="$PWD/result/bin:$PATH"
+            export CGO_ENABLED=0
           '';
-      };
-    });
+        };
+
+        # `nix build`
+        packages = with pkgs; {
+          inherit headscale;
+          inherit headscale-docker;
+          default = headscale;
+        };
+
+        # `nix run`
+        apps.headscale = flake-utils.lib.mkApp {
+          drv = pkgs.headscale;
+        };
+        apps.default = flake-utils.lib.mkApp {
+          drv = pkgs.headscale;
+        };
+
+        checks = {
+          headscale = pkgs.testers.nixosTest (import ./nix/tests/headscale.nix);
+        };
+      });
 }

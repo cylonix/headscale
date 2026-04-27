@@ -1,25 +1,47 @@
 package integration
 
 import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
+	"net/http/cookiejar"
 	"net/netip"
+	"net/url"
 	"os"
-	"sort"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
+	"github.com/juanfont/headscale/hscontrol/capver"
+	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/integration/dockertestutil"
+	"github.com/juanfont/headscale/integration/dsic"
 	"github.com/juanfont/headscale/integration/hsic"
+	"github.com/juanfont/headscale/integration/integrationutil"
 	"github.com/juanfont/headscale/integration/tsic"
+	"github.com/oauth2-proxy/mockoidc"
 	"github.com/ory/dockertest/v3"
-	"github.com/puzpuzpuz/xsync/v3"
+	"github.com/ory/dockertest/v3/docker"
+	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	xmaps "golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
 	"tailscale.com/envknob"
+	"tailscale.com/util/mak"
+	"tailscale.com/util/multierr"
 )
 
 const (
@@ -28,68 +50,10 @@ const (
 
 var usePostgresForTest = envknob.Bool("HEADSCALE_INTEGRATION_POSTGRES")
 
-func enabledVersions(vs map[string]bool) []string {
-	var ret []string
-	for version, enabled := range vs {
-		if enabled {
-			ret = append(ret, version)
-		}
-	}
-
-	sort.Sort(sort.Reverse(sort.StringSlice(ret)))
-
-	return ret
-}
-
 var (
 	errNoHeadscaleAvailable = errors.New("no headscale available")
 	errNoUserAvailable      = errors.New("no user available")
 	errNoClientFound        = errors.New("client not found")
-
-	// Tailscale started adding TS2021 support in CapabilityVersion>=28 (v1.24.0), but
-	// proper support in Headscale was only added for CapabilityVersion>=39 clients (v1.30.0).
-	tailscaleVersions2021 = map[string]bool{
-		"head":     true,
-		"unstable": true,
-		"1.70":     true,  // CapVer: not checked
-		"1.68":     true,  // CapVer: not checked
-		"1.66":     true,  // CapVer: not checked
-		"1.64":     true,  // CapVer: not checked
-		"1.62":     true,  // CapVer: not checked
-		"1.60":     true,  // CapVer: not checked
-		"1.58":     true,  // CapVer: not checked
-		"1.56":     true,  // CapVer: 82
-		"1.54":     true,  // CapVer: 79
-		"1.52":     true,  // CapVer: 79
-		"1.50":     true,  // CapVer: 74
-		"1.48":     true,  // CapVer: 68
-		"1.46":     true,  // CapVer: 65
-		"1.44":     false, // CapVer: 63
-		"1.42":     false, // Oldest supported version, CapVer: 61
-		"1.40":     false, // CapVer: 61
-		"1.38":     false, // CapVer: 58
-		"1.36":     false, // CapVer: 56
-		"1.34":     false, // CapVer: 51
-		"1.32":     false, // CapVer: 46
-		"1.30":     false,
-	}
-
-	tailscaleVersions2019 = map[string]bool{
-		"1.28": false,
-		"1.26": false,
-		"1.24": false, // Tailscale SSH
-		"1.22": false,
-		"1.20": false,
-		"1.18": false,
-	}
-
-	// tailscaleVersionsUnavailable = []string{
-	// 	// These versions seem to fail when fetching from apt.
-	// "1.14.6",
-	// "1.12.4",
-	// "1.10.2",
-	// "1.8.7",
-	// }.
 
 	// AllVersions represents a list of Tailscale versions the suite
 	// uses to test compatibility with the ControlServer.
@@ -100,10 +64,7 @@ var (
 	//
 	// The rest of the version represents Tailscale versions that can be
 	// found in Tailscale's apt repository.
-	AllVersions = append(
-		enabledVersions(tailscaleVersions2021),
-		enabledVersions(tailscaleVersions2019)...,
-	)
+	AllVersions = append([]string{"head", "unstable"}, capver.TailscaleLatestMajorMinor(capver.SupportedMajorMinorVersions, true)...)
 
 	// MustTestVersions is the minimum set of versions we should test.
 	// At the moment, this is arbitrarily chosen as:
@@ -136,64 +97,222 @@ type Scenario struct {
 	// TODO(kradalby): support multiple headcales for later, currently only
 	// use one.
 	controlServers *xsync.MapOf[string, ControlServer]
+	derpServers    []*dsic.DERPServerInContainer
 
 	users map[string]*User
 
-	pool    *dockertest.Pool
-	network *dockertest.Network
+	pool          *dockertest.Pool
+	networks      map[string]*dockertest.Network
+	mockOIDC      scenarioOIDC
+	extraServices map[string][]*dockertest.Resource
 
 	mu sync.Mutex
+
+	spec          ScenarioSpec
+	userToNetwork map[string]*dockertest.Network
+
+	testHashPrefix     string
+	testDefaultNetwork string
+}
+
+// ScenarioSpec describes the users, nodes, and network topology to
+// set up for a given scenario.
+type ScenarioSpec struct {
+	// Users is a list of usernames that will be created.
+	// Each created user will get nodes equivalent to NodesPerUser
+	Users []string
+
+	// NodesPerUser is how many nodes should be attached to each user.
+	NodesPerUser int
+
+	// Networks, if set, is the separate Docker networks that should be
+	// created and a list of the users that should be placed in those networks.
+	// If not set, a single network will be created and all users+nodes will be
+	// added there.
+	// Please note that Docker networks are not necessarily routable and
+	// connections between them might fall back to DERP.
+	Networks map[string][]string
+
+	// ExtraService, if set, is additional a map of network to additional
+	// container services that should be set up. These container services
+	// typically dont run Tailscale, e.g. web service to test subnet router.
+	ExtraService map[string][]extraServiceFunc
+
+	// Versions is specific list of versions to use for the test.
+	Versions []string
+
+	// OIDCUsers, if populated, will start a Mock OIDC server and populate
+	// the user login stack with the given users.
+	// If the NodesPerUser is set, it should align with this list to ensure
+	// the correct users are logged in.
+	// This is because the MockOIDC server can only serve login
+	// requests based on a queue it has been given on startup.
+	// We currently only populates it with one login request per user.
+	OIDCUsers     []mockoidc.MockUser
+	OIDCAccessTTL time.Duration
+
+	MaxWait time.Duration
+}
+
+func (s *Scenario) prefixedNetworkName(name string) string {
+	return s.testHashPrefix + "-" + name
 }
 
 // NewScenario creates a test Scenario which can be used to bootstraps a ControlServer with
 // a set of Users and TailscaleClients.
-func NewScenario(maxWait time.Duration) (*Scenario, error) {
-	hash, err := util.GenerateRandomStringDNSSafe(scenarioHashLength)
-	if err != nil {
-		return nil, err
-	}
-
+func NewScenario(spec ScenarioSpec) (*Scenario, error) {
 	pool, err := dockertest.NewPool("")
 	if err != nil {
 		return nil, fmt.Errorf("could not connect to docker: %w", err)
 	}
 
-	pool.MaxWait = maxWait
+	// Opportunity to clean up unreferenced networks.
+	// This might be a no op, but it is worth a try as we sometime
+	// dont clean up nicely after ourselves.
+	dockertestutil.CleanUnreferencedNetworks(pool)
+	dockertestutil.CleanImagesInCI(pool)
 
-	networkName := fmt.Sprintf("hs-%s", hash)
-	if overrideNetworkName := os.Getenv("HEADSCALE_TEST_NETWORK_NAME"); overrideNetworkName != "" {
-		networkName = overrideNetworkName
+	if spec.MaxWait == 0 {
+		pool.MaxWait = dockertestMaxWait()
+	} else {
+		pool.MaxWait = spec.MaxWait
 	}
 
-	network, err := dockertestutil.GetFirstOrCreateNetwork(pool, networkName)
+	testHashPrefix := "hs-" + util.MustGenerateRandomStringDNSSafe(scenarioHashLength)
+	s := &Scenario{
+		controlServers: xsync.NewMapOf[string, ControlServer](),
+		users:          make(map[string]*User),
+
+		pool: pool,
+		spec: spec,
+
+		testHashPrefix:     testHashPrefix,
+		testDefaultNetwork: testHashPrefix + "-default",
+	}
+
+	var userToNetwork map[string]*dockertest.Network
+	if spec.Networks != nil || len(spec.Networks) != 0 {
+		for name, users := range s.spec.Networks {
+			networkName := testHashPrefix + "-" + name
+			network, err := s.AddNetwork(networkName)
+			if err != nil {
+				return nil, err
+			}
+
+			for _, user := range users {
+				if n2, ok := userToNetwork[user]; ok {
+					return nil, fmt.Errorf("users can only have nodes placed in one network: %s into %s but already in %s", user, network.Network.Name, n2.Network.Name)
+				}
+				mak.Set(&userToNetwork, user, network)
+			}
+		}
+	} else {
+		_, err := s.AddNetwork(s.testDefaultNetwork)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	for network, extras := range spec.ExtraService {
+		for _, extra := range extras {
+			svc, err := extra(s, network)
+			if err != nil {
+				return nil, err
+			}
+			mak.Set(&s.extraServices, s.prefixedNetworkName(network), append(s.extraServices[s.prefixedNetworkName(network)], svc))
+		}
+	}
+
+	s.userToNetwork = userToNetwork
+
+	if len(spec.OIDCUsers) != 0 {
+		ttl := defaultAccessTTL
+		if spec.OIDCAccessTTL != 0 {
+			ttl = spec.OIDCAccessTTL
+		}
+		err = s.runMockOIDC(ttl, spec.OIDCUsers)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return s, nil
+}
+
+func (s *Scenario) AddNetwork(name string) (*dockertest.Network, error) {
+	network, err := dockertestutil.GetFirstOrCreateNetwork(s.pool, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or get network: %w", err)
 	}
 
 	// We run the test suite in a docker container that calls a couple of endpoints for
 	// readiness checks, this ensures that we can run the tests with individual networks
-	// and have the client reach the different containers
-	err = dockertestutil.AddContainerToNetwork(pool, network, "headscale-test-suite")
+	// and have the client reach the different containers.
+	// The container name includes the run ID to support multiple concurrent test runs.
+	testSuiteName := "headscale-test-suite"
+	if runID := dockertestutil.GetIntegrationRunID(); runID != "" {
+		testSuiteName = "headscale-test-suite-" + runID
+	}
+
+	err = dockertestutil.AddContainerToNetwork(s.pool, network, testSuiteName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add test suite container to network: %w", err)
 	}
 
-	return &Scenario{
-		controlServers: xsync.NewMapOf[string, ControlServer](),
-		users:          make(map[string]*User),
+	mak.Set(&s.networks, name, network)
 
-		pool:    pool,
-		network: network,
-	}, nil
+	return network, nil
 }
 
-// Shutdown shuts down and cleans up all the containers (ControlServer, TailscaleClient)
-// and networks associated with it.
-// In addition, it will save the logs of the ControlServer to `/tmp/control` in the
-// environment running the tests.
-func (s *Scenario) Shutdown() {
+func (s *Scenario) Networks() []*dockertest.Network {
+	if len(s.networks) == 0 {
+		panic("Scenario.Networks called with empty network list")
+	}
+	return xmaps.Values(s.networks)
+}
+
+func (s *Scenario) Network(name string) (*dockertest.Network, error) {
+	net, ok := s.networks[s.prefixedNetworkName(name)]
+	if !ok {
+		return nil, fmt.Errorf("no network named: %s", name)
+	}
+
+	return net, nil
+}
+
+func (s *Scenario) SubnetOfNetwork(name string) (*netip.Prefix, error) {
+	net, ok := s.networks[s.prefixedNetworkName(name)]
+	if !ok {
+		return nil, fmt.Errorf("no network named: %s", name)
+	}
+
+	if len(net.Network.IPAM.Config) == 0 {
+		return nil, fmt.Errorf("no IPAM config found in network: %s", name)
+	}
+
+	pref, err := netip.ParsePrefix(net.Network.IPAM.Config[0].Subnet)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pref, nil
+}
+
+func (s *Scenario) Services(name string) ([]*dockertest.Resource, error) {
+	res, ok := s.extraServices[s.prefixedNetworkName(name)]
+	if !ok {
+		return nil, fmt.Errorf("no network named: %s", name)
+	}
+
+	return res, nil
+}
+
+func (s *Scenario) ShutdownAssertNoPanics(t *testing.T) {
+	defer dockertestutil.CleanUnreferencedNetworks(s.pool)
+	defer dockertestutil.CleanImagesInCI(s.pool)
+
 	s.controlServers.Range(func(_ string, control ControlServer) bool {
-		err := control.Shutdown()
+		stdoutPath, stderrPath, err := control.Shutdown()
 		if err != nil {
 			log.Printf(
 				"Failed to shut down control: %s",
@@ -201,27 +320,77 @@ func (s *Scenario) Shutdown() {
 			)
 		}
 
+		if t != nil {
+			stdout, err := os.ReadFile(stdoutPath)
+			require.NoError(t, err)
+			assert.NotContains(t, string(stdout), "panic")
+
+			stderr, err := os.ReadFile(stderrPath)
+			require.NoError(t, err)
+			assert.NotContains(t, string(stderr), "panic")
+		}
+
 		return true
 	})
 
+	s.mu.Lock()
 	for userName, user := range s.users {
 		for _, client := range user.Clients {
 			log.Printf("removing client %s in user %s", client.Hostname(), userName)
-			err := client.Shutdown()
+			stdoutPath, stderrPath, err := client.Shutdown()
 			if err != nil {
 				log.Printf("failed to tear down client: %s", err)
+			}
+
+			if t != nil {
+				stdout, err := os.ReadFile(stdoutPath)
+				require.NoError(t, err)
+				assert.NotContains(t, string(stdout), "panic")
+
+				stderr, err := os.ReadFile(stderrPath)
+				require.NoError(t, err)
+				assert.NotContains(t, string(stderr), "panic")
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	for _, derp := range s.derpServers {
+		err := derp.Shutdown()
+		if err != nil {
+			log.Printf("failed to tear down derp server: %s", err)
+		}
+	}
+
+	for _, svcs := range s.extraServices {
+		for _, svc := range svcs {
+			err := svc.Close()
+			if err != nil {
+				log.Printf("failed to tear down service %q: %s", svc.Container.Name, err)
 			}
 		}
 	}
 
-	if err := s.pool.RemoveNetwork(s.network); err != nil {
-		log.Printf("failed to remove network: %s", err)
+	if s.mockOIDC.r != nil {
+		s.mockOIDC.r.Close()
+		if err := s.mockOIDC.r.Close(); err != nil {
+			log.Printf("failed to tear down oidc server: %s", err)
+		}
 	}
 
-	// TODO(kradalby): This seem redundant to the previous call
-	// if err := s.network.Close(); err != nil {
-	// 	return fmt.Errorf("failed to tear down network: %w", err)
-	// }
+	for _, network := range s.networks {
+		if err := network.Close(); err != nil {
+			log.Printf("failed to tear down network: %s", err)
+		}
+	}
+}
+
+// Shutdown shuts down and cleans up all the containers (ControlServer, TailscaleClient)
+// and networks associated with it.
+// In addition, it will save the logs of the ControlServer to `/tmp/control` in the
+// environment running the tests.
+func (s *Scenario) Shutdown() {
+	s.ShutdownAssertNoPanics(nil)
 }
 
 // Users returns the name of all users associated with the Scenario.
@@ -253,7 +422,7 @@ func (s *Scenario) Headscale(opts ...hsic.Option) (ControlServer, error) {
 		opts = append(opts, hsic.WithPostgres())
 	}
 
-	headscale, err := hsic.New(s.pool, s.network, opts...)
+	headscale, err := hsic.New(s.pool, s.Networks(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create headscale container: %w", err)
 	}
@@ -268,10 +437,32 @@ func (s *Scenario) Headscale(opts ...hsic.Option) (ControlServer, error) {
 	return headscale, nil
 }
 
+// Pool returns the dockertest pool for the scenario.
+func (s *Scenario) Pool() *dockertest.Pool {
+	return s.pool
+}
+
+// GetOrCreateUser gets or creates a user in the scenario.
+func (s *Scenario) GetOrCreateUser(userStr string) *User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if user, ok := s.users[userStr]; ok {
+		return user
+	}
+
+	user := &User{
+		Clients: make(map[string]TailscaleClient),
+	}
+	s.users[userStr] = user
+
+	return user
+}
+
 // CreatePreAuthKey creates a "pre authentorised key" to be created in the
 // Headscale instance on behalf of the Scenario.
 func (s *Scenario) CreatePreAuthKey(
-	user string,
+	user uint64,
 	reusable bool,
 	ephemeral bool,
 ) (*v1.PreAuthKey, error) {
@@ -287,26 +478,108 @@ func (s *Scenario) CreatePreAuthKey(
 	return nil, fmt.Errorf("failed to create user: %w", errNoHeadscaleAvailable)
 }
 
+// CreatePreAuthKeyWithOptions creates a "pre authorised key" with the specified options
+// to be created in the Headscale instance on behalf of the Scenario.
+func (s *Scenario) CreatePreAuthKeyWithOptions(opts hsic.AuthKeyOptions) (*v1.PreAuthKey, error) {
+	headscale, err := s.Headscale()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preauth key with options: %w", errNoHeadscaleAvailable)
+	}
+
+	key, err := headscale.CreateAuthKeyWithOptions(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preauth key with options: %w", err)
+	}
+
+	return key, nil
+}
+
+// CreatePreAuthKeyWithTags creates a "pre authorised key" with the specified tags
+// to be created in the Headscale instance on behalf of the Scenario.
+func (s *Scenario) CreatePreAuthKeyWithTags(
+	user uint64,
+	reusable bool,
+	ephemeral bool,
+	tags []string,
+) (*v1.PreAuthKey, error) {
+	headscale, err := s.Headscale()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preauth key with tags: %w", errNoHeadscaleAvailable)
+	}
+
+	key, err := headscale.CreateAuthKeyWithTags(user, reusable, ephemeral, tags)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preauth key with tags: %w", err)
+	}
+
+	return key, nil
+}
+
 // CreateUser creates a User to be created in the
 // Headscale instance on behalf of the Scenario.
-func (s *Scenario) CreateUser(user string) error {
+func (s *Scenario) CreateUser(user string) (*v1.User, error) {
 	if headscale, err := s.Headscale(); err == nil {
-		err := headscale.CreateUser(user)
+		u, err := headscale.CreateUser(user)
 		if err != nil {
-			return fmt.Errorf("failed to create user: %w", err)
+			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 
+		s.mu.Lock()
 		s.users[user] = &User{
 			Clients: make(map[string]TailscaleClient),
 		}
+		s.mu.Unlock()
 
-		return nil
+		return u, nil
 	}
 
-	return fmt.Errorf("failed to create user: %w", errNoHeadscaleAvailable)
+	return nil, fmt.Errorf("failed to create user: %w", errNoHeadscaleAvailable)
 }
 
 /// Client related stuff
+
+func (s *Scenario) CreateTailscaleNode(
+	version string,
+	opts ...tsic.Option,
+) (TailscaleClient, error) {
+	headscale, err := s.Headscale()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tailscale node (version: %s): %w", version, err)
+	}
+
+	cert := headscale.GetCert()
+	hostname := headscale.GetHostname()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	opts = append(opts,
+		tsic.WithCACert(cert),
+		tsic.WithHeadscaleName(hostname),
+	)
+
+	tsClient, err := tsic.New(
+		s.pool,
+		version,
+		opts...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create tailscale node: %w",
+			err,
+		)
+	}
+
+	err = tsClient.WaitForNeedsLogin(integrationutil.PeerSyncTimeout())
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to wait for tailscaled (%s) to need login: %w",
+			tsClient.Hostname(),
+			err,
+		)
+	}
+
+	return tsClient, nil
+}
 
 // CreateTailscaleNodesInUser creates and adds a new TailscaleClient to a
 // User in the Scenario.
@@ -318,10 +591,14 @@ func (s *Scenario) CreateTailscaleNodesInUser(
 ) error {
 	if user, ok := s.users[userStr]; ok {
 		var versions []string
-		for i := 0; i < count; i++ {
+		for i := range count {
 			version := requestedVersion
 			if requestedVersion == "all" {
-				version = MustTestVersions[i%len(MustTestVersions)]
+				if s.spec.Versions != nil {
+					version = s.spec.Versions[i%len(s.spec.Versions)]
+				} else {
+					version = MustTestVersions[i%len(MustTestVersions)]
+				}
 			}
 			versions = append(versions, version)
 
@@ -333,27 +610,43 @@ func (s *Scenario) CreateTailscaleNodesInUser(
 			cert := headscale.GetCert()
 			hostname := headscale.GetHostname()
 
+			// Determine which network this tailscale client will be in
+			var network *dockertest.Network
+			if s.userToNetwork != nil && s.userToNetwork[userStr] != nil {
+				network = s.userToNetwork[userStr]
+			} else {
+				network = s.networks[s.testDefaultNetwork]
+			}
+
+			// Get headscale IP in this network for /etc/hosts fallback DNS
+			headscaleIP := headscale.GetIPInNetwork(network)
+			extraHosts := []string{hostname + ":" + headscaleIP}
+
+			s.mu.Lock()
 			opts = append(opts,
-				tsic.WithHeadscaleTLS(cert),
+				tsic.WithCACert(cert),
 				tsic.WithHeadscaleName(hostname),
+				tsic.WithExtraHosts(extraHosts),
 			)
 
+			s.mu.Unlock()
+
 			user.createWaitGroup.Go(func() error {
+				s.mu.Lock()
 				tsClient, err := tsic.New(
 					s.pool,
 					version,
-					s.network,
 					opts...,
 				)
+				s.mu.Unlock()
 				if err != nil {
 					return fmt.Errorf(
-						"failed to create tailscale (%s) node: %w",
-						tsClient.Hostname(),
+						"failed to create tailscale node: %w",
 						err,
 					)
 				}
 
-				err = tsClient.WaitForNeedsLogin()
+				err = tsClient.WaitForNeedsLogin(integrationutil.PeerSyncTimeout())
 				if err != nil {
 					return fmt.Errorf(
 						"failed to wait for tailscaled (%s) to need login: %w",
@@ -399,7 +692,7 @@ func (s *Scenario) RunTailscaleUp(
 		}
 
 		for _, client := range user.Clients {
-			err := client.WaitForRunning()
+			err := client.WaitForRunning(integrationutil.PeerSyncTimeout())
 			if err != nil {
 				return fmt.Errorf("%s failed to up tailscale node: %w", client.Hostname(), err)
 			}
@@ -428,7 +721,7 @@ func (s *Scenario) CountTailscale() int {
 func (s *Scenario) WaitForTailscaleSync() error {
 	tsCount := s.CountTailscale()
 
-	err := s.WaitForTailscaleSyncWithPeerCount(tsCount - 1)
+	err := s.WaitForTailscaleSyncWithPeerCount(tsCount-1, integrationutil.PeerSyncTimeout(), integrationutil.PeerSyncRetryInterval())
 	if err != nil {
 		for _, user := range s.users {
 			for _, client := range user.Clients {
@@ -443,30 +736,97 @@ func (s *Scenario) WaitForTailscaleSync() error {
 	return err
 }
 
-// WaitForTailscaleSyncWithPeerCount blocks execution until all the TailscaleClient reports
-// to have all other TailscaleClients present in their netmap.NetworkMap.
-func (s *Scenario) WaitForTailscaleSyncWithPeerCount(peerCount int) error {
+// WaitForTailscaleSyncPerUser blocks execution until each TailscaleClient has the expected
+// number of peers for its user. This is useful for policies like autogroup:self where nodes
+// only see same-user peers, not all nodes in the network.
+func (s *Scenario) WaitForTailscaleSyncPerUser(timeout, retryInterval time.Duration) error {
+	var allErrors []error
+
 	for _, user := range s.users {
+		// Calculate expected peer count: number of nodes in this user minus 1 (self)
+		expectedPeers := len(user.Clients) - 1
+
 		for _, client := range user.Clients {
 			c := client
+			expectedCount := expectedPeers
 			user.syncWaitGroup.Go(func() error {
-				return c.WaitForPeers(peerCount)
+				return c.WaitForPeers(expectedCount, timeout, retryInterval)
 			})
 		}
 		if err := user.syncWaitGroup.Wait(); err != nil {
-			return err
+			allErrors = append(allErrors, err)
 		}
+	}
+
+	if len(allErrors) > 0 {
+		return multierr.New(allErrors...)
 	}
 
 	return nil
 }
 
-// CreateHeadscaleEnv is a convenient method returning a complete Headcale
-// test environment with nodes of all versions, joined to the server with X
-// users.
-func (s *Scenario) CreateHeadscaleEnv(
-	users map[string]int,
+// WaitForTailscaleSyncWithPeerCount blocks execution until all the TailscaleClient reports
+// to have all other TailscaleClients present in their netmap.NetworkMap.
+func (s *Scenario) WaitForTailscaleSyncWithPeerCount(peerCount int, timeout, retryInterval time.Duration) error {
+	var allErrors []error
+
+	for _, user := range s.users {
+		for _, client := range user.Clients {
+			c := client
+			user.syncWaitGroup.Go(func() error {
+				return c.WaitForPeers(peerCount, timeout, retryInterval)
+			})
+		}
+		if err := user.syncWaitGroup.Wait(); err != nil {
+			allErrors = append(allErrors, err)
+		}
+	}
+
+	if len(allErrors) > 0 {
+		return multierr.New(allErrors...)
+	}
+
+	return nil
+}
+
+func (s *Scenario) CreateHeadscaleEnvWithLoginURL(
 	tsOpts []tsic.Option,
+	opts ...hsic.Option,
+) error {
+	return s.createHeadscaleEnv(true, tsOpts, opts...)
+}
+
+func (s *Scenario) CreateHeadscaleEnv(
+	tsOpts []tsic.Option,
+	opts ...hsic.Option,
+) error {
+	return s.createHeadscaleEnv(false, tsOpts, opts...)
+}
+
+// CreateHeadscaleEnv starts the headscale environment and the clients
+// according to the ScenarioSpec passed to the Scenario.
+func (s *Scenario) createHeadscaleEnv(
+	withURL bool,
+	tsOpts []tsic.Option,
+	opts ...hsic.Option,
+) error {
+	return s.createHeadscaleEnvWithTags(withURL, tsOpts, nil, "", opts...)
+}
+
+// createHeadscaleEnvWithTags starts the headscale environment and the clients
+// according to the ScenarioSpec passed to the Scenario. If preAuthKeyTags is
+// non-empty and withURL is false, the tags will be applied to the PreAuthKey
+// (tags-as-identity model).
+//
+// For webauth (withURL=true), if webauthTagUser is non-empty and preAuthKeyTags
+// is non-empty, only nodes belonging to that user will request tags via
+// --advertise-tags. This is necessary because tagOwners ACL controls which
+// users can request specific tags.
+func (s *Scenario) createHeadscaleEnvWithTags(
+	withURL bool,
+	tsOpts []tsic.Option,
+	preAuthKeyTags []string,
+	webauthTagUser string,
 	opts ...hsic.Option,
 ) error {
 	headscale, err := s.Headscale(opts...)
@@ -474,29 +834,339 @@ func (s *Scenario) CreateHeadscaleEnv(
 		return err
 	}
 
-	for userName, clientCount := range users {
-		err = s.CreateUser(userName)
+	for _, user := range s.spec.Users {
+		u, err := s.CreateUser(user)
 		if err != nil {
 			return err
 		}
 
-		err = s.CreateTailscaleNodesInUser(userName, "all", clientCount, tsOpts...)
+		var userOpts []tsic.Option
+		if s.userToNetwork != nil {
+			userOpts = append(tsOpts, tsic.WithNetwork(s.userToNetwork[user]))
+		} else {
+			userOpts = append(tsOpts, tsic.WithNetwork(s.networks[s.testDefaultNetwork]))
+		}
+
+		// For webauth with tags, only apply tags to the specified webauthTagUser
+		// (other users may not be authorized via tagOwners)
+		if withURL && webauthTagUser != "" && len(preAuthKeyTags) > 0 && user == webauthTagUser {
+			userOpts = append(userOpts, tsic.WithTags(preAuthKeyTags))
+		}
+
+		err = s.CreateTailscaleNodesInUser(user, "all", s.spec.NodesPerUser, userOpts...)
 		if err != nil {
 			return err
 		}
 
-		key, err := s.CreatePreAuthKey(userName, true, false)
-		if err != nil {
-			return err
-		}
+		if withURL {
+			err = s.RunTailscaleUpWithURL(user, headscale.GetEndpoint())
+			if err != nil {
+				return err
+			}
+		} else {
+			// Use tagged PreAuthKey if tags are provided (tags-as-identity model)
+			var key *v1.PreAuthKey
+			if len(preAuthKeyTags) > 0 {
+				key, err = s.CreatePreAuthKeyWithTags(u.GetId(), true, false, preAuthKeyTags)
+			} else {
+				key, err = s.CreatePreAuthKey(u.GetId(), true, false)
+			}
+			if err != nil {
+				return err
+			}
 
-		err = s.RunTailscaleUp(userName, headscale.GetEndpoint(), key.GetKey())
-		if err != nil {
-			return err
+			err = s.RunTailscaleUp(user, headscale.GetEndpoint(), key.GetKey())
+			if err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
+}
+
+func (s *Scenario) RunTailscaleUpWithURL(userStr, loginServer string) error {
+	log.Printf("running tailscale up for user %s", userStr)
+	if user, ok := s.users[userStr]; ok {
+		for _, client := range user.Clients {
+			tsc := client
+			user.joinWaitGroup.Go(func() error {
+				loginURL, err := tsc.LoginWithURL(loginServer)
+				if err != nil {
+					log.Printf("%s failed to run tailscale up: %s", tsc.Hostname(), err)
+				}
+
+				body, err := doLoginURL(tsc.Hostname(), loginURL)
+				if err != nil {
+					return err
+				}
+
+				// If the URL is not a OIDC URL, then we need to
+				// run the register command to fully log in the client.
+				if !strings.Contains(loginURL.String(), "/oidc/") {
+					s.runHeadscaleRegister(userStr, body)
+				}
+
+				return nil
+			})
+
+			log.Printf("client %s is ready", client.Hostname())
+		}
+
+		if err := user.joinWaitGroup.Wait(); err != nil {
+			return err
+		}
+
+		for _, client := range user.Clients {
+			err := client.WaitForRunning(integrationutil.PeerSyncTimeout())
+			if err != nil {
+				return fmt.Errorf(
+					"%s tailscale node has not reached running: %w",
+					client.Hostname(),
+					err,
+				)
+			}
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed to up tailscale node: %w", errNoUserAvailable)
+}
+
+type debugJar struct {
+	inner *cookiejar.Jar
+	mu    sync.RWMutex
+	store map[string]map[string]map[string]*http.Cookie // domain -> path -> name -> cookie
+}
+
+func newDebugJar() (*debugJar, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &debugJar{
+		inner: jar,
+		store: make(map[string]map[string]map[string]*http.Cookie),
+	}, nil
+}
+
+func (j *debugJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	j.inner.SetCookies(u, cookies)
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	for _, c := range cookies {
+		if c == nil || c.Name == "" {
+			continue
+		}
+		domain := c.Domain
+		if domain == "" {
+			domain = u.Hostname()
+		}
+		path := c.Path
+		if path == "" {
+			path = "/"
+		}
+		if _, ok := j.store[domain]; !ok {
+			j.store[domain] = make(map[string]map[string]*http.Cookie)
+		}
+		if _, ok := j.store[domain][path]; !ok {
+			j.store[domain][path] = make(map[string]*http.Cookie)
+		}
+		j.store[domain][path][c.Name] = copyCookie(c)
+	}
+}
+
+func (j *debugJar) Cookies(u *url.URL) []*http.Cookie {
+	return j.inner.Cookies(u)
+}
+
+func (j *debugJar) Dump(w io.Writer) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+
+	for domain, paths := range j.store {
+		fmt.Fprintf(w, "Domain: %s\n", domain)
+		for path, byName := range paths {
+			fmt.Fprintf(w, "  Path: %s\n", path)
+			for _, c := range byName {
+				fmt.Fprintf(
+					w, "    %s=%s; Expires=%v; Secure=%v; HttpOnly=%v; SameSite=%v\n",
+					c.Name, c.Value, c.Expires, c.Secure, c.HttpOnly, c.SameSite,
+				)
+			}
+		}
+	}
+}
+
+func copyCookie(c *http.Cookie) *http.Cookie {
+	cc := *c
+	return &cc
+}
+
+func newLoginHTTPClient(hostname string) (*http.Client, error) {
+	hc := &http.Client{
+		Transport: LoggingRoundTripper{Hostname: hostname},
+	}
+
+	jar, err := newDebugJar()
+	if err != nil {
+		return nil, fmt.Errorf("%s failed to create cookiejar: %w", hostname, err)
+	}
+
+	hc.Jar = jar
+
+	return hc, nil
+}
+
+// doLoginURL visits the given login URL and returns the body as a string.
+func doLoginURL(hostname string, loginURL *url.URL) (string, error) {
+	log.Printf("%s login url: %s\n", hostname, loginURL.String())
+
+	hc, err := newLoginHTTPClient(hostname)
+	if err != nil {
+		return "", err
+	}
+
+	body, _, err := doLoginURLWithClient(hostname, loginURL, hc, true)
+	if err != nil {
+		return "", err
+	}
+
+	return body, nil
+}
+
+// doLoginURLWithClient performs the login request using the provided HTTP client.
+// When followRedirects is false, it will return the first redirect without following it.
+func doLoginURLWithClient(hostname string, loginURL *url.URL, hc *http.Client, followRedirects bool) (
+	string,
+	*url.URL,
+	error,
+) {
+	if hc == nil {
+		return "", nil, fmt.Errorf("%s http client is nil", hostname)
+	}
+
+	if loginURL == nil {
+		return "", nil, fmt.Errorf("%s login url is nil", hostname)
+	}
+
+	log.Printf("%s logging in with url: %s", hostname, loginURL.String())
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL.String(), nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s failed to create http request: %w", hostname, err)
+	}
+
+	originalRedirect := hc.CheckRedirect
+	if !followRedirects {
+		hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+	defer func() {
+		hc.CheckRedirect = originalRedirect
+	}()
+
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s failed to send http request: %w", hostname, err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s failed to read response body: %w", hostname, err)
+	}
+	body := string(bodyBytes)
+
+	var redirectURL *url.URL
+	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+		redirectURL, err = resp.Location()
+		if err != nil {
+			return body, nil, fmt.Errorf("%s failed to resolve redirect location: %w", hostname, err)
+		}
+	}
+
+	if followRedirects && resp.StatusCode != http.StatusOK {
+		log.Printf("body: %s", body)
+
+		return body, redirectURL, fmt.Errorf("%s unexpected status code %d", hostname, resp.StatusCode)
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("body: %s", body)
+
+		return body, redirectURL, fmt.Errorf("%s unexpected status code %d", hostname, resp.StatusCode)
+	}
+
+	if hc.Jar != nil {
+		if jar, ok := hc.Jar.(*debugJar); ok {
+			jar.Dump(os.Stdout)
+		} else {
+			log.Printf("cookies: %+v", hc.Jar.Cookies(loginURL))
+		}
+	}
+
+	return body, redirectURL, nil
+}
+
+var errParseAuthPage = errors.New("failed to parse auth page")
+
+func (s *Scenario) runHeadscaleRegister(userStr string, body string) error {
+	// see api.go HTML template
+	codeSep := strings.Split(string(body), "</code>")
+	if len(codeSep) != 2 {
+		return errParseAuthPage
+	}
+
+	keySep := strings.Split(codeSep[0], "key ")
+	if len(keySep) != 2 {
+		return errParseAuthPage
+	}
+	key := keySep[1]
+	key = strings.SplitN(key, " ", 2)[0]
+	log.Printf("registering node %s", key)
+
+	if headscale, err := s.Headscale(); err == nil {
+		_, err = headscale.Execute(
+			[]string{"headscale", "nodes", "register", "--user", userStr, "--key", key},
+		)
+		if err != nil {
+			log.Printf("failed to register node: %s", err)
+
+			return err
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed to find headscale: %w", errNoHeadscaleAvailable)
+}
+
+type LoggingRoundTripper struct {
+	Hostname string
+}
+
+func (t LoggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	noTls := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // nolint
+	}
+	resp, err := noTls.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf(`
+---
+%s - method: %s | url: %s
+%s - status: %d | cookies: %+v
+---
+`, t.Hostname, req.Method, req.URL.String(), t.Hostname, resp.StatusCode, resp.Cookies())
+
+	return resp, nil
 }
 
 // GetIPs returns all netip.Addr of TailscaleClients associated with a User
@@ -563,10 +1233,8 @@ func (s *Scenario) FindTailscaleClientByIP(ip netip.Addr) (TailscaleClient, erro
 
 	for _, client := range clients {
 		ips, _ := client.IPs()
-		for _, ip2 := range ips {
-			if ip == ip2 {
-				return client, nil
-			}
+		if slices.Contains(ips, ip) {
+			return client, nil
 		}
 	}
 
@@ -623,7 +1291,7 @@ func (s *Scenario) WaitForTailscaleLogout() error {
 		for _, client := range user.Clients {
 			c := client
 			user.syncWaitGroup.Go(func() error {
-				return c.WaitForNeedsLogin()
+				return c.WaitForNeedsLogin(integrationutil.PeerSyncTimeout())
 			})
 		}
 		if err := user.syncWaitGroup.Wait(); err != nil {
@@ -632,4 +1300,240 @@ func (s *Scenario) WaitForTailscaleLogout() error {
 	}
 
 	return nil
+}
+
+// CreateDERPServer creates a new DERP server in a container.
+func (s *Scenario) CreateDERPServer(version string, opts ...dsic.Option) (*dsic.DERPServerInContainer, error) {
+	derp, err := dsic.New(s.pool, version, s.Networks(), opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DERP server: %w", err)
+	}
+
+	err = derp.WaitForRunning()
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach DERP server: %w", err)
+	}
+
+	s.derpServers = append(s.derpServers, derp)
+
+	return derp, nil
+}
+
+type scenarioOIDC struct {
+	r   *dockertest.Resource
+	cfg *types.OIDCConfig
+}
+
+func (o *scenarioOIDC) Issuer() string {
+	if o.cfg == nil {
+		panic("OIDC has not been created")
+	}
+
+	return o.cfg.Issuer
+}
+
+func (o *scenarioOIDC) ClientSecret() string {
+	if o.cfg == nil {
+		panic("OIDC has not been created")
+	}
+
+	return o.cfg.ClientSecret
+}
+
+func (o *scenarioOIDC) ClientID() string {
+	if o.cfg == nil {
+		panic("OIDC has not been created")
+	}
+
+	return o.cfg.ClientID
+}
+
+const (
+	dockerContextPath      = "../."
+	hsicOIDCMockHashLength = 6
+	defaultAccessTTL       = 10 * time.Minute
+)
+
+var errStatusCodeNotOK = errors.New("status code not OK")
+
+func (s *Scenario) runMockOIDC(accessTTL time.Duration, users []mockoidc.MockUser) error {
+	port, err := dockertestutil.RandomFreeHostPort()
+	if err != nil {
+		log.Fatalf("could not find an open port: %s", err)
+	}
+	portNotation := fmt.Sprintf("%d/tcp", port)
+
+	hash, _ := util.GenerateRandomStringDNSSafe(hsicOIDCMockHashLength)
+
+	hostname := "hs-oidcmock-" + hash
+
+	usersJSON, err := json.Marshal(users)
+	if err != nil {
+		return err
+	}
+
+	mockOidcOptions := &dockertest.RunOptions{
+		Name:         hostname,
+		Cmd:          []string{"headscale", "mockoidc"},
+		ExposedPorts: []string{portNotation},
+		PortBindings: map[docker.Port][]docker.PortBinding{
+			docker.Port(portNotation): {{HostPort: strconv.Itoa(port)}},
+		},
+		Networks: s.Networks(),
+		Env: []string{
+			"MOCKOIDC_ADDR=" + hostname,
+			fmt.Sprintf("MOCKOIDC_PORT=%d", port),
+			"MOCKOIDC_CLIENT_ID=superclient",
+			"MOCKOIDC_CLIENT_SECRET=supersecret",
+			"MOCKOIDC_ACCESS_TTL=" + accessTTL.String(),
+			"MOCKOIDC_USERS=" + string(usersJSON),
+		},
+	}
+
+	headscaleBuildOptions := &dockertest.BuildOptions{
+		Dockerfile: hsic.IntegrationTestDockerFileName,
+		ContextDir: dockerContextPath,
+	}
+
+	err = s.pool.RemoveContainerByName(hostname)
+	if err != nil {
+		return err
+	}
+
+	s.mockOIDC = scenarioOIDC{}
+
+	// Add integration test labels if running under hi tool
+	dockertestutil.DockerAddIntegrationLabels(mockOidcOptions, "oidc")
+
+	if pmockoidc, err := s.pool.BuildAndRunWithBuildOptions(
+		headscaleBuildOptions,
+		mockOidcOptions,
+		dockertestutil.DockerRestartPolicy); err == nil {
+		s.mockOIDC.r = pmockoidc
+	} else {
+		return err
+	}
+
+	// headscale needs to set up the provider with a specific
+	// IP addr to ensure we get the correct config from the well-known
+	// endpoint.
+	network := s.Networks()[0]
+	ipAddr := s.mockOIDC.r.GetIPInNetwork(network)
+
+	log.Println("Waiting for headscale mock oidc to be ready for tests")
+	hostEndpoint := net.JoinHostPort(ipAddr, strconv.Itoa(port))
+
+	if err := s.pool.Retry(func() error {
+		oidcConfigURL := fmt.Sprintf("http://%s/oidc/.well-known/openid-configuration", hostEndpoint)
+		httpClient := &http.Client{}
+		ctx := context.Background()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, oidcConfigURL, nil)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			log.Printf("headscale mock OIDC tests is not ready: %s\n", err)
+
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return errStatusCodeNotOK
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	s.mockOIDC.cfg = &types.OIDCConfig{
+		Issuer: fmt.Sprintf(
+			"http://%s/oidc",
+			hostEndpoint,
+		),
+		ClientID:                   "superclient",
+		ClientSecret:               "supersecret",
+		OnlyStartIfOIDCIsAvailable: true,
+	}
+
+	log.Printf("headscale mock oidc is ready for tests at %s", hostEndpoint)
+
+	return nil
+}
+
+type extraServiceFunc func(*Scenario, string) (*dockertest.Resource, error)
+
+func Webservice(s *Scenario, networkName string) (*dockertest.Resource, error) {
+	// port, err := dockertestutil.RandomFreeHostPort()
+	// if err != nil {
+	// 	log.Fatalf("could not find an open port: %s", err)
+	// }
+	// portNotation := fmt.Sprintf("%d/tcp", port)
+
+	hash := util.MustGenerateRandomStringDNSSafe(hsicOIDCMockHashLength)
+
+	hostname := "hs-webservice-" + hash
+
+	network, ok := s.networks[s.prefixedNetworkName(networkName)]
+	if !ok {
+		return nil, fmt.Errorf("network does not exist: %s", networkName)
+	}
+
+	webOpts := &dockertest.RunOptions{
+		Name: hostname,
+		Cmd:  []string{"/bin/sh", "-c", "cd / ; python3 -m http.server --bind :: 80"},
+		// ExposedPorts: []string{portNotation},
+		// PortBindings: map[docker.Port][]docker.PortBinding{
+		// 	docker.Port(portNotation): {{HostPort: strconv.Itoa(port)}},
+		// },
+		Networks: []*dockertest.Network{network},
+		Env:      []string{},
+	}
+
+	// Add integration test labels if running under hi tool
+	dockertestutil.DockerAddIntegrationLabels(webOpts, "web")
+
+	webBOpts := &dockertest.BuildOptions{
+		Dockerfile: hsic.IntegrationTestDockerFileName,
+		ContextDir: dockerContextPath,
+	}
+
+	web, err := s.pool.BuildAndRunWithBuildOptions(
+		webBOpts,
+		webOpts,
+		dockertestutil.DockerRestartPolicy)
+	if err != nil {
+		return nil, err
+	}
+
+	// headscale needs to set up the provider with a specific
+	// IP addr to ensure we get the correct config from the well-known
+	// endpoint.
+	// ipAddr := web.GetIPInNetwork(network)
+
+	// log.Println("Waiting for headscale mock oidc to be ready for tests")
+	// hostEndpoint := net.JoinHostPort(ipAddr, strconv.Itoa(port))
+
+	// if err := s.pool.Retry(func() error {
+	// 	oidcConfigURL := fmt.Sprintf("http://%s/etc/hostname", hostEndpoint)
+	// 	httpClient := &http.Client{}
+	// 	ctx := context.Background()
+	// 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, oidcConfigURL, nil)
+	// 	resp, err := httpClient.Do(req)
+	// 	if err != nil {
+	// 		log.Printf("headscale mock OIDC tests is not ready: %s\n", err)
+
+	// 		return err
+	// 	}
+	// 	defer resp.Body.Close()
+
+	// 	if resp.StatusCode != http.StatusOK {
+	// 		return errStatusCodeNotOK
+	// 	}
+
+	// 	return nil
+	// }); err != nil {
+	// 	return err
+	// }
+
+	return web, nil
 }

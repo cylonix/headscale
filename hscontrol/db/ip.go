@@ -15,9 +15,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"gorm.io/gorm"
-
-	"tailscale.com/types/key"
+	"tailscale.com/net/tsaddr"
+	"tailscale.com/types/key" // __CYLONIX_ADD__ used by cylonix IP assignment helpers
 )
+
+var errGeneratedIPBytesInvalid = errors.New("generated ip bytes are invalid ip")
 
 // IPAllocator is a singleton responsible for allocating
 // IP addresses for nodes and making sure the same
@@ -214,8 +216,9 @@ func (i *IPAllocator) next(prev netip.Addr, prefix *netip.Prefix) (*netip.Addr, 
 			return nil, ErrCouldNotAllocateIP
 		}
 
-		// Check if the IP has already been allocated.
-		if set.Contains(ip) {
+		// Check if the IP has already been allocated
+		// or if it is a IP reserved by Tailscale.
+		if set.Contains(ip) || isTailscaleReservedIP(ip) {
 			switch i.strategy {
 			case types.IPAllocationStrategySequential:
 				ip = ip.Next()
@@ -258,7 +261,7 @@ func randomNext(pfx netip.Prefix) (netip.Addr, error) {
 
 	ip, ok := netip.AddrFromSlice(valInRange.Bytes())
 	if !ok {
-		return netip.Addr{}, fmt.Errorf("generated ip bytes are invalid ip")
+		return netip.Addr{}, errGeneratedIPBytesInvalid
 	}
 
 	if !pfx.Contains(ip) {
@@ -270,6 +273,12 @@ func randomNext(pfx netip.Prefix) (netip.Addr, error) {
 	}
 
 	return ip, nil
+}
+
+func isTailscaleReservedIP(ip netip.Addr) bool {
+	return tsaddr.ChromeOSVMRange().Contains(ip) ||
+		tsaddr.TailscaleServiceIP() == ip ||
+		tsaddr.TailscaleServiceIPv6() == ip
 }
 
 // BackfillNodeIPs will take a database transaction, and
@@ -289,7 +298,7 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 			return errors.New("backfilling IPs: ip allocator was nil")
 		}
 
-		log.Trace().Msgf("starting to backfill IPs")
+		log.Trace().Caller().Msgf("starting to backfill IPs")
 
 		nodes, err := ListNodes(tx)
 		if err != nil {
@@ -297,12 +306,12 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 		}
 
 		for _, node := range nodes {
-			log.Trace().Uint64("node.id", node.ID.Uint64()).Msg("checking if need backfill")
+			log.Trace().Caller().Uint64("node.id", node.ID.Uint64()).Str("node.name", node.Hostname).Msg("IP backfill check started because node found in database")
 
 			changed := false
 			// IPv4 prefix is set, but node ip is missing, alloc
-			if i.PrefixV4(&node.User) != nil && node.IPv4 == nil { // __CYLONIX_MOD__
-				ret4, err := i.NextV4(&node.User) // __CYLONIX_MOD__
+			if i.PrefixV4(node.User) != nil && node.IPv4 == nil { // __CYLONIX_MOD__
+				ret4, err := i.NextV4(node.User) // __CYLONIX_MOD__
 				if err != nil {
 					return fmt.Errorf("failed to allocate ipv4 for node(%d): %w", node.ID, err)
 				}
@@ -313,8 +322,8 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 			}
 
 			// IPv6 prefix is set, but node ip is missing, alloc
-			if i.PrefixV6(&node.User) != nil && node.IPv6 == nil { // __CYLONIX_MOD__
-				ret6, err := i.NextV6(&node.User) // __CYLONIX_MOD__
+			if i.PrefixV6(node.User) != nil && node.IPv6 == nil { // __CYLONIX_MOD__
+				ret6, err := i.NextV6(node.User) // __CYLONIX_MOD__
 				if err != nil {
 					return fmt.Errorf("failed to allocate ipv6 for node(%d): %w", node.ID, err)
 				}
@@ -325,24 +334,30 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 			}
 
 			// IPv4 prefix is not set, but node has IP, remove
-			if i.PrefixV4(&node.User) == nil && node.IPv4 != nil { // __CYLONIX_MOD__
+			if i.PrefixV4(node.User) == nil && node.IPv4 != nil { // __CYLONIX_MOD__
 				ret = append(ret, fmt.Sprintf("removing IPv4 %q from Node(%d) %q", node.IPv4.String(), node.ID, node.Hostname))
 				node.IPv4 = nil
 				changed = true
 			}
 
 			// IPv6 prefix is not set, but node has IP, remove
-			if i.PrefixV6(&node.User) == nil && node.IPv6 != nil { // __CYLONIX_MOD__
+			if i.PrefixV6(node.User) == nil && node.IPv6 != nil { // __CYLONIX_MOD__
 				ret = append(ret, fmt.Sprintf("removing IPv6 %q from Node(%d) %q", node.IPv6.String(), node.ID, node.Hostname))
 				node.IPv6 = nil
 				changed = true
 			}
 
 			if changed {
+				// __BEGIN_CYLONIX_ADD__
 				v, _ := json.Marshal(node.Hostinfo)
 				node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
+				// __END_CYLONIX_ADD__
 
-				err := tx.Save(node).Error
+				// Use Updates() with Select() to only update IP fields, avoiding overwriting
+				// other fields like Expiry. We need Select() because Updates() alone skips
+				// zero values, but we DO want to update IPv4/IPv6 to nil when removing them.
+				// See issue #2862.
+				err := tx.Model(node).Select("ipv4", "ipv6").Updates(node).Error
 				if err != nil {
 					return fmt.Errorf("saving node(%d) after adding IPs: %w", node.ID, err)
 				}
@@ -353,4 +368,13 @@ func (db *HSDatabase) BackfillNodeIPs(i types.IPAllocator) ([]string, error) { /
 	})
 
 	return ret, err
+}
+
+func (i *IPAllocator) FreeIPs(ips []netip.Addr) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	for _, ip := range ips {
+		i.usedIPs.Remove(ip)
+	}
 }

@@ -7,52 +7,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juanfont/headscale/hscontrol/policy"
+	policyv2 "github.com/juanfont/headscale/hscontrol/policy/v2"
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/juanfont/headscale/integration/tsic"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"tailscale.com/tailcfg"
+	"tailscale.com/types/ptr"
 )
 
-var retry = func(times int, sleepInterval time.Duration,
-	doWork func() (string, string, error),
-) (string, string, error) {
-	var result string
-	var stderr string
-	var err error
-
-	for attempts := 0; attempts < times; attempts++ {
-		tempResult, tempStderr, err := doWork()
-
-		result += tempResult
-		stderr += tempStderr
-
-		if err == nil {
-			return result, stderr, nil
-		}
-
-		// If we get a permission denied error, we can fail immediately
-		// since that is something we wont recover from by retrying.
-		if err != nil && strings.Contains(stderr, "Permission denied (tailscale)") {
-			return result, stderr, err
-		}
-
-		time.Sleep(sleepInterval)
-	}
-
-	return result, stderr, err
+func isSSHNoAccessStdError(stderr string) bool {
+	return strings.Contains(stderr, "Permission denied (tailscale)") ||
+		// Since https://github.com/tailscale/tailscale/pull/14853
+		strings.Contains(stderr, "failed to evaluate SSH policy") ||
+		// Since https://github.com/tailscale/tailscale/pull/16127
+		strings.Contains(stderr, "tailnet policy does not permit you to SSH to this node")
 }
 
-func sshScenario(t *testing.T, policy *policy.ACLPolicy, clientsPerUser int) *Scenario {
+func sshScenario(t *testing.T, policy *policyv2.Policy, clientsPerUser int) *Scenario {
 	t.Helper()
-	scenario, err := NewScenario(dockertestMaxWait())
-	assertNoErr(t, err)
 
-	spec := map[string]int{
-		"user1": clientsPerUser,
-		"user2": clientsPerUser,
+	spec := ScenarioSpec{
+		NodesPerUser: clientsPerUser,
+		Users:        []string{"user1", "user2"},
 	}
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
 
-	err = scenario.CreateHeadscaleEnv(spec,
+	err = scenario.CreateHeadscaleEnv(
 		[]tsic.Option{
 			tsic.WithSSH(),
 
@@ -60,73 +42,74 @@ func sshScenario(t *testing.T, policy *policy.ACLPolicy, clientsPerUser int) *Sc
 			// tailscaled to stop configuring the wgengine, causing it
 			// to not configure DNS.
 			tsic.WithNetfilter("off"),
-			tsic.WithDockerEntrypoint([]string{
-				"/bin/sh",
-				"-c",
-				"/bin/sleep 3 ; apk add openssh ; adduser ssh-it-user ; update-ca-certificates ; tailscaled --tun=tsdev",
-			}),
+			tsic.WithPackages("openssh"),
+			tsic.WithExtraCommands("adduser ssh-it-user"),
 			tsic.WithDockerWorkdir("/"),
 		},
 		hsic.WithACLPolicy(policy),
 		hsic.WithTestName("ssh"),
-		hsic.WithConfigEnv(map[string]string{
-			"HEADSCALE_EXPERIMENTAL_FEATURE_SSH": "1",
-		}),
 	)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	return scenario
 }
 
 func TestSSHOneUserToAll(t *testing.T) {
 	IntegrationSkip(t)
-	t.Parallel()
 
 	scenario := sshScenario(t,
-		&policy.ACLPolicy{
-			Groups: map[string][]string{
-				"group:integration-test": {"user1"},
+		&policyv2.Policy{
+			Groups: policyv2.Groups{
+				policyv2.Group("group:integration-test"): []policyv2.Username{policyv2.Username("user1@")},
 			},
-			ACLs: []policy.ACL{
+			ACLs: []policyv2.ACL{
 				{
-					Action:       "accept",
-					Sources:      []string{"*"},
-					Destinations: []string{"*:*"},
+					Action:   "accept",
+					Protocol: "tcp",
+					Sources:  []policyv2.Alias{wildcard()},
+					Destinations: []policyv2.AliasWithPorts{
+						aliasWithPorts(wildcard(), tailcfg.PortRangeAny),
+					},
 				},
 			},
-			SSHs: []policy.SSH{
+			SSHs: []policyv2.SSH{
 				{
-					Action:       "accept",
-					Sources:      []string{"group:integration-test"},
-					Destinations: []string{"*"},
-					Users:        []string{"ssh-it-user"},
+					Action:  "accept",
+					Sources: policyv2.SSHSrcAliases{groupp("group:integration-test")},
+					// Use autogroup:member and autogroup:tagged instead of wildcard
+					// since wildcard (*) is no longer supported for SSH destinations
+					Destinations: policyv2.SSHDstAliases{
+						ptr.To(policyv2.AutoGroupMember),
+						ptr.To(policyv2.AutoGroupTagged),
+					},
+					Users: []policyv2.SSHUser{policyv2.SSHUser("ssh-it-user")},
 				},
 			},
 		},
 		len(MustTestVersions),
 	)
-	defer scenario.Shutdown()
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	allClients, err := scenario.ListTailscaleClients()
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	user1Clients, err := scenario.ListTailscaleClients("user1")
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	user2Clients, err := scenario.ListTailscaleClients("user2")
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	for _, client := range user1Clients {
 		for _, peer := range allClients {
@@ -149,89 +132,125 @@ func TestSSHOneUserToAll(t *testing.T) {
 	}
 }
 
+// TestSSHMultipleUsersAllToAll tests that users in a group can SSH to each other's devices
+// using autogroup:self as the destination, which allows same-user SSH access.
 func TestSSHMultipleUsersAllToAll(t *testing.T) {
 	IntegrationSkip(t)
-	t.Parallel()
 
 	scenario := sshScenario(t,
-		&policy.ACLPolicy{
-			Groups: map[string][]string{
-				"group:integration-test": {"user1", "user2"},
+		&policyv2.Policy{
+			Groups: policyv2.Groups{
+				policyv2.Group("group:integration-test"): []policyv2.Username{policyv2.Username("user1@"), policyv2.Username("user2@")},
 			},
-			ACLs: []policy.ACL{
+			ACLs: []policyv2.ACL{
 				{
-					Action:       "accept",
-					Sources:      []string{"*"},
-					Destinations: []string{"*:*"},
+					Action:   "accept",
+					Protocol: "tcp",
+					Sources:  []policyv2.Alias{wildcard()},
+					Destinations: []policyv2.AliasWithPorts{
+						aliasWithPorts(wildcard(), tailcfg.PortRangeAny),
+					},
 				},
 			},
-			SSHs: []policy.SSH{
+			SSHs: []policyv2.SSH{
 				{
-					Action:       "accept",
-					Sources:      []string{"group:integration-test"},
-					Destinations: []string{"group:integration-test"},
-					Users:        []string{"ssh-it-user"},
+					Action:  "accept",
+					Sources: policyv2.SSHSrcAliases{groupp("group:integration-test")},
+					// Use autogroup:self to allow users to SSH to their own devices.
+					// Username destinations (e.g., "user1@") now require the source
+					// to be that exact same user only. For group-to-group SSH access,
+					// use autogroup:self instead.
+					Destinations: policyv2.SSHDstAliases{ptr.To(policyv2.AutoGroupSelf)},
+					Users:        []policyv2.SSHUser{policyv2.SSHUser("ssh-it-user")},
 				},
 			},
 		},
 		len(MustTestVersions),
 	)
-	defer scenario.Shutdown()
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	nsOneClients, err := scenario.ListTailscaleClients("user1")
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	nsTwoClients, err := scenario.ListTailscaleClients("user2")
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
-	testInterUserSSH := func(sourceClients []TailscaleClient, targetClients []TailscaleClient) {
-		for _, client := range sourceClients {
-			for _, peer := range targetClients {
-				assertSSHHostname(t, client, peer)
+	// With autogroup:self, users can SSH to their own devices, but not to other users' devices.
+	// Test that user1's devices can SSH to each other
+	for _, client := range nsOneClients {
+		for _, peer := range nsOneClients {
+			if client.Hostname() == peer.Hostname() {
+				continue
 			}
+
+			assertSSHHostname(t, client, peer)
 		}
 	}
 
-	testInterUserSSH(nsOneClients, nsTwoClients)
-	testInterUserSSH(nsTwoClients, nsOneClients)
+	// Test that user2's devices can SSH to each other
+	for _, client := range nsTwoClients {
+		for _, peer := range nsTwoClients {
+			if client.Hostname() == peer.Hostname() {
+				continue
+			}
+
+			assertSSHHostname(t, client, peer)
+		}
+	}
+
+	// Test that user1 cannot SSH to user2's devices (autogroup:self only allows same-user)
+	for _, client := range nsOneClients {
+		for _, peer := range nsTwoClients {
+			assertSSHPermissionDenied(t, client, peer)
+		}
+	}
+
+	// Test that user2 cannot SSH to user1's devices (autogroup:self only allows same-user)
+	for _, client := range nsTwoClients {
+		for _, peer := range nsOneClients {
+			assertSSHPermissionDenied(t, client, peer)
+		}
+	}
 }
 
 func TestSSHNoSSHConfigured(t *testing.T) {
 	IntegrationSkip(t)
-	t.Parallel()
 
 	scenario := sshScenario(t,
-		&policy.ACLPolicy{
-			Groups: map[string][]string{
-				"group:integration-test": {"user1"},
+		&policyv2.Policy{
+			Groups: policyv2.Groups{
+				policyv2.Group("group:integration-test"): []policyv2.Username{policyv2.Username("user1@")},
 			},
-			ACLs: []policy.ACL{
+			ACLs: []policyv2.ACL{
 				{
-					Action:       "accept",
-					Sources:      []string{"*"},
-					Destinations: []string{"*:*"},
+					Action:   "accept",
+					Protocol: "tcp",
+					Sources:  []policyv2.Alias{wildcard()},
+					Destinations: []policyv2.AliasWithPorts{
+						aliasWithPorts(wildcard(), tailcfg.PortRangeAny),
+					},
 				},
 			},
-			SSHs: []policy.SSH{},
+			SSHs: []policyv2.SSH{},
 		},
 		len(MustTestVersions),
 	)
-	defer scenario.Shutdown()
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	allClients, err := scenario.ListTailscaleClients()
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	for _, client := range allClients {
 		for _, peer := range allClients {
@@ -246,41 +265,43 @@ func TestSSHNoSSHConfigured(t *testing.T) {
 
 func TestSSHIsBlockedInACL(t *testing.T) {
 	IntegrationSkip(t)
-	t.Parallel()
 
 	scenario := sshScenario(t,
-		&policy.ACLPolicy{
-			Groups: map[string][]string{
-				"group:integration-test": {"user1"},
+		&policyv2.Policy{
+			Groups: policyv2.Groups{
+				policyv2.Group("group:integration-test"): []policyv2.Username{policyv2.Username("user1@")},
 			},
-			ACLs: []policy.ACL{
+			ACLs: []policyv2.ACL{
 				{
-					Action:       "accept",
-					Sources:      []string{"*"},
-					Destinations: []string{"*:80"},
+					Action:   "accept",
+					Protocol: "tcp",
+					Sources:  []policyv2.Alias{wildcard()},
+					Destinations: []policyv2.AliasWithPorts{
+						aliasWithPorts(wildcard(), tailcfg.PortRange{First: 80, Last: 80}),
+					},
 				},
 			},
-			SSHs: []policy.SSH{
+			SSHs: []policyv2.SSH{
 				{
 					Action:       "accept",
-					Sources:      []string{"group:integration-test"},
-					Destinations: []string{"group:integration-test"},
-					Users:        []string{"ssh-it-user"},
+					Sources:      policyv2.SSHSrcAliases{groupp("group:integration-test")},
+					Destinations: policyv2.SSHDstAliases{ptr.To(policyv2.AutoGroupSelf)},
+					Users:        []policyv2.SSHUser{policyv2.SSHUser("ssh-it-user")},
 				},
 			},
 		},
 		len(MustTestVersions),
 	)
-	defer scenario.Shutdown()
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	allClients, err := scenario.ListTailscaleClients()
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	for _, client := range allClients {
 		for _, peer := range allClients {
@@ -295,51 +316,56 @@ func TestSSHIsBlockedInACL(t *testing.T) {
 
 func TestSSHUserOnlyIsolation(t *testing.T) {
 	IntegrationSkip(t)
-	t.Parallel()
 
 	scenario := sshScenario(t,
-		&policy.ACLPolicy{
-			Groups: map[string][]string{
-				"group:ssh1": {"user1"},
-				"group:ssh2": {"user2"},
+		&policyv2.Policy{
+			Groups: policyv2.Groups{
+				policyv2.Group("group:ssh1"): []policyv2.Username{policyv2.Username("user1@")},
+				policyv2.Group("group:ssh2"): []policyv2.Username{policyv2.Username("user2@")},
 			},
-			ACLs: []policy.ACL{
+			ACLs: []policyv2.ACL{
 				{
-					Action:       "accept",
-					Sources:      []string{"*"},
-					Destinations: []string{"*:*"},
+					Action:   "accept",
+					Protocol: "tcp",
+					Sources:  []policyv2.Alias{wildcard()},
+					Destinations: []policyv2.AliasWithPorts{
+						aliasWithPorts(wildcard(), tailcfg.PortRangeAny),
+					},
 				},
 			},
-			SSHs: []policy.SSH{
+			SSHs: []policyv2.SSH{
+				// Use autogroup:self to allow users in each group to SSH to their own devices.
+				// Username destinations (e.g., "user1@") require the source to be that
+				// exact same user only, not a group containing that user.
 				{
 					Action:       "accept",
-					Sources:      []string{"group:ssh1"},
-					Destinations: []string{"group:ssh1"},
-					Users:        []string{"ssh-it-user"},
+					Sources:      policyv2.SSHSrcAliases{groupp("group:ssh1")},
+					Destinations: policyv2.SSHDstAliases{ptr.To(policyv2.AutoGroupSelf)},
+					Users:        []policyv2.SSHUser{policyv2.SSHUser("ssh-it-user")},
 				},
 				{
 					Action:       "accept",
-					Sources:      []string{"group:ssh2"},
-					Destinations: []string{"group:ssh2"},
-					Users:        []string{"ssh-it-user"},
+					Sources:      policyv2.SSHSrcAliases{groupp("group:ssh2")},
+					Destinations: policyv2.SSHDstAliases{ptr.To(policyv2.AutoGroupSelf)},
+					Users:        []policyv2.SSHUser{policyv2.SSHUser("ssh-it-user")},
 				},
 			},
 		},
 		len(MustTestVersions),
 	)
-	defer scenario.Shutdown()
+	defer scenario.ShutdownAssertNoPanics(t)
 
 	ssh1Clients, err := scenario.ListTailscaleClients("user1")
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	ssh2Clients, err := scenario.ListTailscaleClients("user2")
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	for _, client := range ssh1Clients {
 		for _, peer := range ssh2Clients {
@@ -384,6 +410,16 @@ func TestSSHUserOnlyIsolation(t *testing.T) {
 
 func doSSH(t *testing.T, client TailscaleClient, peer TailscaleClient) (string, string, error) {
 	t.Helper()
+	return doSSHWithRetry(t, client, peer, true)
+}
+
+func doSSHWithoutRetry(t *testing.T, client TailscaleClient, peer TailscaleClient) (string, string, error) {
+	t.Helper()
+	return doSSHWithRetry(t, client, peer, false)
+}
+
+func doSSHWithRetry(t *testing.T, client TailscaleClient, peer TailscaleClient, retry bool) (string, string, error) {
+	t.Helper()
 
 	peerFQDN, _ := peer.FQDN()
 
@@ -396,39 +432,151 @@ func doSSH(t *testing.T, client TailscaleClient, peer TailscaleClient) (string, 
 	log.Printf("Running from %s to %s", client.Hostname(), peer.Hostname())
 	log.Printf("Command: %s", strings.Join(command, " "))
 
-	return retry(10, 1*time.Second, func() (string, string, error) {
-		return client.Execute(command)
-	})
+	var (
+		result, stderr string
+		err            error
+	)
+
+	if retry {
+		// Use assert.EventuallyWithT to retry SSH connections for success cases
+		assert.EventuallyWithT(t, func(ct *assert.CollectT) {
+			result, stderr, err = client.Execute(command)
+
+			// If we get a permission denied error, we can fail immediately
+			// since that is something we won't recover from by retrying.
+			if err != nil && isSSHNoAccessStdError(stderr) {
+				return // Don't retry permission denied errors
+			}
+
+			// For all other errors, assert no error to trigger retry
+			assert.NoError(ct, err)
+		}, 10*time.Second, 200*time.Millisecond)
+	} else {
+		// For failure cases, just execute once
+		result, stderr, err = client.Execute(command)
+	}
+
+	return result, stderr, err
 }
 
 func assertSSHHostname(t *testing.T, client TailscaleClient, peer TailscaleClient) {
 	t.Helper()
 
 	result, _, err := doSSH(t, client, peer)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
-	assertContains(t, peer.ID(), strings.ReplaceAll(result, "\n", ""))
+	require.Contains(t, peer.ContainerID(), strings.ReplaceAll(result, "\n", ""))
 }
 
 func assertSSHPermissionDenied(t *testing.T, client TailscaleClient, peer TailscaleClient) {
 	t.Helper()
 
-	result, stderr, _ := doSSH(t, client, peer)
+	result, stderr, err := doSSHWithoutRetry(t, client, peer)
 
 	assert.Empty(t, result)
 
-	assertContains(t, stderr, "Permission denied (tailscale)")
+	assertSSHNoAccessStdError(t, err, stderr)
 }
 
 func assertSSHTimeout(t *testing.T, client TailscaleClient, peer TailscaleClient) {
 	t.Helper()
 
-	result, stderr, _ := doSSH(t, client, peer)
+	result, stderr, _ := doSSHWithoutRetry(t, client, peer)
 
 	assert.Empty(t, result)
 
 	if !strings.Contains(stderr, "Connection timed out") &&
 		!strings.Contains(stderr, "Operation timed out") {
 		t.Fatalf("connection did not time out")
+	}
+}
+
+func assertSSHNoAccessStdError(t *testing.T, err error, stderr string) {
+	t.Helper()
+	assert.Error(t, err)
+
+	if !isSSHNoAccessStdError(stderr) {
+		t.Errorf("expected stderr output suggesting access denied, got: %s", stderr)
+	}
+}
+
+// TestSSHAutogroupSelf tests that SSH with autogroup:self works correctly:
+// - Users can SSH to their own devices
+// - Users cannot SSH to other users' devices.
+func TestSSHAutogroupSelf(t *testing.T) {
+	IntegrationSkip(t)
+
+	scenario := sshScenario(t,
+		&policyv2.Policy{
+			ACLs: []policyv2.ACL{
+				{
+					Action:   "accept",
+					Protocol: "tcp",
+					Sources:  []policyv2.Alias{wildcard()},
+					Destinations: []policyv2.AliasWithPorts{
+						aliasWithPorts(wildcard(), tailcfg.PortRangeAny),
+					},
+				},
+			},
+			SSHs: []policyv2.SSH{
+				{
+					Action: "accept",
+					Sources: policyv2.SSHSrcAliases{
+						ptr.To(policyv2.AutoGroupMember),
+					},
+					Destinations: policyv2.SSHDstAliases{
+						ptr.To(policyv2.AutoGroupSelf),
+					},
+					Users: []policyv2.SSHUser{policyv2.SSHUser("ssh-it-user")},
+				},
+			},
+		},
+		2, // 2 clients per user
+	)
+	defer scenario.ShutdownAssertNoPanics(t)
+
+	user1Clients, err := scenario.ListTailscaleClients("user1")
+	requireNoErrListClients(t, err)
+
+	user2Clients, err := scenario.ListTailscaleClients("user2")
+	requireNoErrListClients(t, err)
+
+	err = scenario.WaitForTailscaleSync()
+	requireNoErrSync(t, err)
+
+	// Test that user1's devices can SSH to each other
+	for _, client := range user1Clients {
+		for _, peer := range user1Clients {
+			if client.Hostname() == peer.Hostname() {
+				continue
+			}
+
+			assertSSHHostname(t, client, peer)
+		}
+	}
+
+	// Test that user2's devices can SSH to each other
+	for _, client := range user2Clients {
+		for _, peer := range user2Clients {
+			if client.Hostname() == peer.Hostname() {
+				continue
+			}
+
+			assertSSHHostname(t, client, peer)
+		}
+	}
+
+	// Test that user1 cannot SSH to user2's devices
+	for _, client := range user1Clients {
+		for _, peer := range user2Clients {
+			assertSSHPermissionDenied(t, client, peer)
+		}
+	}
+
+	// Test that user2 cannot SSH to user1's devices
+	for _, client := range user2Clients {
+		for _, peer := range user1Clients {
+			assertSSHPermissionDenied(t, client, peer)
+		}
 	}
 }

@@ -1,76 +1,83 @@
 syntax = "proto3";
 package headscale.v1;
-option  go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 import "google/protobuf/timestamp.proto";
-import "headscale/v1/user.proto"; // __CYLONIX_MOD__
+import "headscale/v1/user.proto";
+
+option go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 message PreAuthKey {
-    string                    user        = 1;
-    string                    id          = 2;
-    string                    key         = 3;
-    bool                      reusable    = 4;
-    bool                      ephemeral   = 5;
-    bool                      used        = 6;
-    google.protobuf.Timestamp expiration  = 7;
-    google.protobuf.Timestamp created_at  = 8;
-    repeated string           acl_tags    = 9;
-    User                      userDetail  = 10; // __CYLONIX_MOD_
-    string                    namespace   = 11; // __CYLONIX_MOD__
-    string                    ipv4        = 12; // __CYLONIX_MOD__
-    string                    ipv6        = 13; // __CYLONIX_MOD__
-    string                    description = 14; // __CYLONIX_MOD_
+  User user = 1;
+  // __BEGIN_CYLONIX_MOD__
+  // Upstream v0.28 switched id from string to uint64 to align with bcrypt
+  // format (hskey-auth-{prefix}-{secret}).
+  uint64 id = 2;
+  // __END_CYLONIX_MOD__
+  string key = 3;
+  bool reusable = 4;
+  bool ephemeral = 5;
+  bool used = 6;
+  google.protobuf.Timestamp expiration = 7;
+  google.protobuf.Timestamp created_at = 8;
+  repeated string acl_tags = 9;
+  // __BEGIN_CYLONIX_MOD__
+  string namespace = 10;
+  string ipv4 = 11;
+  string ipv6 = 12;
+  string description = 13;
+  // __END_CYLONIX_MOD__
 }
 
 message CreatePreAuthKeyRequest {
-    string                    user        = 1;
-    bool                      reusable    = 2;
-    bool                      ephemeral   = 3;
-    google.protobuf.Timestamp expiration  = 4;
-    repeated string           acl_tags    = 5;
-    optional string           key         = 6; // __CYLONIX_MOD__
-    optional string           namespace   = 7; // __CYLONIX_MOD__
-    optional string           ipv4        = 8; // __CYLONIX_MOD__
-    optional string           ipv6        = 9; // __CYLONIX_MOD__
-    optional string           description = 10; // __CYLONIX_MOD__
+  // __CYLONIX_MOD__ Cylonix stores its tenant UUID in headscale User.Name, so
+  // the request field carries the UUID string (not the headscale DB id).
+  string user = 1;
+  bool reusable = 2;
+  bool ephemeral = 3;
+  google.protobuf.Timestamp expiration = 4;
+  repeated string acl_tags = 5;
+  // __BEGIN_CYLONIX_MOD__
+  optional string key = 6;
+  optional string namespace = 7;
+  optional string ipv4 = 8;
+  optional string ipv6 = 9;
+  optional string description = 10;
+  // __END_CYLONIX_MOD__
 }
 
-message CreatePreAuthKeyResponse {
-    PreAuthKey pre_auth_key = 1;
-}
-
-message DeletePreAuthKeyRequest {
-    uint64 id  = 1;
-}
-
-message DeletePreAuthKeyResponse {
-}
+message CreatePreAuthKeyResponse { PreAuthKey pre_auth_key = 1; }
 
 message ExpirePreAuthKeyRequest {
-    string user = 1;
-    string key  = 2;
-    optional uint64 id = 3; // __CYLONIX_ADD__
-    optional google.protobuf.Timestamp expiry = 4; // __CYLONIX_ADD__ 0 means disable expiry
+  uint64 id = 1;
+  // __BEGIN_CYLONIX_MOD__
+  // Empty timestamp means "expire now"; a future timestamp defers expiry.
+  optional google.protobuf.Timestamp expiry = 2;
+  // __END_CYLONIX_MOD__
 }
 
-message ExpirePreAuthKeyResponse {
-}
+message ExpirePreAuthKeyResponse {}
+
+message DeletePreAuthKeyRequest { uint64 id = 1; }
+
+message DeletePreAuthKeyResponse {}
 
 message ListPreAuthKeysRequest {
-    string user = 1;
-    // __BEGIN_CYLONIX_MOD__
-    repeated uint64 id_list      = 2;
-    optional string namespace    = 3;
-    optional string filter_by    = 4;
-    optional string filter_value = 5;
-    optional string sort_by      = 6;
-    optional string sort_desc    = 7;
-    optional uint32 page         = 8;
-    optional uint32 pageSize     = 9;
-    // __END_CYLONIX_MOD__
+  // __BEGIN_CYLONIX_MOD__
+  // Cylonix uses User.Name (a UUID string) as the user identifier in
+  // headscale, so the listing filter is also a string.
+  string user = 1;
+  repeated uint64 id_list = 2;
+  optional string namespace = 3;
+  optional string filter_by = 4;
+  optional string filter_value = 5;
+  optional string sort_by = 6;
+  optional string sort_desc = 7;
+  optional uint32 page = 8;
+  optional uint32 pageSize = 9;
+  // __END_CYLONIX_MOD__
 }
 
 message ListPreAuthKeysResponse {
-    repeated PreAuthKey pre_auth_keys = 1;
-    uint32              total         = 2; // __CYLONIX_MOD__
+  repeated PreAuthKey pre_auth_keys = 1;
+  uint32 total = 2; // __CYLONIX_MOD__
 }

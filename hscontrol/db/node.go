@@ -6,25 +6,31 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
-	"github.com/patrickmn/go-cache"
-	"github.com/puzpuzpuz/xsync/v3"
+	"zgo.at/zcache/v2" // __CYLONIX_ADD__ supplants patrickmn/go-cache used pre-v0.28
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
-	"tailscale.com/tailcfg"
+	"tailscale.com/net/tsaddr"
+	"tailscale.com/tailcfg" // __CYLONIX_ADD__
 	"tailscale.com/types/key"
+	"tailscale.com/types/ptr"
 )
 
 const (
 	NodeGivenNameHashLength = 8
 	NodeGivenNameTrimSize   = 2
 )
+
+var invalidDNSRegex = regexp.MustCompile("[^a-z0-9-.]+")
 
 var (
 	ErrNodeNotFound                  = errors.New("node not found")
@@ -33,28 +39,32 @@ var (
 		"node not found in registration cache",
 	)
 	ErrCouldNotConvertNodeInterface = errors.New("failed to convert node interface")
-	ErrDifferentRegisteredUser      = errors.New(
+	// __BEGIN_CYLONIX_ADD__
+	ErrDifferentRegisteredUser = errors.New(
 		"node was previously registered with a different user",
 	)
+	// __END_CYLONIX_ADD__
 )
 
-func (hsdb *HSDatabase) ListPeers(nodeID types.NodeID) (types.Nodes, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
-		return ListPeers(rx, nodeID)
-	})
+// ListPeers returns peers of node, regardless of any Policy or if the node is expired.
+// If no peer IDs are given, all peers are returned.
+// If at least one peer ID is given, only these peer nodes will be returned.
+func (hsdb *HSDatabase) ListPeers(nodeID types.NodeID, peerIDs ...types.NodeID) (types.Nodes, error) {
+	return ListPeers(hsdb.DB, nodeID, peerIDs...)
 }
 
-// ListPeers returns all peers of node, regardless of any Policy or if the node is expired.
-func ListPeers(tx *gorm.DB, nodeID types.NodeID) (types.Nodes, error) {
+// ListPeers returns peers of node, regardless of any Policy or if the node is expired.
+// If no peer IDs are given, all peers are returned.
+// If at least one peer ID is given, only these peer nodes will be returned.
+func ListPeers(tx *gorm.DB, nodeID types.NodeID, peerIDs ...types.NodeID) (types.Nodes, error) {
 	nodes := types.Nodes{}
 	if err := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes").
-		Preload("Capabilities"). // __CYLONIX_MOD__
-		Where("id <> ?",
-			nodeID).Find(&nodes).Error; err != nil {
+		Preload("Capabilities"). // __CYLONIX_ADD__
+		Where("id <> ?", nodeID).
+		Where(peerIDs).Find(&nodes).Error; err != nil {
 		return types.Nodes{}, err
 	}
 
@@ -63,19 +73,55 @@ func ListPeers(tx *gorm.DB, nodeID types.NodeID) (types.Nodes, error) {
 	return nodes, nil
 }
 
-func (hsdb *HSDatabase) ListNodes() (types.Nodes, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
-		return ListNodes(rx)
-	})
+// ListNodes queries the database for either all nodes if no parameters are given
+// or for the given nodes if at least one node ID is given as parameter.
+func (hsdb *HSDatabase) ListNodes(nodeIDs ...types.NodeID) (types.Nodes, error) {
+	return ListNodes(hsdb.DB, nodeIDs...)
 }
 
-// __BEGIN_CYLONIX_MOD__
+// ListNodes queries the database for either all nodes if no parameters are given
+// or for the given nodes if at least one node ID is given as parameter.
+func ListNodes(tx *gorm.DB, nodeIDs ...types.NodeID) (types.Nodes, error) {
+	nodes := types.Nodes{}
+	if err := tx.
+		Preload("AuthKey").
+		Preload("AuthKey.User").
+		Preload("User").
+		Preload("Capabilities").    // __CYLONIX_ADD__
+		Preload("WouldShareTo").    // __CYLONIX_ADD__
+		Preload("AcceptedShareTo"). // __CYLONIX_ADD__
+		Where(nodeIDs).Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+
+	return nodes, nil
+}
+
+// __BEGIN_CYLONIX_ADD__
+// listNodes returns []*types.Node (instead of types.Nodes) so that it can be
+// used directly by the generic ListWithOptions helper.
+func listNodes(tx *gorm.DB) ([]*types.Node, error) {
+	nodes := []*types.Node{}
+	if err := tx.
+		Preload("AuthKey").
+		Preload("AuthKey.User").
+		Preload("User").
+		Preload("Capabilities").
+		Preload("WouldShareTo").
+		Preload("AcceptedShareTo").
+		Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
 func (hsdb *HSDatabase) ListNodesByIDList(idList []types.NodeID) (types.Nodes, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
 		rx = rx.Model(&types.Node{}).Where("id in ?", idList)
 		return ListNodes(rx)
 	})
 }
+
 func (hsdb *HSDatabase) ListNodesWithOptions(
 	idList []uint64, namespace *string, network, username string,
 	onlineOnly, namespaceLike, shareInOnly bool, onlineIDs []uint64,
@@ -103,10 +149,7 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 		var err error
 
 		if shareInOnly {
-			// Special handling for shareInOnly mode
-			// This lists nodes that have AcceptedShareTo field matching criteria
 			if username != "" {
-				// Find nodes where the specified user is in AcceptedShareTo
 				user := &types.User{}
 				err := rx.Model(&types.User{}).First(user, "name = ?", username).Error
 				if err != nil {
@@ -116,28 +159,25 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 					return types.Nodes{}, err
 				}
 				rx = rx.Model(&types.Node{})
-				// Join with the many-to-many relation table
 				rx = rx.Joins("JOIN node_accepted_share_to_users_relation ON nodes.id = node_accepted_share_to_users_relation.node_id")
 				rx = rx.Where("node_accepted_share_to_users_relation.user_id = ?", user.ID)
-
-				// Change the network and username to be not set as it could be
-				// any network for the share-in nodes.
 				network = ""
 				username = ""
 			} else {
-				// Find nodes with non-empty AcceptedShareTo
-				// for the current namespace or network
 				rx = rx.Model(&types.Node{})
 				rx = rx.Where("EXISTS (SELECT 1 FROM node_accepted_share_to_users_relation WHERE node_accepted_share_to_users_relation.node_id = nodes.id)")
 			}
 		}
-		nodes, count, err = ListWithOptions(
+		ptrNodes, count, err := ListWithOptions(
 			&types.Node{}, rx, listNodes,
 			idList, namespace, "network_domain", network, username,
 			onlineOnly, namespaceLike, "nodes", onlineIDs,
 			nil,
 			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
 		)
+		for _, n := range ptrNodes {
+			nodes = append(nodes, n)
+		}
 		log.Trace().
 			Str("network", network).
 			Str("username", username).
@@ -149,28 +189,7 @@ func (hsdb *HSDatabase) ListNodesWithOptions(
 	return int(total), nodes, err
 }
 
-func ListNodes(tx *gorm.DB) (types.Nodes, error) {
-	nodes, err := listNodes(tx)
-	return types.Nodes(nodes), err
-}
-func listNodes(tx *gorm.DB) ([]*types.Node, error) {
-	nodes := []*types.Node{}
-	if err := tx.
-		Preload("AuthKey").
-		Preload("AuthKey.User").
-		Preload("User").
-		Preload("Routes").
-		Preload("Capabilities").
-		Preload("WouldShareTo").
-		Preload("AcceptedShareTo").
-		Find(&nodes).Error; err != nil {
-		return nil, err
-	}
-
-	return nodes, nil
-}
-
-// __END_CYLONIX_MOD__
+// __END_CYLONIX_ADD__
 
 func (hsdb *HSDatabase) ListEphemeralNodes() (types.Nodes, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (types.Nodes, error) {
@@ -183,10 +202,13 @@ func (hsdb *HSDatabase) ListEphemeralNodes() (types.Nodes, error) {
 	})
 }
 
-func listNodesByGivenName(tx *gorm.DB, givenName, networkDomain string) (types.Nodes, error) { // __CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
+// listNodesByGivenName resolves nodes sharing a GivenName within a single
+// cylonix network_domain (the GivenName unique index is per-network_domain).
+func listNodesByGivenName(tx *gorm.DB, givenName, networkDomain string) (types.Nodes, error) {
 	nodes := types.Nodes{}
 	if err := tx.
-		Where("given_name = ? and network_domain = ?", givenName, networkDomain). // __CYLONIX_MOD__
+		Where("given_name = ? and network_domain = ?", givenName, networkDomain).
 		Find(&nodes).Error; err != nil {
 		return nil, err
 	}
@@ -194,15 +216,17 @@ func listNodesByGivenName(tx *gorm.DB, givenName, networkDomain string) (types.N
 	return nodes, nil
 }
 
-func (hsdb *HSDatabase) getNode(user string, name string) (*types.Node, error) {
+// __END_CYLONIX_ADD__
+
+func (hsdb *HSDatabase) getNode(uid types.UserID, name string) (*types.Node, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
-		return getNode(rx, user, name)
+		return getNode(rx, uid, name)
 	})
 }
 
 // getNode finds a Node by name and user and returns the Node struct.
-func getNode(tx *gorm.DB, user string, name string) (*types.Node, error) {
-	nodes, err := ListNodesByUser(tx, user)
+func getNode(tx *gorm.DB, uid types.UserID, name string) (*types.Node, error) {
+	nodes, err := ListNodesByUser(tx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -217,59 +241,54 @@ func getNode(tx *gorm.DB, user string, name string) (*types.Node, error) {
 }
 
 func (hsdb *HSDatabase) GetNodeByID(id types.NodeID) (*types.Node, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
-		return GetNodeByID(rx, id)
-	})
+	return GetNodeByID(hsdb.DB, id)
 }
 
 // GetNodeByID finds a Node by ID and returns the Node struct.
 func GetNodeByID(tx *gorm.DB, id types.NodeID) (*types.Node, error) {
 	mach := types.Node{}
-	if err := tx.
+	if result := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes").
 		Preload("Capabilities").    // __CYLONIX_ADD__
 		Preload("WouldShareTo").    // __CYLONIX_ADD__
 		Preload("AcceptedShareTo"). // __CYLONIX_ADD__
-		Find(&types.Node{ID: id}).First(&mach).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			err = ErrNodeNotFound
+		Find(&types.Node{ID: id}).First(&mach); result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, ErrNodeNotFound
 		}
-		return nil, err
+		return nil, result.Error
 	}
 
 	return &mach, nil
 }
 
-// GetNodeByUserAndName finds a Node by its username and machineky.
-// We need to have the username since a machine can have multiple users.
+// GetNodeByMachineKey finds a Node by its username and machineky.
+// Cylonix scopes machine keys per-user because the same physical device may be
+// registered across different tenants as separate headscale users.
 func (hsdb *HSDatabase) GetNodeByMachineKey(username string, machineKey key.MachinePublic) (*types.Node, error) { // __CYLONIX_MOD__
 	return Read(hsdb.DB, func(rx *gorm.DB) (*types.Node, error) {
 		return GetNodeByMachineKey(rx, username, machineKey) // __CYLONIX_MOD__
 	})
 }
 
-// GetNodeByUserAndName finds a Node by its username and machineky.
-// We need to have the username since a machine can have multiple users.
 func GetNodeByMachineKey(
 	tx *gorm.DB,
-	username string, // __CYLONIX_MOD__
+	username string, // __CYLONIX_ADD__
 	machineKey key.MachinePublic,
 ) (*types.Node, error) {
-	// __BEGIN_CYLONIX_MOD__
+	// __BEGIN_CYLONIX_ADD__
 	user, err := GetUser(tx, username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find user '%v': %w", username, err)
 	}
-	// __END_CYLONIX_MOD__
+	// __END_CYLONIX_ADD__
 	mach := types.Node{}
 	if result := tx.
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes").
 		First(&mach, "user_id = ? AND machine_key = ?", user.ID, machineKey.String()); result.Error != nil { // __CYLONIX_MOD__
 		return nil, result.Error
 	}
@@ -277,7 +296,7 @@ func GetNodeByMachineKey(
 	return &mach, nil
 }
 
-// __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
 
 // GetNodeByUserAndMachineKey finds a Node by user ID and machine key.
 // Used for scoped lookups during auth/registration when the user is known.
@@ -301,12 +320,13 @@ func GetNodeByUserAndMachineKey(
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes").
 		First(&node, "user_id = ? AND machine_key = ?", userID, machineKey.String()); result.Error != nil {
 		return nil, result.Error
 	}
 	return &node, nil
 }
+
+// __END_CYLONIX_ADD__
 
 // GetNodeByNodeKey finds a Node by its current node key.
 // Used for global lookups when no user context is available (noise handlers, health, caps).
@@ -328,7 +348,6 @@ func GetNodeByNodeKey(
 		Preload("AuthKey").
 		Preload("AuthKey.User").
 		Preload("User").
-		Preload("Routes").
 		First(&node, "node_key = ?", nodeKey.String()); result.Error != nil {
 		return nil, result.Error
 	}
@@ -359,45 +378,107 @@ func (hsdb *HSDatabase) SetTags(
 	})
 }
 
-// SetTags takes a Node struct pointer and update the forced tags.
+// SetTags takes a NodeID and update the forced tags.
+// It will overwrite any tags with the new list.
 func SetTags(
 	tx *gorm.DB,
 	nodeID types.NodeID,
 	tags []string,
 ) error {
 	if len(tags) == 0 {
-		// if no tags are provided, we remove all forced tags
-		if err := tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("forced_tags", types.StringList{}).Error; err != nil {
-			return fmt.Errorf("failed to remove tags for node in the database: %w", err)
+		// if no tags are provided, we remove all tags
+		err := tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("tags", "[]").Error
+		if err != nil {
+			return fmt.Errorf("removing tags: %w", err)
 		}
 
 		return nil
 	}
 
-	var newTags types.StringList
-	for _, tag := range tags {
-		if !util.StringOrPrefixListContains(newTags, tag) {
-			newTags = append(newTags, tag)
-		}
+	slices.Sort(tags)
+	tags = slices.Compact(tags)
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return err
 	}
 
-	if err := tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("forced_tags", newTags).Error; err != nil {
-		return fmt.Errorf("failed to update tags for node in the database: %w", err)
+	err = tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("tags", string(b)).Error
+	if err != nil {
+		return fmt.Errorf("updating tags: %w", err)
 	}
 
 	return nil
 }
 
-// RenameNode takes a Node struct and a new GivenName for the nodes
-// and renames it.
-func RenameNode(tx *gorm.DB,
-	nodeID uint64, newName string,
+// SetTags takes a Node struct pointer and update the forced tags.
+func SetApprovedRoutes(
+	tx *gorm.DB,
+	nodeID types.NodeID,
+	routes []netip.Prefix,
 ) error {
-	err := util.CheckForFQDNRules(
-		newName,
-	)
+	if len(routes) == 0 {
+		// if no routes are provided, we remove all
+		if err := tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("approved_routes", "[]").Error; err != nil {
+			return fmt.Errorf("removing approved routes: %w", err)
+		}
+
+		return nil
+	}
+
+	// When approving exit routes, ensure both IPv4 and IPv6 are included
+	// If either 0.0.0.0/0 or ::/0 is being approved, both should be approved
+	hasIPv4Exit := slices.Contains(routes, tsaddr.AllIPv4())
+	hasIPv6Exit := slices.Contains(routes, tsaddr.AllIPv6())
+
+	if hasIPv4Exit && !hasIPv6Exit {
+		routes = append(routes, tsaddr.AllIPv6())
+	} else if hasIPv6Exit && !hasIPv4Exit {
+		routes = append(routes, tsaddr.AllIPv4())
+	}
+
+	b, err := json.Marshal(routes)
 	if err != nil {
+		return err
+	}
+
+	if err := tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("approved_routes", string(b)).Error; err != nil {
+		return fmt.Errorf("updating approved routes: %w", err)
+	}
+
+	return nil
+}
+
+// SetLastSeen sets a node's last seen field indicating that we
+// have recently communicating with this node.
+func (hsdb *HSDatabase) SetLastSeen(nodeID types.NodeID, lastSeen time.Time) error {
+	return hsdb.Write(func(tx *gorm.DB) error {
+		return SetLastSeen(tx, nodeID, lastSeen)
+	})
+}
+
+// SetLastSeen sets a node's last seen field indicating that we
+// have recently communicating with this node.
+func SetLastSeen(tx *gorm.DB, nodeID types.NodeID, lastSeen time.Time) error {
+	return tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("last_seen", lastSeen).Error
+}
+
+// RenameNode takes a Node struct and a new GivenName for the nodes
+// and renames it. Validation should be done in the state layer before calling this function.
+func RenameNode(tx *gorm.DB,
+	nodeID types.NodeID, newName string,
+) error {
+	if err := util.ValidateHostname(newName); err != nil {
 		return fmt.Errorf("renaming node: %w", err)
+	}
+
+	// Check if the new name is unique
+	var count int64
+	if err := tx.Model(&types.Node{}).Where("given_name = ? AND id != ?", newName, nodeID).Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check name uniqueness: %w", err)
+	}
+
+	if count > 0 {
+		return errors.New("name is not unique")
 	}
 
 	if err := tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("given_name", newName).Error; err != nil {
@@ -420,38 +501,41 @@ func NodeSetExpiry(tx *gorm.DB,
 	return tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("expiry", expiry).Error
 }
 
-func (hsdb *HSDatabase) DeleteNode(node *types.Node, isLikelyConnected *xsync.MapOf[types.NodeID, bool], nodeHandler types.NodeHandler) ([]types.NodeID, error) { // __CYLONIX_MOD__
-	return Write(hsdb.DB, func(tx *gorm.DB) ([]types.NodeID, error) {
-		return DeleteNode(tx, node, isLikelyConnected, nodeHandler) // __CYLONIX_MOD__
+func (hsdb *HSDatabase) DeleteNode(node *types.Node) error {
+	return hsdb.Write(func(tx *gorm.DB) error {
+		return DeleteNode(tx, node)
 	})
 }
+
+// __BEGIN_CYLONIX_ADD__
+// DeleteNodeWithHandler deletes a node and then invokes the supplied cylonix
+// NodeHandler so the daemon can remove WG / firewall / IPDrawer bindings in
+// the same unit of work. Upstream's DeleteNode no longer takes a handler since
+// routes are denormalised onto the node itself.
+func (hsdb *HSDatabase) DeleteNodeWithHandler(node *types.Node, nodeHandler types.NodeHandler) error {
+	return hsdb.Write(func(tx *gorm.DB) error {
+		if nodeHandler != nil {
+			if err := nodeHandler.Delete(node); err != nil {
+				return err
+			}
+		}
+		return DeleteNode(tx, node)
+	})
+}
+
+// __END_CYLONIX_ADD__
 
 // DeleteNode deletes a Node from the database.
 // Caller is responsible for notifying all of change.
 func DeleteNode(tx *gorm.DB,
 	node *types.Node,
-	isLikelyConnected *xsync.MapOf[types.NodeID, bool],
-	nodeHandler types.NodeHandler, // __CYLONIX_MOD__
-) ([]types.NodeID, error) {
-	changed, err := deleteNodeRoutes(tx, node, isLikelyConnected)
-	if err != nil {
-		return changed, err
-	}
-
-	// __BEING_CYLONIX_MOD__
-	if nodeHandler != nil {
-		if err := nodeHandler.Delete(node); err != nil {
-			return changed, err
-		}
-	}
-	// __END_CYLONIX_MOD__
-
+) error {
 	// Unscoped causes the node to be fully removed from the database.
 	if err := tx.Unscoped().Delete(&types.Node{}, node.ID).Error; err != nil {
-		return changed, err
+		return err
 	}
 
-	return changed, nil
+	return nil
 }
 
 // DeleteEphemeralNode deletes a Node from the database, note that this method
@@ -468,124 +552,122 @@ func (hsdb *HSDatabase) DeleteEphemeralNode(
 	})
 }
 
-// SetLastSeen sets a node's last seen field indicating that we
-// have recently communicating with this node.
-func SetLastSeen(tx *gorm.DB, nodeID types.NodeID, lastSeen time.Time) error {
-	return tx.Model(&types.Node{}).Where("id = ?", nodeID).Update("last_seen", lastSeen).Error
-}
-
+// __BEGIN_CYLONIX_ADD__
+// RegisterNodeFromAuthCallback is the cylonix-specific registration entry
+// point invoked after an external auth provider (OIDC / SSO) confirms the
+// user. Upstream moved this logic into state.HandleNodeFromAuthPath, but
+// cylonix still dispatches through the db layer so the NodeHandler can stamp
+// namespace + network_domain atomically with the row insert.
 func RegisterNodeFromAuthCallback(
 	tx *gorm.DB,
-	cache *cache.Cache,
-	mkey key.MachinePublic,
+	regCache *zcache.Cache[types.RegistrationID, types.RegisterNode],
+	registrationID types.RegistrationID,
 	userName string,
 	nodeExpiry *time.Time,
 	registrationMethod string,
 	ipv4 *netip.Addr,
 	ipv6 *netip.Addr,
-	nodeHandler types.NodeHandler, // __CYLONIX_MOD__
+	nodeHandler types.NodeHandler,
 ) (*types.Node, error) {
+	registration, ok := regCache.Get(registrationID)
+	if !ok {
+		return nil, ErrNodeNotFoundRegistrationCache
+	}
+	registrationNode := registration.Node
+	mkey := registrationNode.MachineKey
+
 	log.Debug().
 		Str("machine_key", mkey.ShortString()).
 		Str("userName", userName).
 		Str("registrationMethod", registrationMethod).
 		Str("expiresAt", fmt.Sprintf("%v", nodeExpiry)).
 		Msg("Registering node from API/CLI or auth callback")
-
-	if nodeInterface, ok := cache.Get(mkey.String()); ok {
-		if registration, ok := nodeInterface.(types.RegistrationCacheNodeInfo); ok {
-			registrationNode := registration.Node
-			user, err := GetUser(tx, userName)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"failed to find user in register node from auth callback, %w",
-					err,
-				)
-			}
-
-			// Registration of expired node with different user
-			if registrationNode.ID != 0 &&
-				registrationNode.UserID != user.ID {
-				return nil, ErrDifferentRegisteredUser
-			}
-
-			// __BEGIN_CYLONIX_MOD__
-			// Cache has been hit with the callback. Delete it before it
-			// to avoid be re-used even for error since the provider of
-			// the auth URL may have set the state to be authorized already.
-			log.Info().
-				Caller().
-				Str("machine_key", mkey.ShortString()).
-				Str("node_key", registrationNode.NodeKey.ShortString()).
-				Msg("Cache hit with auth callback, deleting cache entry")
-			cache.Delete(mkey.String())
-
-			node, err := GetNodeByUserAndMachineKey(tx, user.ID, mkey)
-		if !registrationNode.NodeKey.IsZero() {
-			nodeByKey, _ := GetNodeByNodeKey(tx, registrationNode.NodeKey)
-			if nodeByKey != nil {
-				if node != nil && nodeByKey.ID != node.ID {
-					return nil, fmt.Errorf("node key conflict: nodeKey belongs to different node")
-				}
-				if node == nil && nodeByKey.UserID != user.ID {
-					return nil, fmt.Errorf("node key conflict: nodeKey belongs to different user")
-				}
-				if node == nil {
-					node = nodeByKey
-					err = nil
-				}
-			}
-		}
-			if err == nil {
-				node.NodeKey = registrationNode.NodeKey
-				registrationNode.RegisterMethod = registrationMethod
-				if nodeExpiry != nil {
-					node.Expiry = nodeExpiry
-				}
-				if nodeHandler != nil {
-					networDomain, err := nodeHandler.NetworkDomain(&node.User)
-					if err != nil {
-						return nil, fmt.Errorf("failed to get network domain: %w", err)
-					}
-					if node.NetworkDomain != string(networDomain) {
-						node.NetworkDomain = string(networDomain)
-						node.InfoLog().
-							Str("old-network-domain", node.NetworkDomain).
-							Str("new-network-domain", string(networDomain)).
-							Msg("Updated network domain for node")
-					}
-				}
-				v, _ := json.Marshal(node.Hostinfo)
-				node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
-				if err := tx.Save(node).Error; err != nil {
-					return nil, fmt.Errorf("failed to update node key for %v of %v in the database: %w", node.Hostname, userName, err)
-				}
-				return node, nil
-			}
-			// __END_CYLONIX_MOD__
-
-			registrationNode.UserID = user.ID
-			registrationNode.User = *user
-			registrationNode.RegisterMethod = registrationMethod
-
-			if nodeExpiry != nil {
-				registrationNode.Expiry = nodeExpiry
-			}
-
-			node, err = RegisterNode(
-				tx,
-				registrationNode,
-				ipv4, ipv6,
-				nodeHandler, // __CYLONIX_MOD__
-			)
-			return node, err
-		} else {
-			return nil, ErrCouldNotConvertNodeInterface
-		}
+	user, err := GetUser(tx, userName)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to find user in register node from auth callback, %w",
+			err,
+		)
 	}
 
-	return nil, ErrNodeNotFoundRegistrationCache
+	// Registration of expired node with different user.
+	if registrationNode.ID != 0 &&
+		registrationNode.UserID != nil && *registrationNode.UserID != user.ID {
+		return nil, ErrDifferentRegisteredUser
+	}
+
+	// Cache has been hit with the callback. Delete it before it
+	// can be re-used even for error since the provider of the auth
+	// URL may have set the state to be authorized already.
+	log.Info().
+		Caller().
+		Str("machine_key", mkey.ShortString()).
+		Str("node_key", registrationNode.NodeKey.ShortString()).
+		Msg("Cache hit with auth callback, deleting cache entry")
+	regCache.Delete(registrationID)
+
+	node, err := GetNodeByUserAndMachineKey(tx, user.ID, mkey)
+	if !registrationNode.NodeKey.IsZero() {
+		nodeByKey, _ := GetNodeByNodeKey(tx, registrationNode.NodeKey)
+		if nodeByKey != nil {
+			if node != nil && nodeByKey.ID != node.ID {
+				return nil, fmt.Errorf("node key conflict: nodeKey belongs to different node")
+			}
+			if node == nil && (nodeByKey.UserID == nil || *nodeByKey.UserID != user.ID) {
+				return nil, fmt.Errorf("node key conflict: nodeKey belongs to different user")
+			}
+			if node == nil {
+				node = nodeByKey
+				err = nil
+			}
+		}
+	}
+	if err == nil {
+		node.NodeKey = registrationNode.NodeKey
+		registrationNode.RegisterMethod = registrationMethod
+		if nodeExpiry != nil {
+			node.Expiry = nodeExpiry
+		}
+		if nodeHandler != nil && node.User != nil {
+			networkDomain, err := nodeHandler.NetworkDomain(node.User)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get network domain: %w", err)
+			}
+			if node.NetworkDomain != string(networkDomain) {
+				oldDomain := node.NetworkDomain
+				node.NetworkDomain = string(networkDomain)
+				log.Info().
+					Str("node", node.Hostname).
+					Str("old-network-domain", oldDomain).
+					Str("new-network-domain", string(networkDomain)).
+					Msg("Updated network domain for node")
+			}
+		}
+		v, _ := json.Marshal(node.Hostinfo)
+		node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
+		if err := tx.Save(node).Error; err != nil {
+			return nil, fmt.Errorf("failed to update node key for %v of %v in the database: %w", node.Hostname, userName, err)
+		}
+		return node, nil
+	}
+
+	registrationNode.UserID = &user.ID
+	registrationNode.User = user
+	registrationNode.RegisterMethod = registrationMethod
+
+	if nodeExpiry != nil {
+		registrationNode.Expiry = nodeExpiry
+	}
+
+	return RegisterNode(
+		tx,
+		registrationNode,
+		ipv4, ipv6,
+		nodeHandler,
+	)
 }
+
+// __END_CYLONIX_ADD__
 
 func (hsdb *HSDatabase) RegisterNode(node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr, nodeHandler types.NodeHandler) (*types.Node, error) { // __CYLONIX_MOD__
 	return Write(hsdb.DB, func(tx *gorm.DB) (*types.Node, error) {
@@ -593,22 +675,30 @@ func (hsdb *HSDatabase) RegisterNode(node types.Node, ipv4 *netip.Addr, ipv6 *ne
 	})
 }
 
-// RegisterNode is executed from the CLI to register a new Node using its MachineKey.
+// RegisterNode is executed from the CLI to register a new Node using its
+// MachineKey. Cylonix extends the upstream signature with a NodeHandler so
+// the caller (daemon) can participate in the create transaction (stamp
+// network_domain, notify WG, etc.).
 func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr, nodeHandler types.NodeHandler) (*types.Node, error) { // __CYLONIX_MOD__
-	log.Debug().
+	// __BEGIN_CYLONIX_MOD__
+	logEvent := log.Debug().
 		Str("node", node.Hostname).
 		Str("machine_key", node.MachineKey.ShortString()).
-		Str("node_key", node.NodeKey.ShortString()).
-		Str("user", node.User.Name).
-		Str("Namespace", node.User.GetNamespace()). // __CYLONIX_MOD__
-		Msg("Registering node")
+		Str("node_key", node.NodeKey.ShortString())
+	if node.User != nil {
+		logEvent = logEvent.
+			Str("user", node.User.Name).
+			Str("Namespace", node.User.GetNamespace())
+	}
+	logEvent.Msg("Registering node")
+	// __END_CYLONIX_MOD__
 
 	// If the node exists and it already has IP(s), we just save it
 	// so we store the node.Expire and node.Nodekey that has been set when
 	// adding it to the registrationCache
 	if node.IPv4 != nil || node.IPv6 != nil {
 		// __BEGIN_CYLONIX_MOD__
-		if err := registerNodePreAdd(tx, &node, nodeHandler); err != nil {
+		if err := RegisterNodePreAdd(tx, &node, nodeHandler); err != nil {
 			return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 		}
 		v, _ := json.Marshal(node.Hostinfo)
@@ -618,17 +708,21 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 			return nil, fmt.Errorf("failed register existing node in the database: %w", err)
 		}
 
-		log.Trace().
+		traceEvent := log.Trace().
 			Caller().
 			Str("node", node.Hostname).
 			Str("machine_key", node.MachineKey.ShortString()).
-			Str("node_key", node.NodeKey.ShortString()).
-			Str("user", node.User.Name).
-			Msg("Node authorized again")
+			Str("node_key", node.NodeKey.ShortString())
+		if node.User != nil {
+			traceEvent = traceEvent.Str("user", node.User.Username())
+		}
+		traceEvent.Msg("Node authorized again") // __CYLONIX_MOD__
 
 		// __BEGIN_CYLONIX_MOD__
 		if nodeHandler != nil {
-			nodeHandler.PostAdd(&node)
+			if err := nodeHandler.PostAdd(&node); err != nil {
+				return nil, err
+			}
 		}
 		// __END_CYLONIX_MOD__
 
@@ -639,10 +733,35 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	node.IPv6 = ipv6
 
 	// __BEGIN_CYLONIX_MOD__
-	if err := registerNodePreAdd(tx, &node, nodeHandler); err != nil {
+	// Normalise hostname first so the cylonix pre-add (which derives
+	// given_name) sees the sanitized value. Upstream's EnsureUniqueGivenName
+	// is the simple global-uniqueness helper; cylonix replaces it with the
+	// per-network-domain GenerateGivenName flow executed inside
+	// RegisterNodePreAdd via the NodeHandler.
+	normalisedHostname, err := util.NormaliseHostname(node.Hostname)
+	if err != nil {
+		newHostname := util.InvalidString()
+		log.Info().Err(err).
+			Str("invalid-hostname", node.Hostname).
+			Str("new-hostname", newHostname).
+			Msgf("Invalid hostname, replacing")
+		node.Hostname = newHostname
+	} else {
+		node.Hostname = normalisedHostname
+	}
+	if err := RegisterNodePreAdd(tx, &node, nodeHandler); err != nil {
 		return nil, fmt.Errorf("failed register(pre-add) node in the database: %w", err)
 	}
-	node.Namespace = node.User.GetNamespace()
+	if node.User != nil {
+		node.Namespace = node.User.GetNamespace()
+	}
+	if node.GivenName == "" {
+		givenName, err := EnsureUniqueGivenName(tx, node.Hostname)
+		if err != nil {
+			return nil, fmt.Errorf("failed to ensure unique given name: %w", err)
+		}
+		node.GivenName = givenName
+	}
 	v, _ := json.Marshal(node.Hostinfo)
 	node.DebugLog().Str("HostInfo", string(v)).Msg("Saving node")
 	// __END_CYLONIX_MOD__
@@ -662,17 +781,30 @@ func RegisterNode(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Ad
 	log.Trace().
 		Caller().
 		Str("node", node.Hostname).
-		Msg("Node registered with the database")
+		Msg("Node registered with the database") // __CYLONIX_MOD__
 
 	return &node, nil
 }
 
+// __BEGIN_CYLONIX_ADD__
+// RegisterNodeForTest is used only for testing purposes to register a node
+// directly in the database. Production code should go through RegisterNode /
+// RegisterNodeFromAuthCallback so NodeHandler side effects run. This wrapper
+// mirrors upstream's v0.28 helper signature so upstream tests still compile.
+func RegisterNodeForTest(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *netip.Addr) (*types.Node, error) {
+	if !testing.Testing() {
+		panic("RegisterNodeForTest can only be called during tests")
+	}
+	return RegisterNode(tx, node, ipv4, ipv6, nil)
+}
+
+// __END_CYLONIX_ADD__
+
 // NodeSetNodeKey sets the node key of a node and saves it to the database.
 func NodeSetNodeKey(tx *gorm.DB, node *types.Node, nodeKey key.NodePublic) error {
-	node.NodeKey = nodeKey // __CYLONIX_ADD__
+	node.NodeKey = nodeKey // __CYLONIX_ADD__ keep in-memory copy aligned with DB
 	return tx.Model(node).Updates(types.Node{
-		NodeKeyDatabaseField: nodeKey.String(), // __CYLONIX_ADD__
-		NodeKey:              nodeKey,
+		NodeKey: nodeKey,
 	}).Error
 }
 
@@ -691,15 +823,17 @@ func NodeSetMachineKey(
 	node *types.Node,
 	machineKey key.MachinePublic,
 ) error {
-	node.MachineKey = machineKey // __CYLONIX_ADD__
+	node.MachineKey = machineKey // __CYLONIX_ADD__ keep in-memory copy aligned with DB
 	return tx.Model(node).Updates(types.Node{
-		MachineKeyDatabaseField: machineKey.String(), // __CYLONIX_ADD__
-		MachineKey:              machineKey,
+		MachineKey: machineKey,
 	}).Error
 }
 
-// NodeSave saves a node object to the database, prefer to use a specific save method rather
-// than this. It is intended to be used when we are changing or.
+// __BEGIN_CYLONIX_ADD__
+// NodeSave saves a node object to the database, prefer to use a specific save
+// method rather than this. Kept from the cylonix fork because the daemon has a
+// handful of call sites that need to persist a mixed-field update without
+// having to enumerate which columns changed.
 // TODO(kradalby): Remove this func, just use Save.
 func NodeSave(tx *gorm.DB, node *types.Node) error {
 	v, _ := json.Marshal(node.Hostinfo)
@@ -707,178 +841,29 @@ func NodeSave(tx *gorm.DB, node *types.Node) error {
 	return tx.Save(node).Error
 }
 
-func (hsdb *HSDatabase) GetAdvertisedRoutes(node *types.Node) ([]netip.Prefix, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) ([]netip.Prefix, error) {
-		return GetAdvertisedRoutes(rx, node)
-	})
-}
+// __END_CYLONIX_ADD__
 
-// GetAdvertisedRoutes returns the routes that are be advertised by the given node.
-func GetAdvertisedRoutes(tx *gorm.DB, node *types.Node) ([]netip.Prefix, error) {
-	routes := types.Routes{}
-
-	err := tx.
-		Preload("Node").
-		Where("node_id = ? AND advertised = ?", node.ID, true).Find(&routes).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("getting advertised routes for node(%d): %w", node.ID, err)
-	}
-
-	var prefixes []netip.Prefix
-	for _, route := range routes {
-		prefixes = append(prefixes, netip.Prefix(route.Prefix))
-	}
-
-	return prefixes, nil
-}
-
-func (hsdb *HSDatabase) GetEnabledRoutes(node *types.Node) ([]netip.Prefix, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) ([]netip.Prefix, error) {
-		return GetEnabledRoutes(rx, node)
-	})
-}
-
-// GetEnabledRoutes returns the routes that are enabled for the node.
-func GetEnabledRoutes(tx *gorm.DB, node *types.Node) ([]netip.Prefix, error) {
-	routes := types.Routes{}
-
-	err := tx.
-		Preload("Node").
-		Where("node_id = ? AND advertised = ? AND enabled = ?", node.ID, true, true).
-		Find(&routes).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("getting enabled routes for node(%d): %w", node.ID, err)
-	}
-
-	var prefixes []netip.Prefix
-	for _, route := range routes {
-		prefixes = append(prefixes, netip.Prefix(route.Prefix))
-	}
-
-	return prefixes, nil
-}
-
-func IsRoutesEnabled(tx *gorm.DB, node *types.Node, routeStr string) bool {
-	route, err := netip.ParsePrefix(routeStr)
-	if err != nil {
-		return false
-	}
-
-	enabledRoutes, err := GetEnabledRoutes(tx, node)
-	if err != nil {
-		return false
-	}
-
-	for _, enabledRoute := range enabledRoutes {
-		if route == enabledRoute {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (hsdb *HSDatabase) enableRoutes(
-	node *types.Node,
-	routeStrs ...string,
-) (*types.StateUpdate, error) {
-	return Write(hsdb.DB, func(tx *gorm.DB) (*types.StateUpdate, error) {
-		return enableRoutes(tx, node, routeStrs...)
-	})
-}
-
-// enableRoutes enables new routes based on a list of new routes.
-func enableRoutes(tx *gorm.DB,
-	node *types.Node, routeStrs ...string,
-) (*types.StateUpdate, error) {
-	newRoutes := make([]netip.Prefix, len(routeStrs))
-	for index, routeStr := range routeStrs {
-		route, err := netip.ParsePrefix(routeStr)
-		if err != nil {
-			return nil, err
-		}
-
-		newRoutes[index] = route
-	}
-
-	advertisedRoutes, err := GetAdvertisedRoutes(tx, node)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, newRoute := range newRoutes {
-		if !util.StringOrPrefixListContains(advertisedRoutes, newRoute) {
-			return nil, fmt.Errorf(
-				"route (%s) is not available on node %s: %w",
-				node.Hostname,
-				newRoute, ErrNodeRouteIsNotAvailable,
-			)
-		}
-	}
-
-	// Separate loop so we don't leave things in a half-updated state
-	for _, prefix := range newRoutes {
-		route := types.Route{}
-		err := tx.Preload("Node").
-			Where("node_id = ? AND prefix = ?", node.ID, types.IPPrefix(prefix)).
-			First(&route).Error
-		if err == nil {
-			route.Enabled = true
-
-			// Mark already as primary if there is only this node offering this subnet
-			// (and is not an exit route)
-			if !route.IsExitRoute() {
-				route.IsPrimary = isUniquePrefix(tx, route)
-			}
-
-			err = tx.Save(&route).Error
-			if err != nil {
-				return nil, fmt.Errorf("failed to enable route: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("failed to find route: %w", err)
-		}
-	}
-
-	// Ensure the node has the latest routes when notifying the other
-	// nodes
-	nRoutes, err := GetNodeRoutes(tx, node)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read back routes: %w", err)
-	}
-
-	node.Routes = nRoutes
-
-	log.Trace().
-		Caller().
-		Str("node", node.Hostname).
-		Strs("routes", routeStrs).
-		Msg("enabling routes")
-
-	return &types.StateUpdate{
-		Type:        types.StatePeerChanged,
-		ChangeNodes: []types.NodeID{node.ID},
-		Message:     "created in db.enableRoutes",
-
-		Namespace:     node.Namespace,     // __CYLONIX_ADD__
-		NetworkDomain: node.NetworkDomain, // __CYLONIX_ADD__
-	}, nil
-}
+// NOTE: The previous cylonix GetAdvertisedRoutes/GetEnabledRoutes/IsRoutesEnabled/enableRoutes
+// helpers were removed in the merge to upstream v0.28.0 because the Route
+// table was dropped in favour of Node.ApprovedRoutes ([]netip.Prefix) stored
+// directly on the node row. Callers should read node.ApprovedRoutes (or
+// node.AnnouncedRoutes via Hostinfo) instead.
 
 func generateGivenName(suppliedName string, randomSuffix bool) (string, error) {
-	normalizedHostname, err := util.NormalizeToFQDNRulesConfigFromViper(
-		suppliedName,
-	)
-	normalizedHostname = strings.ReplaceAll(normalizedHostname, ".", "-") // Don't allow '.' in hostname __CYLONIX_ADD__
-	if err != nil {
-		return "", err
+	// Strip invalid DNS characters for givenName
+	suppliedName = strings.ToLower(suppliedName)
+	suppliedName = invalidDNSRegex.ReplaceAllString(suppliedName, "")
+	suppliedName = strings.ReplaceAll(suppliedName, ".", "-") // Don't allow '.' in hostname __CYLONIX_MOD__
+
+	if len(suppliedName) > util.LabelHostnameLength {
+		return "", types.ErrHostnameTooLong
 	}
 
 	if randomSuffix {
 		// Trim if a hostname will be longer than 63 chars after adding the hash.
 		trimmedHostnameLength := util.LabelHostnameLength - NodeGivenNameHashLength - NodeGivenNameTrimSize
-		if len(normalizedHostname) > trimmedHostnameLength {
-			normalizedHostname = normalizedHostname[:trimmedHostnameLength]
+		if len(suppliedName) > trimmedHostnameLength {
+			suppliedName = suppliedName[:trimmedHostnameLength]
 		}
 
 		suffix, err := util.GenerateRandomStringDNSSafe(NodeGivenNameHashLength)
@@ -886,31 +871,40 @@ func generateGivenName(suppliedName string, randomSuffix bool) (string, error) {
 			return "", err
 		}
 
-		normalizedHostname += "-" + suffix
+		suppliedName += "-" + suffix
 	}
 
-	return normalizedHostname, nil
+	return suppliedName, nil
 }
 
+// __BEGIN_CYLONIX_ADD__
 func (hsdb *HSDatabase) GenerateGivenName(
 	mkey key.MachinePublic,
 	suppliedName string,
-	networkDomain string, nodeID *types.NodeID, currentGivenName *string, // __CYLONIX_MOD__
+	networkDomain string, nodeID *types.NodeID, currentGivenName *string,
 ) (string, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) (string, error) {
-		return GenerateGivenName(rx, mkey, suppliedName, networkDomain, nodeID, currentGivenName) // __CYLONIX_MOD__
+		return GenerateGivenName(rx, mkey, suppliedName, networkDomain, nodeID, currentGivenName)
 	})
 }
 
 var givenNamePattern = regexp.MustCompile(`^(.+?)(?:-([1-9][0-9]?|1[0-2][0-8])?)?$`)
 
+// GenerateGivenName is the cylonix per-network-domain unique-name allocator.
+// It differs from upstream EnsureUniqueGivenName in three ways:
+//  1. Uniqueness is scoped to networkDomain, not global.
+//  2. If the supplied name is already taken the numeric suffix is found via
+//     binary search between -1 and -128 before falling back to a random hash.
+//  3. If the caller passes currentGivenName that already matches either the
+//     base name or the base-[digit] pattern we keep it to avoid churning the
+//     DNS record for a rename-that-isn't.
 func GenerateGivenName(
 	tx *gorm.DB,
 	mkey key.MachinePublic,
 	suppliedName string,
-	networkDomain string, // __CYLONIX_MOD__
-	nodeID *types.NodeID, // __CYLONIX_MOD__
-	currentGivenName *string, // __CYLONIX_MOD__
+	networkDomain string,
+	nodeID *types.NodeID,
+	currentGivenName *string,
 ) (string, error) {
 	givenName, err := generateGivenName(suppliedName, false)
 	if err != nil {
@@ -918,7 +912,6 @@ func GenerateGivenName(
 	}
 
 	// Tailscale rules (may differ) https://tailscale.com/kb/1098/machine-names/
-	// __BEGIN_CYLONIX_MOD__
 	// If the current given name is already the same as the generated one or
 	// has the same prefix before the -[digit], we can return it.
 	if currentGivenName != nil {
@@ -984,10 +977,56 @@ func GenerateGivenName(
 
 	// If all slots are taken, generate a random suffix
 	return generateGivenName(suppliedName, true)
-	// __END_CYLONIX_MOD__
 }
 
-// TODO: (randy) Make this per network domain or namespace __CYLONIX_ADD__
+// __END_CYLONIX_ADD__
+
+func isUniqueName(tx *gorm.DB, name string) (bool, error) {
+	nodes := types.Nodes{}
+	if err := tx.
+		Where("given_name = ?", name).Find(&nodes).Error; err != nil {
+		return false, err
+	}
+
+	return len(nodes) == 0, nil
+}
+
+// EnsureUniqueGivenName generates a unique given name for a node based on its hostname.
+// This is the upstream helper; cylonix prefers GenerateGivenName (above) for
+// production call sites that know the network_domain. Keep EnsureUniqueGivenName
+// as a fallback so upstream tests and the RegisterNode test path keep working.
+func EnsureUniqueGivenName(
+	tx *gorm.DB,
+	name string,
+) (string, error) {
+	givenName, err := generateGivenName(name, false)
+	if err != nil {
+		return "", err
+	}
+
+	unique, err := isUniqueName(tx, givenName)
+	if err != nil {
+		return "", err
+	}
+
+	if !unique {
+		postfixedName, err := generateGivenName(name, true)
+		if err != nil {
+			return "", err
+		}
+
+		givenName = postfixedName
+	}
+
+	return givenName, nil
+}
+
+// __BEGIN_CYLONIX_ADD__
+// ExpireExpiredNodes iterates all nodes, finds any whose expiry crossed
+// lastCheck, and returns a StatePeerChangedPatch update for them. Upstream
+// deleted this in v0.26 in favour of a NodeStore-driven expiry loop; cylonix
+// still drives expiry from the db layer through the tenant scheduler.
+// TODO: (randy) Make this per network domain or namespace.
 func ExpireExpiredNodes(tx *gorm.DB,
 	lastCheck time.Time,
 ) (time.Time, types.StateUpdate, bool) {
@@ -1021,6 +1060,9 @@ func ExpireExpiredNodes(tx *gorm.DB,
 	return started, types.StateUpdate{}, false
 }
 
+// __END_CYLONIX_ADD__
+
+
 // EphemeralGarbageCollector is a garbage collector that will delete nodes after
 // a certain amount of time.
 // It is used to delete ephemeral nodes that have disconnected and should be
@@ -1048,22 +1090,59 @@ func NewEphemeralGarbageCollector(deleteFunc func(types.NodeID)) *EphemeralGarba
 
 // Close stops the garbage collector.
 func (e *EphemeralGarbageCollector) Close() {
-	e.cancelCh <- struct{}{}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Stop all timers
+	for _, timer := range e.toBeDeleted {
+		timer.Stop()
+	}
+
+	// Close the cancel channel to signal all goroutines to exit
+	close(e.cancelCh)
 }
 
 // Schedule schedules a node for deletion after the expiry duration.
+// If the garbage collector is already closed, this is a no-op.
 func (e *EphemeralGarbageCollector) Schedule(nodeID types.NodeID, expiry time.Duration) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Don't schedule new timers if the garbage collector is already closed
+	select {
+	case <-e.cancelCh:
+		// The cancel channel is closed, meaning the GC is shutting down
+		// or already shut down, so we shouldn't schedule anything new
+		return
+	default:
+		// Continue with scheduling
+	}
+
+	// If a timer already exists for this node, stop it first
+	if oldTimer, exists := e.toBeDeleted[nodeID]; exists {
+		oldTimer.Stop()
+	}
+
 	timer := time.NewTimer(expiry)
 	e.toBeDeleted[nodeID] = timer
-	e.mu.Unlock()
-
+	// Start a goroutine to handle the timer completion
 	go func() {
 		select {
-		case _, ok := <-timer.C:
-			if ok {
-				e.deleteCh <- nodeID
+		case <-timer.C:
+			// This is to handle the situation where the GC is shutting down and
+			// we are trying to schedule a new node for deletion at the same time
+			// i.e. We don't want to send to deleteCh if the GC is shutting down
+			// So, we try to send to deleteCh, but also watch for cancelCh
+			select {
+			case e.deleteCh <- nodeID:
+				// Successfully sent to deleteCh
+			case <-e.cancelCh:
+				// GC is shutting down, don't send to deleteCh
+				return
 			}
+		case <-e.cancelCh:
+			// If the GC is closed, exit the goroutine
+			return
 		}
 	}()
 }
@@ -1095,7 +1174,7 @@ func (e *EphemeralGarbageCollector) Start() {
 	}
 }
 
-// __BEGIN_CYLONIX_MOD__
+// __BEGIN_CYLONIX_ADD__
 func (hsdb *HSDatabase) UpdateNode(
 	id types.NodeID,
 	namespace string,
@@ -1114,10 +1193,9 @@ func (hsdb *HSDatabase) UpdateNode(
 	// If the given name is being updated, we need to ensure it follows the rules
 	// and generate a unique given name.
 	if update.GivenName != "" && update.GivenName != node.GivenName {
-		err := util.CheckForFQDNRules(
-			update.GivenName,
-		)
-		if err != nil {
+		// util.CheckForFQDNRules was removed upstream; util.ValidateHostname
+		// covers the same (label length, charset, reserved prefix) rules.
+		if err := util.ValidateHostname(update.GivenName); err != nil {
 			return fmt.Errorf("updating node given name: %w", err)
 		}
 		givenName, err := hsdb.GenerateGivenName(
@@ -1137,16 +1215,11 @@ func (hsdb *HSDatabase) UpdateNode(
 	update.ID = id
 	tx = tx.Session(&gorm.Session{FullSaveAssociations: true})
 
-	// Delete current associated routes if the 'Routes' field is not 'nil'.
-	// Note for updates that do not intend to delete all the routes,
-	// 'update.Routes' must be 'nil' instead of '[]'.
-	if update.Routes != nil {
-		if err := tx.Model(&types.Route{}).Unscoped().
-			Delete(&types.Route{}, "node_id = ?", id).
-			Error; err != nil {
-			return err
-		}
-	}
+	// NOTE: Previous cylonix versions of UpdateNode also reset the Routes
+	// association when update.Routes was non-nil. Upstream v0.26 dropped the
+	// separate Route table in favour of Node.ApprovedRoutes stored inline, so
+	// the separate delete step is no longer needed.
+
 	// Delete current associated capabilities if the 'Capabilities' field is
 	// not 'nil'. Note for updates that do not intend to delete all the
 	// capabilities, 'update.Capabilities' must be 'nil' instead of '[]'.
@@ -1296,7 +1369,7 @@ func addCapabilityIDs(tx *gorm.DB, caps []types.Capability) error {
 	return nil
 }
 
-func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHandler) error {
+func RegisterNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHandler) error {
 	if nodeHandler == nil {
 		return nil
 	}
@@ -1304,7 +1377,10 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 		return fmt.Errorf("failed register existing node in the database: %w", err)
 	}
 	// Regenerate the given name since we now have the node user information.
-	v, err := nodeHandler.NetworkDomain(&node.User)
+	if node.User == nil {
+		return fmt.Errorf("RegisterNodePreAdd: node %s has no user", node.Hostname)
+	}
+	v, err := nodeHandler.NetworkDomain(node.User)
 	if err != nil {
 		return err
 	}
@@ -1321,7 +1397,11 @@ func registerNodePreAdd(tx *gorm.DB, node *types.Node, nodeHandler types.NodeHan
 	if err != nil {
 		return fmt.Errorf("failed to generate given name: %w", err)
 	}
-	node.InfoLog().Msg("Generated given name for node")
+	log.Info().
+		Str("node", node.Hostname).
+		Str("given_name", givenName).
+		Str("network_domain", networkDomain).
+		Msg("Generated given name for node") // __CYLONIX_MOD__
 
 	node.GivenName = givenName
 	node.NetworkDomain = networkDomain
@@ -1475,8 +1555,7 @@ func ListSharedInPeers(tx *gorm.DB, user *types.User) (types.Nodes, error) {
 	nodes := types.Nodes{}
 	if err := tx.
 		Preload("User").
-		Preload("Routes").
-		Preload("Capabilities").
+		Preload("Capabilities"). // Routes preload dropped: Route table removed upstream. __CYLONIX_MOD__
 		Joins("JOIN node_accepted_share_to_users_relation ON nodes.id = node_accepted_share_to_users_relation.node_id").
 		Where("nodes.namespace = ? AND node_accepted_share_to_users_relation.user_id = ?",
 			user.Namespace,
@@ -1505,8 +1584,7 @@ func ListSharedToPeers(tx *gorm.DB, node *types.Node) (types.Nodes, error) {
 	nodes := types.Nodes{}
 	if err := tx.
 		Preload("User").
-		Preload("Routes").
-		Preload("Capabilities").
+		Preload("Capabilities"). // Routes preload dropped: Route table removed upstream. __CYLONIX_MOD__
 		Where("namespace = ? AND user_id IN (?)",
 			node.Namespace,
 			tx.Table("node_accepted_share_to_users_relation").
@@ -1547,4 +1625,149 @@ func (hsdb *HSDatabase) RemoveAcceptedShareToUser(node *types.Node, user *types.
 	return hsdb.DB.Model(node).Association("AcceptedShareTo").Delete(user)
 }
 
-// __END_CYLONIX_MOD__
+// __END_CYLONIX_ADD__
+
+func (hsdb *HSDatabase) CreateNodeForTest(user *types.User, hostname ...string) *types.Node {
+	if !testing.Testing() {
+		panic("CreateNodeForTest can only be called during tests")
+	}
+
+	if user == nil {
+		panic("CreateNodeForTest requires a valid user")
+	}
+
+	nodeName := "testnode"
+	if len(hostname) > 0 && hostname[0] != "" {
+		nodeName = hostname[0]
+	}
+
+	// Create a preauth key for the node
+	pak, err := hsdb.CreatePreAuthKey(user.TypedID(), false, false, nil, nil)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create preauth key for test node: %v", err))
+	}
+
+	nodeKey := key.NewNode()
+	machineKey := key.NewMachine()
+	discoKey := key.NewDisco()
+
+	node := &types.Node{
+		MachineKey:     machineKey.Public(),
+		NodeKey:        nodeKey.Public(),
+		DiscoKey:       discoKey.Public(),
+		Hostname:       nodeName,
+		UserID:         &user.ID,
+		RegisterMethod: util.RegisterMethodAuthKey,
+		AuthKeyID:      ptr.To(pak.ID),
+	}
+
+	err = hsdb.DB.Save(node).Error
+	if err != nil {
+		panic(fmt.Sprintf("failed to create test node: %v", err))
+	}
+
+	return node
+}
+
+func (hsdb *HSDatabase) CreateRegisteredNodeForTest(user *types.User, hostname ...string) *types.Node {
+	if !testing.Testing() {
+		panic("CreateRegisteredNodeForTest can only be called during tests")
+	}
+
+	node := hsdb.CreateNodeForTest(user, hostname...)
+
+	// Allocate IPs for the test node using the database's IP allocator
+	// This is a simplified allocation for testing - in production this would use State.ipAlloc
+	ipv4, ipv6, err := hsdb.allocateTestIPs(node.ID)
+	if err != nil {
+		panic(fmt.Sprintf("failed to allocate IPs for test node: %v", err))
+	}
+
+	var registeredNode *types.Node
+	err = hsdb.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		registeredNode, err = RegisterNodeForTest(tx, *node, ipv4, ipv6)
+		return err
+	})
+	if err != nil {
+		panic(fmt.Sprintf("failed to register test node: %v", err))
+	}
+
+	return registeredNode
+}
+
+func (hsdb *HSDatabase) CreateNodesForTest(user *types.User, count int, hostnamePrefix ...string) []*types.Node {
+	if !testing.Testing() {
+		panic("CreateNodesForTest can only be called during tests")
+	}
+
+	if user == nil {
+		panic("CreateNodesForTest requires a valid user")
+	}
+
+	prefix := "testnode"
+	if len(hostnamePrefix) > 0 && hostnamePrefix[0] != "" {
+		prefix = hostnamePrefix[0]
+	}
+
+	nodes := make([]*types.Node, count)
+	for i := range count {
+		hostname := prefix + "-" + strconv.Itoa(i)
+		nodes[i] = hsdb.CreateNodeForTest(user, hostname)
+	}
+
+	return nodes
+}
+
+func (hsdb *HSDatabase) CreateRegisteredNodesForTest(user *types.User, count int, hostnamePrefix ...string) []*types.Node {
+	if !testing.Testing() {
+		panic("CreateRegisteredNodesForTest can only be called during tests")
+	}
+
+	if user == nil {
+		panic("CreateRegisteredNodesForTest requires a valid user")
+	}
+
+	prefix := "testnode"
+	if len(hostnamePrefix) > 0 && hostnamePrefix[0] != "" {
+		prefix = hostnamePrefix[0]
+	}
+
+	nodes := make([]*types.Node, count)
+	for i := range count {
+		hostname := prefix + "-" + strconv.Itoa(i)
+		nodes[i] = hsdb.CreateRegisteredNodeForTest(user, hostname)
+	}
+
+	return nodes
+}
+
+// allocateTestIPs allocates sequential test IPs for nodes during testing.
+func (hsdb *HSDatabase) allocateTestIPs(nodeID types.NodeID) (*netip.Addr, *netip.Addr, error) {
+	if !testing.Testing() {
+		panic("allocateTestIPs can only be called during tests")
+	}
+
+	// Use simple sequential allocation for tests
+	// IPv4: 100.64.x.y (where x = nodeID/256, y = nodeID%256)
+	// IPv6: fd7a:115c:a1e0::x:y (where x = high byte, y = low byte)
+	// This supports up to 65535 nodes
+	const (
+		maxTestNodes    = 65535
+		ipv4ByteDivisor = 256
+	)
+
+	if nodeID > maxTestNodes {
+		return nil, nil, ErrCouldNotAllocateIP
+	}
+
+	// Split nodeID into high and low bytes for IPv4 (100.64.high.low)
+	highByte := byte(nodeID / ipv4ByteDivisor)
+	lowByte := byte(nodeID % ipv4ByteDivisor)
+	ipv4 := netip.AddrFrom4([4]byte{100, 64, highByte, lowByte})
+
+	// For IPv6, use the last two bytes of the address (fd7a:115c:a1e0::high:low)
+	ipv6 := netip.AddrFrom16([16]byte{0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, highByte, lowByte})
+
+	return &ipv4, &ipv6, nil
+}

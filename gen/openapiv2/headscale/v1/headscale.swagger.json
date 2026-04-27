@@ -174,6 +174,7 @@
     },
     "/api/v1/apikey/refresh/{prefix}": {
       "post": {
+        "summary": "__BEGIN_CYLONIX_MOD__",
         "operationId": "HeadscaleService_RefreshApiKey",
         "responses": {
           "200": {
@@ -225,6 +226,13 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
           }
         ],
         "tags": [
@@ -265,6 +273,29 @@
         ]
       }
     },
+    "/api/v1/health": {
+      "get": {
+        "summary": "--- Health start ---",
+        "operationId": "HeadscaleService_Health",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1HealthResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/node": {
       "get": {
         "operationId": "HeadscaleService_ListNodes",
@@ -291,7 +322,7 @@
           },
           {
             "name": "nodeIdList",
-            "description": "__BEGIN_CYLONIX_ADD_",
+            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -359,7 +390,7 @@
           },
           {
             "name": "shareInOnly",
-            "description": "If to list only nodes that are shared in.\n\n__END_CYLONIX_ADD__",
+            "description": "If to list only nodes that are shared in.\n\n__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "boolean"
@@ -471,7 +502,8 @@
             "name": "node.user.id",
             "in": "query",
             "required": false,
-            "type": "string"
+            "type": "string",
+            "format": "uint64"
           },
           {
             "name": "node.user.name",
@@ -487,22 +519,52 @@
             "format": "date-time"
           },
           {
+            "name": "node.user.displayName",
+            "description": "Upstream v0.24+ OIDC identity fields.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.email",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.providerId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.provider",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.user.profilePicUrl",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "node.user.loginName",
-            "description": "__CYLONIX_MOD__",
+            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.user.namespace",
-            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.user.network",
-            "description": "__CYLONIX_MOD__",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -522,19 +584,87 @@
             "format": "date-time"
           },
           {
-            "name": "node.preAuthKey.user",
+            "name": "node.preAuthKey.user.id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "node.preAuthKey.user.name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.createdAt",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "node.preAuthKey.user.displayName",
+            "description": "Upstream v0.24+ OIDC identity fields.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.email",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.providerId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.provider",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.profilePicUrl",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.loginName",
+            "description": "__BEGIN_CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "node.preAuthKey.user.network",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.preAuthKey.id",
+            "description": "__BEGIN_CYLONIX_MOD__\nUpstream v0.28 switched id from string to uint64 to align with bcrypt\nformat (hskey-auth-{prefix}-{secret}).",
             "in": "query",
             "required": false,
-            "type": "string"
+            "type": "string",
+            "format": "uint64"
           },
           {
             "name": "node.preAuthKey.key",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -582,69 +712,27 @@
             "collectionFormat": "multi"
           },
           {
-            "name": "node.preAuthKey.userDetail.id",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "node.preAuthKey.userDetail.name",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "node.preAuthKey.userDetail.createdAt",
-            "in": "query",
-            "required": false,
-            "type": "string",
-            "format": "date-time"
-          },
-          {
-            "name": "node.preAuthKey.userDetail.loginName",
-            "description": "__CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "node.preAuthKey.userDetail.namespace",
-            "description": "__CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "node.preAuthKey.userDetail.network",
-            "description": "__CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
             "name": "node.preAuthKey.namespace",
-            "description": "__CYLONIX_MOD__",
+            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.preAuthKey.ipv4",
-            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.preAuthKey.ipv6",
-            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.preAuthKey.description",
-            "description": "__CYLONIX_MOD_",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -670,36 +758,6 @@
             "default": "REGISTER_METHOD_UNSPECIFIED"
           },
           {
-            "name": "node.forcedTags",
-            "in": "query",
-            "required": false,
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "collectionFormat": "multi"
-          },
-          {
-            "name": "node.invalidTags",
-            "in": "query",
-            "required": false,
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "collectionFormat": "multi"
-          },
-          {
-            "name": "node.validTags",
-            "in": "query",
-            "required": false,
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "collectionFormat": "multi"
-          },
-          {
             "name": "node.givenName",
             "in": "query",
             "required": false,
@@ -712,29 +770,66 @@
             "type": "boolean"
           },
           {
+            "name": "node.approvedRoutes",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.availableRoutes",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.subnetRoutes",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.tags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
             "name": "node.wireguardOnly",
-            "description": "__CYLONIX_ADD__",
+            "description": "__BEGIN_CYLONIX_MOD__\nCylonix extensions moved from field numbers 23-33 to 30+ after upstream\nreclaimed 23-26 for approved_routes/available_routes/subnet_routes/tags.\nThese carry multi-tenant and richer node metadata beyond upstream.",
             "in": "query",
             "required": false,
             "type": "boolean"
           },
           {
             "name": "node.stableId",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.namespace",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.endpoints",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -745,7 +840,6 @@
           },
           {
             "name": "node.capVersion",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "integer",
@@ -753,7 +847,6 @@
           },
           {
             "name": "node.capabilities",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -764,7 +857,6 @@
           },
           {
             "name": "node.networkDomain",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -1071,7 +1163,7 @@
           },
           {
             "name": "node.hostinfo.netInfo.derpLatency",
-            "description": "DERP latency map\n\nThis is a request variable of the map type. The query format is \"map_name[key]=value\", e.g. If the map name is Age, the key type is string, and the value type is integer, the query parameter is expressed as Age[\"bob\"]=18",
+            "description": "DERP latency map",
             "in": "query",
             "required": false,
             "type": "number"
@@ -1183,14 +1275,34 @@
           },
           {
             "name": "node.health",
-            "description": "__CYLONIX_ADD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "node.shareToUsers",
-            "description": "__CYLONIX_ADD__",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.invalidTags",
+            "description": "Per-node tag annotations populated by the cylonix admin ListNodes path.\nvalid_tags is the subset of `tags` that is allowed by the active policy\nfor this node; invalid_tags is the complement. Upstream v0.28 retired\nthese because the Tags-as-Identity model treats all tags as authoritative,\nbut cylonix-manager surfaces them in admin UIs to flag misconfigurations\n(e.g., a tag that an ACL rule has disowned for the node's IP).",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "node.validTags",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -1237,14 +1349,14 @@
           },
           {
             "name": "namespace",
-            "description": "__CYLONIX_MOD__",
+            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "network",
-            "description": "__CYLONIX_MOD_",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -1352,6 +1464,45 @@
         ]
       }
     },
+    "/api/v1/node/{nodeId}/approve_routes": {
+      "post": {
+        "operationId": "HeadscaleService_SetApprovedRoutes",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetApprovedRoutesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceSetApprovedRoutesBody"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/node/{nodeId}/expire": {
       "post": {
         "operationId": "HeadscaleService_ExpireNode",
@@ -1379,7 +1530,7 @@
           },
           {
             "name": "expiry",
-            "description": "__CYLONIX_ADD__ 0 means disable expiry",
+            "description": "__BEGIN_CYLONIX_MOD__\nEmpty timestamp means \"expire now\"; a future timestamp defers expiry.\n\n__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string",
@@ -1421,37 +1572,6 @@
             "in": "path",
             "required": true,
             "type": "string"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
-    "/api/v1/node/{nodeId}/routes": {
-      "get": {
-        "operationId": "HeadscaleService_GetNodeRoutes",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1GetNodeRoutesResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "nodeId",
-            "in": "path",
-            "required": true,
-            "type": "string",
-            "format": "uint64"
           }
         ],
         "tags": [
@@ -1537,43 +1657,6 @@
         ]
       }
     },
-    "/api/v1/node/{nodeId}/user": {
-      "post": {
-        "operationId": "HeadscaleService_MoveNode",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1MoveNodeResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "nodeId",
-            "in": "path",
-            "required": true,
-            "type": "string",
-            "format": "uint64"
-          },
-          {
-            "name": "user",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
     "/api/v1/policy": {
       "get": {
         "summary": "--- Policy start ---",
@@ -1595,14 +1678,14 @@
         "parameters": [
           {
             "name": "namespace",
-            "description": "__CYLONIX_MOD__",
+            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "network",
-            "description": "__CYLONIX_MOD__",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -1663,13 +1746,13 @@
         "parameters": [
           {
             "name": "user",
+            "description": "__BEGIN_CYLONIX_MOD__\nCylonix uses User.Name (a UUID string) as the user identifier in\nheadscale, so the listing filter is also a string.",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "idList",
-            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -1723,6 +1806,35 @@
             "required": false,
             "type": "integer",
             "format": "int64"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      },
+      "delete": {
+        "operationId": "HeadscaleService_DeletePreAuthKey",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeletePreAuthKeyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
           }
         ],
         "tags": [
@@ -1793,224 +1905,6 @@
         ]
       }
     },
-    "/api/v1/preauthkey/{id}": {
-      "delete": {
-        "operationId": "HeadscaleService_DeletePreAuthKey",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1DeletePreAuthKeyResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "type": "string",
-            "format": "uint64"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
-    "/api/v1/routes": {
-      "get": {
-        "summary": "--- Route start ---",
-        "operationId": "HeadscaleService_GetRoutes",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1GetRoutesResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "user",
-            "description": "__BEGIN_CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "idList",
-            "in": "query",
-            "required": false,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uint64"
-            },
-            "collectionFormat": "multi"
-          },
-          {
-            "name": "namespace",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "network",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "filterBy",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "filterValue",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "sortBy",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "sortDesc",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "type": "integer",
-            "format": "int64"
-          },
-          {
-            "name": "pageSize",
-            "description": "__END_CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "integer",
-            "format": "int64"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
-    "/api/v1/routes/{routeId}": {
-      "delete": {
-        "operationId": "HeadscaleService_DeleteRoute",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1DeleteRouteResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "routeId",
-            "in": "path",
-            "required": true,
-            "type": "string",
-            "format": "uint64"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
-    "/api/v1/routes/{routeId}/disable": {
-      "post": {
-        "operationId": "HeadscaleService_DisableRoute",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1DisableRouteResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "routeId",
-            "in": "path",
-            "required": true,
-            "type": "string",
-            "format": "uint64"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
-    "/api/v1/routes/{routeId}/enable": {
-      "post": {
-        "operationId": "HeadscaleService_EnableRoute",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1EnableRouteResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "routeId",
-            "in": "path",
-            "required": true,
-            "type": "string",
-            "format": "uint64"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      }
-    },
     "/api/v1/user": {
       "get": {
         "operationId": "HeadscaleService_ListUsers",
@@ -2030,14 +1924,27 @@
         },
         "parameters": [
           {
-            "name": "user",
-            "description": "__BEGIN_CYLONIX_MOD__",
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "email",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "idList",
+            "description": "__BEGIN_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "array",
@@ -2104,6 +2011,7 @@
         ]
       },
       "post": {
+        "summary": "--- User start ---",
         "operationId": "HeadscaleService_CreateUser",
         "responses": {
           "200": {
@@ -2134,9 +2042,117 @@
         ]
       }
     },
+    "/api/v1/user/name/{name}": {
+      "delete": {
+        "operationId": "HeadscaleService_DeleteUser2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "description": "__BEGIN_CYLONIX_MOD__\nCylonix stores its tenant-side user UUID in headscale's User.name.\nname lets callers delete by UUID without first looking up id.\nIf both id and name are set, name takes precedence.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "network",
+            "description": "__END_CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/user/name/{oldName}/rename/{newName}": {
+      "post": {
+        "operationId": "HeadscaleService_RenameUser2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RenameUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "oldName",
+            "description": "__BEGIN_CYLONIX_MOD__\nCylonix stores its tenant-side user UUID in headscale's User.name.\nold_name lets callers rename by UUID without first looking up id.\nIf both old_id and old_name are set, old_name takes precedence.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "newName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "oldId",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "network",
+            "description": "__END_CYLONIX_MOD__",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/user/network": {
       "put": {
-        "summary": "__BEGIN_CYLONIX_ADD__",
+        "summary": "__BEGIN_CYLONIX_MOD__",
         "operationId": "HeadscaleService_UpdateUserNetworkDomain",
         "responses": {
           "200": {
@@ -2213,50 +2229,7 @@
         ]
       }
     },
-    "/api/v1/user/{name}": {
-      "get": {
-        "summary": "--- User start ---",
-        "operationId": "HeadscaleService_GetUser",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1GetUserResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "namespace",
-            "description": "__CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "network",
-            "description": "__CYLONIX_MOD__",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "tags": [
-          "HeadscaleService"
-        ]
-      },
+    "/api/v1/user/{id}": {
       "delete": {
         "operationId": "HeadscaleService_DeleteUser",
         "responses": {
@@ -2275,21 +2248,28 @@
         },
         "parameters": [
           {
-            "name": "name",
+            "name": "id",
             "in": "path",
             "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "name",
+            "description": "__BEGIN_CYLONIX_MOD__\nCylonix stores its tenant-side user UUID in headscale's User.name.\nname lets callers delete by UUID without first looking up id.\nIf both id and name are set, name takes precedence.",
+            "in": "query",
+            "required": false,
             "type": "string"
           },
           {
             "name": "namespace",
-            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "network",
-            "description": "__CYLONIX_MOD__",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -2300,7 +2280,7 @@
         ]
       }
     },
-    "/api/v1/user/{oldName}/rename/{newName}": {
+    "/api/v1/user/{oldId}/rename/{newName}": {
       "post": {
         "operationId": "HeadscaleService_RenameUser",
         "responses": {
@@ -2319,10 +2299,11 @@
         },
         "parameters": [
           {
-            "name": "oldName",
+            "name": "oldId",
             "in": "path",
             "required": true,
-            "type": "string"
+            "type": "string",
+            "format": "uint64"
           },
           {
             "name": "newName",
@@ -2331,15 +2312,21 @@
             "type": "string"
           },
           {
+            "name": "oldName",
+            "description": "__BEGIN_CYLONIX_MOD__\nCylonix stores its tenant-side user UUID in headscale's User.name.\nold_name lets callers rename by UUID without first looking up id.\nIf both old_id and old_name are set, old_name takes precedence.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
             "name": "namespace",
-            "description": "__CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "network",
-            "description": "__CYLONIX_MOD__",
+            "description": "__END_CYLONIX_MOD__",
             "in": "query",
             "required": false,
             "type": "string"
@@ -2352,6 +2339,17 @@
     }
   },
   "definitions": {
+    "HeadscaleServiceSetApprovedRoutesBody": {
+      "type": "object",
+      "properties": {
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "HeadscaleServiceSetTagsBody": {
       "type": "object",
       "properties": {
@@ -2410,7 +2408,7 @@
         }
       }
     },
-    "headscalev1Location": {
+    "headscaleV1Location": {
       "type": "object",
       "properties": {
         "country": {
@@ -2499,15 +2497,14 @@
         },
         "user": {
           "$ref": "#/definitions/v1User",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "namespace": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "network": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -2531,23 +2528,20 @@
         },
         "namespace": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "user": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "network": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "scopeType": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "scopeValue": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -2572,7 +2566,8 @@
       "type": "object",
       "properties": {
         "user": {
-          "type": "string"
+          "type": "string",
+          "description": "__CYLONIX_MOD__ Cylonix stores its tenant UUID in headscale User.Name, so\nthe request field carries the UUID string (not the headscale DB id)."
         },
         "reusable": {
           "type": "boolean"
@@ -2592,23 +2587,20 @@
         },
         "key": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "namespace": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "ipv4": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "ipv6": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "description": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -2626,17 +2618,25 @@
         "name": {
           "type": "string"
         },
+        "displayName": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "pictureUrl": {
+          "type": "string"
+        },
         "namespace": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "loginName": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "network": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -2689,16 +2689,7 @@
     "v1DeletePreAuthKeyResponse": {
       "type": "object"
     },
-    "v1DeleteRouteResponse": {
-      "type": "object"
-    },
     "v1DeleteUserResponse": {
-      "type": "object"
-    },
-    "v1DisableRouteResponse": {
-      "type": "object"
-    },
-    "v1EnableRouteResponse": {
       "type": "object"
     },
     "v1ExpireApiKeyRequest": {
@@ -2706,6 +2697,10 @@
       "properties": {
         "prefix": {
           "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "format": "uint64"
         }
       }
     },
@@ -2723,21 +2718,14 @@
     "v1ExpirePreAuthKeyRequest": {
       "type": "object",
       "properties": {
-        "user": {
-          "type": "string"
-        },
-        "key": {
-          "type": "string"
-        },
         "id": {
           "type": "string",
-          "format": "uint64",
-          "title": "__CYLONIX_ADD__"
+          "format": "uint64"
         },
         "expiry": {
           "type": "string",
           "format": "date-time",
-          "title": "__CYLONIX_ADD__ 0 means disable expiry"
+          "description": "__BEGIN_CYLONIX_MOD__\nEmpty timestamp means \"expire now\"; a future timestamp defers expiry.\n\n__END_CYLONIX_MOD__"
         }
       }
     },
@@ -2749,18 +2737,6 @@
       "properties": {
         "node": {
           "$ref": "#/definitions/v1Node"
-        }
-      }
-    },
-    "v1GetNodeRoutesResponse": {
-      "type": "object",
-      "properties": {
-        "routes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1Route"
-          }
         }
       }
     },
@@ -2776,28 +2752,11 @@
         }
       }
     },
-    "v1GetRoutesResponse": {
+    "v1HealthResponse": {
       "type": "object",
       "properties": {
-        "routes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1Route"
-          }
-        },
-        "total": {
-          "type": "integer",
-          "format": "int64",
-          "title": "__CYLONIX_MOD__"
-        }
-      }
-    },
-    "v1GetUserResponse": {
-      "type": "object",
-      "properties": {
-        "user": {
-          "$ref": "#/definitions/v1User"
+        "databaseConnectivity": {
+          "type": "boolean"
         }
       }
     },
@@ -2969,7 +2928,7 @@
           "title": "opaque hash of the most recent list of tailnet services"
         },
         "location": {
-          "$ref": "#/definitions/headscalev1Location",
+          "$ref": "#/definitions/headscaleV1Location",
           "title": "geographical location data about a Tailscale host"
         }
       },
@@ -3040,14 +2999,6 @@
           "type": "integer",
           "format": "int64",
           "title": "__CYLONIX_MOD__"
-        }
-      }
-    },
-    "v1MoveNodeResponse": {
-      "type": "object",
-      "properties": {
-        "node": {
-          "$ref": "#/definitions/v1Node"
         }
       }
     },
@@ -3164,7 +3115,79 @@
         "registerMethod": {
           "$ref": "#/definitions/v1RegisterMethod"
         },
-        "forcedTags": {
+        "givenName": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "approvedRoutes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "availableRoutes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subnetRoutes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wireguardOnly": {
+          "type": "boolean",
+          "description": "__BEGIN_CYLONIX_MOD__\nCylonix extensions moved from field numbers 23-33 to 30+ after upstream\nreclaimed 23-26 for approved_routes/available_routes/subnet_routes/tags.\nThese carry multi-tenant and richer node metadata beyond upstream."
+        },
+        "stableId": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1RouteSpec"
+          }
+        },
+        "capVersion": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "networkDomain": {
+          "type": "string"
+        },
+        "hostinfo": {
+          "$ref": "#/definitions/v1Hostinfo"
+        },
+        "health": {
+          "type": "string"
+        },
+        "shareToUsers": {
           "type": "array",
           "items": {
             "type": "string"
@@ -3174,77 +3197,15 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Per-node tag annotations populated by the cylonix admin ListNodes path.\nvalid_tags is the subset of `tags` that is allowed by the active policy\nfor this node; invalid_tags is the complement. Upstream v0.28 retired\nthese because the Tags-as-Identity model treats all tags as authoritative,\nbut cylonix-manager surfaces them in admin UIs to flag misconfigurations\n(e.g., a tag that an ACL rule has disowned for the node's IP)."
         },
         "validTags": {
           "type": "array",
           "items": {
             "type": "string"
-          }
-        },
-        "givenName": {
-          "type": "string"
-        },
-        "online": {
-          "type": "boolean"
-        },
-        "wireguardOnly": {
-          "type": "boolean",
-          "title": "__CYLONIX_ADD__"
-        },
-        "stableId": {
-          "type": "string",
-          "title": "__CYLONIX_ADD__"
-        },
-        "namespace": {
-          "type": "string",
-          "title": "__CYLONIX_ADD__"
-        },
-        "endpoints": {
-          "type": "array",
-          "items": {
-            "type": "string"
           },
-          "title": "__CYLONIX_ADD__"
-        },
-        "routes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1RouteSpec"
-          },
-          "title": "__CYLONIX_ADD__"
-        },
-        "capVersion": {
-          "type": "integer",
-          "format": "int64",
-          "title": "__CYLONIX_ADD__"
-        },
-        "capabilities": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "title": "__CYLONIX_ADD__"
-        },
-        "networkDomain": {
-          "type": "string",
-          "title": "__CYLONIX_ADD__"
-        },
-        "hostinfo": {
-          "$ref": "#/definitions/v1Hostinfo",
-          "title": "__CYLONIX_ADD__"
-        },
-        "health": {
-          "type": "string",
-          "title": "__CYLONIX_ADD__"
-        },
-        "shareToUsers": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "title": "__CYLONIX_ADD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -3252,13 +3213,16 @@
       "type": "object",
       "properties": {
         "user": {
-          "type": "string"
+          "$ref": "#/definitions/v1User"
         },
         "id": {
-          "type": "string"
+          "type": "string",
+          "format": "uint64",
+          "description": "__BEGIN_CYLONIX_MOD__\nUpstream v0.28 switched id from string to uint64 to align with bcrypt\nformat (hskey-auth-{prefix}-{secret})."
         },
         "key": {
-          "type": "string"
+          "type": "string",
+          "title": "__END_CYLONIX_MOD__"
         },
         "reusable": {
           "type": "boolean"
@@ -3283,25 +3247,19 @@
             "type": "string"
           }
         },
-        "userDetail": {
-          "$ref": "#/definitions/v1User",
-          "title": "__CYLONIX_MOD_"
-        },
         "namespace": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "ipv4": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "ipv6": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "description": {
           "type": "string",
-          "title": "__CYLONIX_MOD_"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -3342,50 +3300,6 @@
         }
       }
     },
-    "v1Route": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "format": "uint64"
-        },
-        "node": {
-          "$ref": "#/definitions/v1Node"
-        },
-        "prefix": {
-          "type": "string"
-        },
-        "advertised": {
-          "type": "boolean"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "isPrimary": {
-          "type": "boolean"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "deletedAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "namespace": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
-        },
-        "network": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
-        }
-      }
-    },
     "v1RouteSpec": {
       "type": "object",
       "properties": {
@@ -3405,7 +3319,8 @@
         "isPrimary": {
           "type": "boolean"
         }
-      }
+      },
+      "description": "RouteSpec provides richer per-route metadata than upstream's plain\n`repeated string approved_routes`/`available_routes`/`subnet_routes`."
     },
     "v1Service": {
       "type": "object",
@@ -3426,6 +3341,14 @@
       },
       "description": "Service represents a service running on a node."
     },
+    "v1SetApprovedRoutesResponse": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "$ref": "#/definitions/v1Node"
+        }
+      }
+    },
     "v1SetPolicyRequest": {
       "type": "object",
       "properties": {
@@ -3434,15 +3357,14 @@
         },
         "user": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "namespace": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "network": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     },
@@ -3482,7 +3404,8 @@
       "type": "object",
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "format": "uint64"
         },
         "name": {
           "type": "string"
@@ -3491,17 +3414,32 @@
           "type": "string",
           "format": "date-time"
         },
+        "displayName": {
+          "type": "string",
+          "description": "Upstream v0.24+ OIDC identity fields."
+        },
+        "email": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "profilePicUrl": {
+          "type": "string"
+        },
         "loginName": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__BEGIN_CYLONIX_MOD__"
         },
         "namespace": {
-          "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "type": "string"
         },
         "network": {
           "type": "string",
-          "title": "__CYLONIX_MOD__"
+          "title": "__END_CYLONIX_MOD__"
         }
       }
     }

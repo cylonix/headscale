@@ -1,97 +1,116 @@
 syntax = "proto3";
 package headscale.v1;
-option  go_package = "github.com/juanfont/headscale/gen/go/v1";
+option go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 import "google/protobuf/timestamp.proto";
 
 message User {
-    string                    id         = 1;
-    string                    name       = 2;
-    google.protobuf.Timestamp created_at = 3;
-    string                    login_name = 4; // __CYLONIX_MOD__
-    string                    namespace  = 5; // __CYLONIX_MOD__
-    string                    network    = 6; // __CYLONIX_MOD__
+  uint64 id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+  // Upstream v0.24+ OIDC identity fields.
+  string display_name = 4;
+  string email = 5;
+  string provider_id = 6;
+  string provider = 7;
+  string profile_pic_url = 8;
+  // __BEGIN_CYLONIX_MOD__
+  string login_name = 9;
+  string namespace = 10;
+  string network = 11;
+  // __END_CYLONIX_MOD__
 }
 
 message GetUserRequest {
-    string name = 1;
-    optional string namespace = 2; // __CYLONIX_MOD__
-    optional string network   = 3; // __CYLONIX_MOD__
+  string name = 1;
+  // __BEGIN_CYLONIX_MOD__
+  optional string namespace = 2;
+  optional string network = 3;
+  // __END_CYLONIX_MOD__
 }
 
-message GetUserResponse {
-    User user = 1;
-}
+message GetUserResponse { User user = 1; }
 
 message CreateUserRequest {
-    string name = 1;
-    optional string namespace  = 2; // __CYLONIX_MOD__
-    optional string login_name = 3; // __CYLONIX_MOD__
-    optional string network    = 4; // __CYLONIX_MOD__
+  string name = 1;
+  string display_name = 2;
+  string email = 3;
+  string picture_url = 4;
+  // __BEGIN_CYLONIX_MOD__
+  optional string namespace = 5;
+  optional string login_name = 6;
+  optional string network = 7;
+  // __END_CYLONIX_MOD__
 }
 
-message CreateUserResponse {
-    User user = 1;
-}
+message CreateUserResponse { User user = 1; }
 
 message RenameUserRequest {
-    string old_name = 1;
-    string new_name = 2;
-    optional string namespace = 3; // __CYLONIX_MOD__
-    optional string network   = 4; // __CYLONIX_MOD__
+  uint64 old_id = 1;
+  string new_name = 2;
+  // __BEGIN_CYLONIX_MOD__
+  // Cylonix stores its tenant-side user UUID in headscale's User.name.
+  // old_name lets callers rename by UUID without first looking up id.
+  // If both old_id and old_name are set, old_name takes precedence.
+  optional string old_name = 3;
+  optional string namespace = 4;
+  optional string network = 5;
+  // __END_CYLONIX_MOD__
 }
 
-message RenameUserResponse {
-    User user = 1;
-}
+message RenameUserResponse { User user = 1; }
 
 message DeleteUserRequest {
-    string name = 1;
-    optional string namespace = 2; // __CYLONIX_MOD__
-    optional string network   = 3; // __CYLONIX_MOD__
+  uint64 id = 1;
+  // __BEGIN_CYLONIX_MOD__
+  // Cylonix stores its tenant-side user UUID in headscale's User.name.
+  // name lets callers delete by UUID without first looking up id.
+  // If both id and name are set, name takes precedence.
+  optional string name = 2;
+  optional string namespace = 3;
+  optional string network = 4;
+  // __END_CYLONIX_MOD__
 }
 
-message DeleteUserResponse {
-}
+message DeleteUserResponse {}
 
 message ListUsersRequest {
-    // __BEGIN_CYLONIX_MOD__
-    optional string user         = 1;
-    repeated uint64 id_list      = 2;
-    optional string namespace    = 3;
-    optional string network      = 4;
-    optional string filter_by    = 5;
-    optional string filter_value = 6;
-    optional string sort_by      = 7;
-    optional string sort_desc    = 8;
-    optional uint32 page         = 9;
-    optional uint32 pageSize     = 10;
-    // __END_CYLONIX_MOD__
+  uint64 id = 1;
+  string name = 2;
+  string email = 3;
+  // __BEGIN_CYLONIX_MOD__
+  repeated uint64 id_list = 4;
+  optional string namespace = 5;
+  optional string network = 6;
+  optional string filter_by = 7;
+  optional string filter_value = 8;
+  optional string sort_by = 9;
+  optional string sort_desc = 10;
+  optional uint32 page = 11;
+  optional uint32 pageSize = 12;
+  // __END_CYLONIX_MOD__
 }
 
 message ListUsersResponse {
-    repeated User users = 1;
-    uint32        total = 2; // __CYLONIX_MOD__
+  repeated User users = 1;
+  uint32 total = 2; // __CYLONIX_MOD__
 }
 
-// __BEGIN_CYLONIX_ADD__
+// __BEGIN_CYLONIX_MOD__
 // Update user's network domain setting.
 message UpdateUserNetworkDomainRequest {
-    string user      = 1;
-    string namespace = 2;
-    string network   = 3;
+  string user = 1;
+  string namespace = 2;
+  string network = 3;
 }
 
-message UpdateUserNetworkDomainResponse {
-}
+message UpdateUserNetworkDomainResponse {}
 
 // Update the peers for the nodes of the user.
 message UpdateUserPeersRequest {
-    string user      = 1;
-    string namespace = 2;
+  string user = 1;
+  string namespace = 2;
 }
 
-message UpdateUserPeersResponse {
-}
-
-// __END_CYLONIX_ADD__
+message UpdateUserPeersResponse {}
+// __END_CYLONIX_MOD__

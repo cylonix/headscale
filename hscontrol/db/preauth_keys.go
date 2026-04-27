@@ -1,54 +1,84 @@
 package db
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
-	"tailscale.com/types/ptr"
+	"tailscale.com/util/set"
 )
 
 var (
-	ErrPreAuthKeyNotFound          = errors.New("AuthKey not found")
-	ErrPreAuthKeyExpired           = errors.New("AuthKey expired")
-	ErrSingleUseAuthKeyHasBeenUsed = errors.New("AuthKey has already been used")
+	ErrPreAuthKeyNotFound          = errors.New("auth-key not found")
+	ErrPreAuthKeyExpired           = errors.New("auth-key expired")
+	ErrSingleUseAuthKeyHasBeenUsed = errors.New("auth-key has already been used")
 	ErrUserMismatch                = errors.New("user mismatch")
-	ErrPreAuthKeyACLTagInvalid     = errors.New("AuthKey tag is invalid")
+	ErrPreAuthKeyACLTagInvalid     = errors.New("auth-key tag is invalid")
 )
 
 func (hsdb *HSDatabase) CreatePreAuthKey(
-	userName string,
+	uid *types.UserID,
 	reusable bool,
 	ephemeral bool,
-	description, ipv4, ipv6 string, // __CYLONIX_MOD__
 	expiration *time.Time,
 	aclTags []string,
-) (*types.PreAuthKey, error) {
-	return Write(hsdb.DB, func(tx *gorm.DB) (*types.PreAuthKey, error) {
-		return CreatePreAuthKey(tx, userName, reusable, ephemeral, description, ipv4, ipv6, expiration, aclTags) // __CYLONIX_MOD__
+) (*types.PreAuthKeyNew, error) {
+	return Write(hsdb.DB, func(tx *gorm.DB) (*types.PreAuthKeyNew, error) {
+		return CreatePreAuthKey(tx, uid, reusable, ephemeral, expiration, aclTags)
 	})
 }
 
+const (
+	authKeyPrefix       = "hskey-auth-"
+	authKeyPrefixLength = 12
+	authKeyLength       = 64
+)
+
 // CreatePreAuthKey creates a new PreAuthKey in a user, and returns it.
+// The uid parameter can be nil for system-created tagged keys.
+// For tagged keys, uid tracks "created by" (who created the key).
+// For user-owned keys, uid tracks the node owner.
 func CreatePreAuthKey(
 	tx *gorm.DB,
-	userName string,
+	uid *types.UserID,
 	reusable bool,
 	ephemeral bool,
-	description, ipv4, ipv6 string, // __CYLONIX_MOD__
 	expiration *time.Time,
 	aclTags []string,
-) (*types.PreAuthKey, error) {
-	user, err := GetUser(tx, userName)
-	if err != nil {
-		return nil, err
+) (*types.PreAuthKeyNew, error) {
+	// Validate: must be tagged OR user-owned, not neither
+	if uid == nil && len(aclTags) == 0 {
+		return nil, ErrPreAuthKeyNotTaggedOrOwned
 	}
 
+	var (
+		user   *types.User
+		userID *uint
+	)
+
+	if uid != nil {
+		var err error
+
+		user, err = GetUserByID(tx, *uid)
+		if err != nil {
+			return nil, err
+		}
+
+		userID = &user.ID
+	}
+
+	// Remove duplicates and sort for consistency
+	aclTags = set.SetOf(aclTags).Slice()
+	slices.Sort(aclTags)
+
+	// TODO(kradalby): factor out and create a reusable tag validation,
+	// check if there is one in Tailscale's lib.
 	for _, tag := range aclTags {
 		if !strings.HasPrefix(tag, "tag:") {
 			return nil, fmt.Errorf(
@@ -60,260 +90,250 @@ func CreatePreAuthKey(
 	}
 
 	now := time.Now().UTC()
-	kstr, err := generatePreAuthKey()
+
+	prefix, err := util.GenerateRandomStringURLSafe(authKeyPrefixLength)
 	if err != nil {
 		return nil, err
 	}
+
+	// Validate generated prefix (should always be valid, but be defensive)
+	if len(prefix) != authKeyPrefixLength {
+		return nil, fmt.Errorf("%w: generated prefix has invalid length: expected %d, got %d", ErrPreAuthKeyFailedToParse, authKeyPrefixLength, len(prefix))
+	}
+
+	if !isValidBase64URLSafe(prefix) {
+		return nil, fmt.Errorf("%w: generated prefix contains invalid characters", ErrPreAuthKeyFailedToParse)
+	}
+
+	toBeHashed, err := util.GenerateRandomStringURLSafe(authKeyLength)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate generated hash (should always be valid, but be defensive)
+	if len(toBeHashed) != authKeyLength {
+		return nil, fmt.Errorf("%w: generated hash has invalid length: expected %d, got %d", ErrPreAuthKeyFailedToParse, authKeyLength, len(toBeHashed))
+	}
+
+	if !isValidBase64URLSafe(toBeHashed) {
+		return nil, fmt.Errorf("%w: generated hash contains invalid characters", ErrPreAuthKeyFailedToParse)
+	}
+
+	keyStr := authKeyPrefix + prefix + "-" + toBeHashed
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(toBeHashed), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
 	key := types.PreAuthKey{
-		Key:         kstr,
-		UserID:      user.ID,
-		User:        *user,
-		Reusable:    reusable,
-		Ephemeral:   ephemeral,
-		CreatedAt:   &now,
-		Expiration:  expiration,
-		Namespace:   user.GetNamespace(), // __CYLONIX_MOD__
-		IPv4:        ipv4,                // __CYLONIX_MOD__
-		IPv6:        ipv6,                // __CYLONIX_MDO__
-		Description: description,         // __CYLONIX_MOD__
+		UserID:     userID, // nil for system-created keys, or "created by" for tagged keys
+		User:       user,   // nil for system-created keys
+		Reusable:   reusable,
+		Ephemeral:  ephemeral,
+		CreatedAt:  &now,
+		Expiration: expiration,
+		Tags:       aclTags, // empty for user-owned keys
+		Prefix:     prefix,  // Store prefix
+		Hash:       hash,    // Store hash
 	}
 
 	if err := tx.Save(&key).Error; err != nil {
 		return nil, fmt.Errorf("failed to create key in the database: %w", err)
 	}
 
-	if len(aclTags) > 0 {
-		seenTags := map[string]bool{}
-
-		for _, tag := range aclTags {
-			if !seenTags[tag] {
-				if err := tx.Save(&types.PreAuthKeyACLTag{PreAuthKeyID: key.ID, Tag: tag}).Error; err != nil {
-					return nil, fmt.Errorf(
-						"failed to create key tag in the database: %w",
-						err,
-					)
-				}
-				seenTags[tag] = true
-			}
-		}
-	}
-
-	return &key, nil
+	return &types.PreAuthKeyNew{
+		ID:         key.ID,
+		Key:        keyStr,
+		Reusable:   key.Reusable,
+		Ephemeral:  key.Ephemeral,
+		Tags:       key.Tags,
+		Expiration: key.Expiration,
+		CreatedAt:  key.CreatedAt,
+		User:       key.User,
+	}, nil
 }
 
-func (hsdb *HSDatabase) ListPreAuthKeys(userName string) ([]types.PreAuthKey, error) {
+func (hsdb *HSDatabase) ListPreAuthKeys() ([]types.PreAuthKey, error) {
 	return Read(hsdb.DB, func(rx *gorm.DB) ([]types.PreAuthKey, error) {
-		return ListPreAuthKeys(rx, userName)
+		return ListPreAuthKeys(rx)
 	})
 }
 
-// __BEGIN_CYLONIX_MOD__
-func (hsdb *HSDatabase) ListPreAuthKeysWithOptions(
-	idList []uint64, namespace *string, namespaceLike bool,
-	network, username string,
-	filterBy, filterValue, sortBy, sortDesc string,
-	page, pageSize int,
-) (int, []*types.PreAuthKey, error) {
-	var total int64
-	keys, err := Read(hsdb.DB, func(rx *gorm.DB) ([]*types.PreAuthKey, error) {
-		keys, count, err := ListWithOptions(
-			&types.PreAuthKey{}, rx,
-			func(rx *gorm.DB) ([]*types.PreAuthKey, error) {
-				keys := []*types.PreAuthKey{}
-				rx = rx.Preload("User").Preload("ACLTags")
-				if err := rx.Find(&keys).Error; err != nil {
-					return nil, err
-				}
-				return keys, nil
-			},
-			idList, namespace, "network", network, username,
-			false, namespaceLike,
-			"pre_auth_keys", nil, nil,
-			filterBy, filterValue, sortBy, sortDesc, page, pageSize,
-		)
-		total = count
-		return keys, err
+// ListPreAuthKeys returns all PreAuthKeys in the database.
+func ListPreAuthKeys(tx *gorm.DB) ([]types.PreAuthKey, error) {
+	var keys []types.PreAuthKey
 
-	})
-	return int(total), keys, err
-}
-func UnauthorizedPreAuthKeyError(err error) bool {
-	return errors.Is(err, ErrSingleUseAuthKeyHasBeenUsed) ||
-		errors.Is(err, ErrPreAuthKeyNotFound) ||
-		errors.Is(err, ErrPreAuthKeyExpired)
-}
-
-func (hsdb *HSDatabase) GetPreAuthKeyByID(id uint64) (*types.PreAuthKey, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) (*types.PreAuthKey, error) {
-		return GetPreAuthKeyByID(rx, id)
-	})
-}
-
-func GetPreAuthKeyByID(tx *gorm.DB, id uint64) (*types.PreAuthKey, error) {
-	pak := types.PreAuthKey{}
-	err := tx.Preload("User").Preload("ACLTags").First(&pak, "id = ?", id).Error
+	err := tx.Preload("User").Find(&keys).Error
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrPreAuthKeyNotFound
-		}
-		return nil, err
-	}
-	return &pak, err
-}
-
-func (hsdb *HSDatabase) DeletePreAuthKey(key types.PreAuthKey) error {
-	if result := hsdb.DB.Unscoped().Delete(key); result.Error != nil {
-		return result.Error
-	}
-
-	return nil
-}
-// __END_CYLONIX_MOD__
-
-// ListPreAuthKeys returns the list of PreAuthKeys for a user.
-func ListPreAuthKeys(tx *gorm.DB, userName string) ([]types.PreAuthKey, error) {
-	user, err := GetUser(tx, userName)
-	if err != nil {
-		return nil, err
-	}
-
-	keys := []types.PreAuthKey{}
-	if err := tx.Preload("User").Preload("ACLTags").Where(&types.PreAuthKey{UserID: user.ID}).Find(&keys).Error; err != nil {
 		return nil, err
 	}
 
 	return keys, nil
 }
 
-// GetPreAuthKey returns a PreAuthKey for a given key.
-func GetPreAuthKey(tx *gorm.DB, user string, key string) (*types.PreAuthKey, error) {
-	pak, err := ValidatePreAuthKey(tx, key)
+var (
+	ErrPreAuthKeyFailedToParse    = errors.New("failed to parse auth-key")
+	ErrPreAuthKeyNotTaggedOrOwned = errors.New("auth-key must be either tagged or owned by user")
+)
+
+func findAuthKey(tx *gorm.DB, keyStr string) (*types.PreAuthKey, error) {
+	var pak types.PreAuthKey
+
+	// Validate input is not empty
+	if keyStr == "" {
+		return nil, ErrPreAuthKeyFailedToParse
+	}
+
+	_, prefixAndHash, found := strings.Cut(keyStr, authKeyPrefix)
+
+	if !found {
+		// Legacy format (plaintext) - backwards compatibility
+		err := tx.Preload("User").First(&pak, "key = ?", keyStr).Error
+		if err != nil {
+			return nil, ErrPreAuthKeyNotFound
+		}
+
+		return &pak, nil
+	}
+
+	// New format: hskey-auth-{12-char-prefix}-{64-char-hash}
+	// Expected minimum length: 12 (prefix) + 1 (separator) + 64 (hash) = 77
+	const expectedMinLength = authKeyPrefixLength + 1 + authKeyLength
+	if len(prefixAndHash) < expectedMinLength {
+		return nil, fmt.Errorf(
+			"%w: key too short, expected at least %d chars after prefix, got %d",
+			ErrPreAuthKeyFailedToParse,
+			expectedMinLength,
+			len(prefixAndHash),
+		)
+	}
+
+	// Use fixed-length parsing instead of separator-based to handle dashes in base64 URL-safe
+	prefix := prefixAndHash[:authKeyPrefixLength]
+
+	// Validate separator at expected position
+	if prefixAndHash[authKeyPrefixLength] != '-' {
+		return nil, fmt.Errorf(
+			"%w: expected separator '-' at position %d, got '%c'",
+			ErrPreAuthKeyFailedToParse,
+			authKeyPrefixLength,
+			prefixAndHash[authKeyPrefixLength],
+		)
+	}
+
+	hash := prefixAndHash[authKeyPrefixLength+1:]
+
+	// Validate hash length
+	if len(hash) != authKeyLength {
+		return nil, fmt.Errorf(
+			"%w: hash length mismatch, expected %d chars, got %d",
+			ErrPreAuthKeyFailedToParse,
+			authKeyLength,
+			len(hash),
+		)
+	}
+
+	// Validate prefix contains only base64 URL-safe characters
+	if !isValidBase64URLSafe(prefix) {
+		return nil, fmt.Errorf(
+			"%w: prefix contains invalid characters (expected base64 URL-safe: A-Za-z0-9_-)",
+			ErrPreAuthKeyFailedToParse,
+		)
+	}
+
+	// Validate hash contains only base64 URL-safe characters
+	if !isValidBase64URLSafe(hash) {
+		return nil, fmt.Errorf(
+			"%w: hash contains invalid characters (expected base64 URL-safe: A-Za-z0-9_-)",
+			ErrPreAuthKeyFailedToParse,
+		)
+	}
+
+	// Look up key by prefix
+	err := tx.Preload("User").First(&pak, "prefix = ?", prefix).Error
 	if err != nil {
-		return nil, err
+		return nil, ErrPreAuthKeyNotFound
 	}
 
-	if pak.User.Name != user {
-		return nil, ErrUserMismatch
+	// Verify hash matches
+	err = bcrypt.CompareHashAndPassword(pak.Hash, []byte(hash))
+	if err != nil {
+		return nil, fmt.Errorf("invalid auth key: %w", err)
 	}
 
-	return pak, nil
+	return &pak, nil
+}
+
+// isValidBase64URLSafe checks if a string contains only base64 URL-safe characters.
+func isValidBase64URLSafe(s string) bool {
+	for _, c := range s {
+		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '_' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (hsdb *HSDatabase) GetPreAuthKey(key string) (*types.PreAuthKey, error) {
+	return GetPreAuthKey(hsdb.DB, key)
+}
+
+// GetPreAuthKey returns a PreAuthKey for a given key. The caller is responsible
+// for checking if the key is usable (expired or used).
+func GetPreAuthKey(tx *gorm.DB, key string) (*types.PreAuthKey, error) {
+	return findAuthKey(tx, key)
 }
 
 // DestroyPreAuthKey destroys a preauthkey. Returns error if the PreAuthKey
-// does not exist.
-func DestroyPreAuthKey(tx *gorm.DB, pak types.PreAuthKey) error {
+// does not exist. This also clears the auth_key_id on any nodes that reference
+// this key.
+func DestroyPreAuthKey(tx *gorm.DB, id uint64) error {
 	return tx.Transaction(func(db *gorm.DB) error {
-		if result := db.Unscoped().Where(types.PreAuthKeyACLTag{PreAuthKeyID: pak.ID}).Delete(&types.PreAuthKeyACLTag{}); result.Error != nil {
-			return result.Error
+		// First, clear the foreign key reference on any nodes using this key
+		err := db.Model(&types.Node{}).
+			Where("auth_key_id = ?", id).
+			Update("auth_key_id", nil).Error
+		if err != nil {
+			return fmt.Errorf("failed to clear auth_key_id on nodes: %w", err)
 		}
 
-		if result := db.Unscoped().Delete(pak); result.Error != nil {
-			return result.Error
+		// Then delete the pre-auth key
+		err = tx.Unscoped().Delete(&types.PreAuthKey{}, id).Error
+		if err != nil {
+			return err
 		}
 
 		return nil
 	})
 }
 
-func (hsdb *HSDatabase) ExpirePreAuthKey(k *types.PreAuthKey, expiry time.Time) error {
+func (hsdb *HSDatabase) ExpirePreAuthKey(id uint64) error {
 	return hsdb.Write(func(tx *gorm.DB) error {
-		return ExpirePreAuthKey(tx, k, expiry)
+		return ExpirePreAuthKey(tx, id)
 	})
 }
 
-// MarkExpirePreAuthKey marks a PreAuthKey as expired.
-func ExpirePreAuthKey(tx *gorm.DB, k *types.PreAuthKey, expiry time.Time) error {
-	if err := tx.Model(&k).Update("Expiration", expiry).Error; err != nil {
-		return err
-	}
-
-	return nil
+func (hsdb *HSDatabase) DeletePreAuthKey(id uint64) error {
+	return hsdb.Write(func(tx *gorm.DB) error {
+		return DestroyPreAuthKey(tx, id)
+	})
 }
 
 // UsePreAuthKey marks a PreAuthKey as used.
 func UsePreAuthKey(tx *gorm.DB, k *types.PreAuthKey) error {
-	k.Used = true
-	if err := tx.Save(k).Error; err != nil {
+	err := tx.Model(k).Update("used", true).Error
+	if err != nil {
 		return fmt.Errorf("failed to update key used status in the database: %w", err)
 	}
 
+	k.Used = true
 	return nil
 }
 
-func (hsdb *HSDatabase) ValidatePreAuthKey(k string) (*types.PreAuthKey, error) {
-	return Read(hsdb.DB, func(rx *gorm.DB) (*types.PreAuthKey, error) {
-		return ValidatePreAuthKey(rx, k)
-	})
+// MarkExpirePreAuthKey marks a PreAuthKey as expired.
+func ExpirePreAuthKey(tx *gorm.DB, id uint64) error {
+	now := time.Now()
+	return tx.Model(&types.PreAuthKey{}).Where("id = ?", id).Update("expiration", now).Error
 }
-
-// ValidatePreAuthKey does the heavy lifting for validation of the PreAuthKey coming from a node
-// If returns no error and a PreAuthKey, it can be used.
-func ValidatePreAuthKey(tx *gorm.DB, k string) (*types.PreAuthKey, error) {
-	pak := types.PreAuthKey{}
-	if result := tx.Preload("User").Preload("ACLTags").First(&pak, "key = ?", k); errors.Is(
-		result.Error,
-		gorm.ErrRecordNotFound,
-	) {
-		return nil, ErrPreAuthKeyNotFound
-	}
-
-	if pak.Expiration != nil && pak.Expiration.Before(time.Now()) {
-		return nil, ErrPreAuthKeyExpired
-	}
-
-	if pak.Reusable { // we don't need to check if has been used before
-		return &pak, nil
-	}
-
-	nodes := types.Nodes{}
-	if err := tx.
-		Preload("AuthKey").
-		Where(&types.Node{AuthKeyID: ptr.To(pak.ID)}).
-		Find(&nodes).Error; err != nil {
-		return nil, err
-	}
-
-	if len(nodes) != 0 || pak.Used {
-		return nil, ErrSingleUseAuthKeyHasBeenUsed
-	}
-
-	return &pak, nil
-}
-
-// __BEGIN_CYLONIX_MOD__
-// Generate 32 bytes (256 bits) of random data
-// Use URL-safe base64 encoding with a prefix
-func generateRandomKey(size int) (string, error) {
-    bytes := make([]byte, size)
-    if _, err := rand.Read(bytes); err != nil {
-        return "", fmt.Errorf("failed to generate random bytes: %w", err)
-    }
-    return base64.RawURLEncoding.EncodeToString(bytes), nil
-}
-
-func generatePreAuthKey() (string, error) {
-    // Generate main key (24 bytes)
-    main, err := generateRandomKey(24)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate main key: %w", err)
-	}
-
-    // Generate short prefix
-    prefix, err := generateRandomKey(8)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate prefix: %w", err)
-	}
-
-    // Combine into final format: cy-auth-{prefix}-{main}
-    return fmt.Sprintf("cy-auth-%s-%s", prefix, main), nil
-}
-
-// Helper function to get displayable version of key
-func GetPreAuthKeyDisplayKey(key string) string {
-    if len(key) > 20 {
-		return key[:20] + "..." // Shorten to first 22 characters
-	}
-	return key // Return as is if already short enough
-}
-
-// __END_CYLONIX_MOD__

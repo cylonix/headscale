@@ -1,18 +1,20 @@
 package db
 
 import (
-	"database/sql"
 	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
-	"tailscale.com/types/key"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"tailscale.com/net/tsaddr"
+	"tailscale.com/types/key" // __CYLONIX_ADD__
+	"tailscale.com/types/ptr"
 )
 
 var mpp = func(pref string) *netip.Prefix {
@@ -89,12 +91,12 @@ func TestIPAllocatorSequential(t *testing.T) {
 		{
 			name: "simple-with-db",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "simple-with-db")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
-					User: user,
+					User: &user,
 					IPv4: nap("100.64.0.1"),
 					IPv6: nap("fd7a:115c:a1e0::1"),
 				})
@@ -117,12 +119,12 @@ func TestIPAllocatorSequential(t *testing.T) {
 		{
 			name: "before-after-free-middle-in-db",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "before-after-free-middle-in-db")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
-					User: user,
+					User: &user,
 					IPv4: nap("100.64.0.2"),
 					IPv6: nap("fd7a:115c:a1e0::2"),
 				})
@@ -156,8 +158,6 @@ func TestIPAllocatorSequential(t *testing.T) {
 				tt.prefix6,
 				types.IPAllocationStrategySequential,
 			)
-
-			spew.Dump(alloc)
 
 			var got4s []netip.Addr
 			var got6s []netip.Addr
@@ -261,8 +261,6 @@ func TestIPAllocatorRandom(t *testing.T) {
 
 			alloc, _ := NewIPAllocator(db, tt.prefix4, tt.prefix6, types.IPAllocationStrategyRandom)
 
-			spew.Dump(alloc)
-
 			for range tt.getCount {
 				got4, got6, err := alloc.Next()
 				if err != nil {
@@ -304,18 +302,10 @@ func TestBackfillIPAddresses(t *testing.T) {
 		v4 := fmt.Sprintf("100.64.0.%d", i)
 		v6 := fmt.Sprintf("fd7a:115c:a1e0::%d", i)
 		return &types.Node{
-			NodeKey: nodeKeys[i-1],
-			MachineKey: machineKeys[i-1],
-			IPv4DatabaseField: sql.NullString{
-				Valid:  true,
-				String: v4,
-			},
-			IPv4: nap(v4),
-			IPv6DatabaseField: sql.NullString{
-				Valid:  true,
-				String: v6,
-			},
-			IPv6: nap(v6),
+			NodeKey:      nodeKeys[i-1],    // __CYLONIX_ADD__
+			MachineKey:   machineKeys[i-1], // __CYLONIX_ADD__
+			IPv4:         nap(v4),
+			IPv6:         nap(v6),
 			Capabilities: []types.Capability{},
 		}
 	}
@@ -330,12 +320,12 @@ func TestBackfillIPAddresses(t *testing.T) {
 		{
 			name: "simple-backfill-ipv6",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "simple-backfill-ipv6")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
-					User: user,
+					User: &user,
 					IPv4: nap("100.64.0.1"),
 				})
 
@@ -347,15 +337,7 @@ func TestBackfillIPAddresses(t *testing.T) {
 
 			want: types.Nodes{
 				&types.Node{
-					IPv4DatabaseField: sql.NullString{
-						Valid:  true,
-						String: "100.64.0.1",
-					},
 					IPv4: nap("100.64.0.1"),
-					IPv6DatabaseField: sql.NullString{
-						Valid:  true,
-						String: "fd7a:115c:a1e0::1",
-					},
 					IPv6: nap("fd7a:115c:a1e0::1"),
 					Capabilities: []types.Capability{},
 				},
@@ -364,12 +346,12 @@ func TestBackfillIPAddresses(t *testing.T) {
 		{
 			name: "simple-backfill-ipv4",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "simple-backfill-ipv4")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
-					User: user,
+					User: &user,
 					IPv6: nap("fd7a:115c:a1e0::1"),
 				})
 
@@ -381,15 +363,7 @@ func TestBackfillIPAddresses(t *testing.T) {
 
 			want: types.Nodes{
 				&types.Node{
-					IPv4DatabaseField: sql.NullString{
-						Valid:  true,
-						String: "100.64.0.1",
-					},
 					IPv4: nap("100.64.0.1"),
-					IPv6DatabaseField: sql.NullString{
-						Valid:  true,
-						String: "fd7a:115c:a1e0::1",
-					},
 					IPv6: nap("fd7a:115c:a1e0::1"),
 					Capabilities: []types.Capability{},
 				},
@@ -398,12 +372,12 @@ func TestBackfillIPAddresses(t *testing.T) {
 		{
 			name: "simple-backfill-remove-ipv6",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "simple-backfill-remove-ipv6")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
-					User: user,
+					User: &user,
 					IPv4: nap("100.64.0.1"),
 					IPv6: nap("fd7a:115c:a1e0::1"),
 				})
@@ -415,10 +389,6 @@ func TestBackfillIPAddresses(t *testing.T) {
 
 			want: types.Nodes{
 				&types.Node{
-					IPv4DatabaseField: sql.NullString{
-						Valid:  true,
-						String: "100.64.0.1",
-					},
 					IPv4: nap("100.64.0.1"),
 					Capabilities: []types.Capability{},
 				},
@@ -427,12 +397,12 @@ func TestBackfillIPAddresses(t *testing.T) {
 		{
 			name: "simple-backfill-remove-ipv4",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "simple-backfill-remove-ipv4")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
 				db.DB.Save(&types.Node{
-					User: user,
+					User: &user,
 					IPv4: nap("100.64.0.1"),
 					IPv6: nap("fd7a:115c:a1e0::1"),
 				})
@@ -444,10 +414,6 @@ func TestBackfillIPAddresses(t *testing.T) {
 
 			want: types.Nodes{
 				&types.Node{
-					IPv6DatabaseField: sql.NullString{
-						Valid:  true,
-						String: "fd7a:115c:a1e0::1",
-					},
 					IPv6: nap("fd7a:115c:a1e0::1"),
 					Capabilities: []types.Capability{},
 				},
@@ -456,38 +422,28 @@ func TestBackfillIPAddresses(t *testing.T) {
 		{
 			name: "multi-backfill-ipv6",
 			dbFunc: func() *HSDatabase {
-				db := dbForTest(t, "multi-backfill-ipv6")
+				db := dbForTest(t)
 				user := types.User{Name: ""}
 				db.DB.Save(&user)
 
-				db.DB.Save(&types.Node{
-					NodeKey: nodeKeys[0],
-					MachineKey: machineKeys[0],
-					UserID: user.ID,
-					User: user,
-					IPv4: nap("100.64.0.1"),
-				})
-				db.DB.Save(&types.Node{
-					NodeKey: nodeKeys[1],
-					MachineKey: machineKeys[1],
-					UserID: user.ID,
-					User: user,
-					IPv4: nap("100.64.0.2"),
-				})
-				db.DB.Save(&types.Node{
-					NodeKey: nodeKeys[2],
-					MachineKey: machineKeys[2],
-					UserID: user.ID,
-					User: user,
-					IPv4: nap("100.64.0.3"),
-				})
-				db.DB.Save(&types.Node{
-					NodeKey: nodeKeys[3],
-					MachineKey: machineKeys[3],
-					UserID: user.ID,
-					User: user,
-					IPv4: nap("100.64.0.4"),
-				})
+				// __CYLONIX_MOD__ pass UserID instead of &user so gorm doesn't
+				// re-save the associated User (cylonix's `Name unique` makes
+				// repeat-Save of the same User collide on the unique index).
+				// Assign distinct GivenNames so the cylonix unique index
+				// (given_name, network_domain) does not collide on duplicate
+				// empty values across the 4 fixture rows.
+				uid := user.ID
+				for i := 0; i < 4; i++ {
+					if err := db.DB.Save(&types.Node{
+						NodeKey:    nodeKeys[i],
+						MachineKey: machineKeys[i],
+						UserID:     &uid,
+						GivenName:  fmt.Sprintf("backfill-test-%d", i+1),
+						IPv4:       nap(fmt.Sprintf("100.64.0.%d", i+1)),
+					}).Error; err != nil {
+						t.Fatalf("save node %d: %v", i, err)
+					}
+				}
 
 				return db
 			},
@@ -506,26 +462,27 @@ func TestBackfillIPAddresses(t *testing.T) {
 
 	comps := append(util.Comparers, cmpopts.IgnoreFields(types.Node{},
 		"ID",
-		"MachineKeyDatabaseField",
-		"NodeKeyDatabaseField",
-		"DiscoKeyDatabaseField",
 		"User",
 		"UserID",
 		"Endpoints",
-		"HostinfoDatabaseField",
 		"Hostinfo",
-		"Routes",
 		"CreatedAt",
 		"UpdatedAt",
 		"WouldShareTo",
 		"AcceptedShareTo",
+		"GivenName", // __CYLONIX_ADD__ test fixtures set distinct GivenNames to satisfy cylonix unique index
 	))
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db := tt.dbFunc()
 
-			alloc, err := NewIPAllocator(db, tt.prefix4, tt.prefix6, types.IPAllocationStrategySequential)
+			alloc, err := NewIPAllocator(
+				db,
+				tt.prefix4,
+				tt.prefix6,
+				types.IPAllocationStrategySequential,
+			)
 			if err != nil {
 				t.Fatalf("failed to set up ip alloc: %s", err)
 			}
@@ -547,4 +504,36 @@ func TestBackfillIPAddresses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIPAllocatorNextNoReservedIPs(t *testing.T) {
+	db, err := newSQLiteTestDB()
+	require.NoError(t, err)
+	defer db.Close()
+
+	alloc, err := NewIPAllocator(
+		db,
+		ptr.To(tsaddr.CGNATRange()),
+		ptr.To(tsaddr.TailscaleULARange()),
+		types.IPAllocationStrategySequential,
+	)
+	if err != nil {
+		t.Fatalf("failed to set up ip alloc: %s", err)
+	}
+
+	// Validate that we do not give out 100.100.100.100
+	nextQuad100, err := alloc.next(na("100.100.100.99"), ptr.To(tsaddr.CGNATRange()))
+	require.NoError(t, err)
+	assert.Equal(t, na("100.100.100.101"), *nextQuad100)
+
+	// Validate that we do not give out fd7a:115c:a1e0::53
+	nextQuad100v6, err := alloc.next(na("fd7a:115c:a1e0::52"), ptr.To(tsaddr.TailscaleULARange()))
+	require.NoError(t, err)
+	assert.Equal(t, na("fd7a:115c:a1e0::54"), *nextQuad100v6)
+
+	// Validate that we do not give out fd7a:115c:a1e0::53
+	nextChrome, err := alloc.next(na("100.115.91.255"), ptr.To(tsaddr.CGNATRange()))
+	t.Logf("chrome: %s", nextChrome.String())
+	require.NoError(t, err)
+	assert.Equal(t, na("100.115.94.0"), *nextChrome)
 }

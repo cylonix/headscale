@@ -1,16 +1,17 @@
+//go:generate go tool viewer --type=User,Node,PreAuthKey
 package types
 
+//go:generate go run tailscale.com/cmd/viewer --type=User,Node,PreAuthKey
+
 import (
-	"context"
-	"database/sql/driver"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
+	"runtime"
+	"sync/atomic"
 	"time"
 
+	"github.com/juanfont/headscale/hscontrol/util"
 	"tailscale.com/tailcfg"
-	"tailscale.com/util/ctxkey"
 )
 
 const (
@@ -20,92 +21,6 @@ const (
 )
 
 var ErrCannotParsePrefix = errors.New("cannot parse prefix")
-
-type IPPrefix netip.Prefix
-
-func (i *IPPrefix) Scan(destination interface{}) error {
-	switch value := destination.(type) {
-	case string:
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil {
-			// __BEGIN_CYLONIX_MOD__
-			//log.Warn().Err(err).Str("value", value).Msg("Failed to parse IP prefix.")
-			*i = IPPrefix{}
-			return nil
-			// __END_CYLONIX_MOD__
-		}
-		*i = IPPrefix(prefix)
-
-		return nil
-	default:
-		return fmt.Errorf("%w: unexpected data type %T", ErrCannotParsePrefix, destination)
-	}
-}
-
-// Value return json value, implement driver.Valuer interface.
-func (i IPPrefix) Value() (driver.Value, error) {
-	// __BEGIN_CYLONIX_ADD__
-	if !netip.Prefix(i).IsValid() {
-		return "", fmt.Errorf("%w: invalid IP prefix", ErrCannotParsePrefix)
-	}
-	// __END_CYLONIX_ADD__
-	prefixStr := netip.Prefix(i).String()
-
-	return prefixStr, nil
-}
-
-// __BEGIN_CYLONIX_MOD__
-func (i IPPrefix) String() string {
-	return netip.Prefix(i).String()
-}
-func (i IPPrefix) MarshalText() ([]byte, error) {
-	return netip.Prefix(i).MarshalText()
-}
-// __END_CYLONIX_MOD__
-
-type IPPrefixes []netip.Prefix
-
-func (i *IPPrefixes) Scan(destination interface{}) error {
-	switch value := destination.(type) {
-	case []byte:
-		return json.Unmarshal(value, i)
-
-	case string:
-		return json.Unmarshal([]byte(value), i)
-
-	default:
-		return fmt.Errorf("%w: unexpected data type %T", ErrNodeAddressesInvalid, destination)
-	}
-}
-
-// Value return json value, implement driver.Valuer interface.
-func (i IPPrefixes) Value() (driver.Value, error) {
-	bytes, err := json.Marshal(i)
-
-	return string(bytes), err
-}
-
-type StringList []string
-
-func (i *StringList) Scan(destination interface{}) error {
-	switch value := destination.(type) {
-	case []byte:
-		return json.Unmarshal(value, i)
-
-	case string:
-		return json.Unmarshal([]byte(value), i)
-
-	default:
-		return fmt.Errorf("%w: unexpected data type %T", ErrNodeAddressesInvalid, destination)
-	}
-}
-
-// Value return json value, implement driver.Valuer interface.
-func (i StringList) Value() (driver.Value, error) {
-	bytes, err := json.Marshal(i)
-
-	return string(bytes), err
-}
 
 type StateUpdateType int
 
@@ -174,14 +89,6 @@ type StateUpdate struct {
 	// Additional message for tracking origin or what being
 	// updated, useful for ambiguous updates like StatePeerChanged.
 	Message string
-
-	// __Begin_Cylonix_Add__
-	// Namespace indicates what namespace of this update belongs to.
-	Namespace string
-
-	// NetworkDomain indicates what network domain this update belongs to.
-	NetworkDomain string
-	// __END_CYLONIX_ADD__
 }
 
 // Empty reports if there are any updates in the StateUpdate.
@@ -198,7 +105,41 @@ func (su *StateUpdate) Empty() bool {
 	return false
 }
 
-func StateUpdateExpire(nodeID NodeID, expiry time.Time) StateUpdate {
+func UpdateFull() StateUpdate {
+	return StateUpdate{
+		Type: StateFullUpdate,
+	}
+}
+
+func UpdateSelf(nodeID NodeID) StateUpdate {
+	return StateUpdate{
+		Type:        StateSelfUpdate,
+		ChangeNodes: []NodeID{nodeID},
+	}
+}
+
+func UpdatePeerChanged(nodeIDs ...NodeID) StateUpdate {
+	return StateUpdate{
+		Type:        StatePeerChanged,
+		ChangeNodes: nodeIDs,
+	}
+}
+
+func UpdatePeerPatch(changes ...*tailcfg.PeerChange) StateUpdate {
+	return StateUpdate{
+		Type:          StatePeerChangedPatch,
+		ChangePatches: changes,
+	}
+}
+
+func UpdatePeerRemoved(nodeIDs ...NodeID) StateUpdate {
+	return StateUpdate{
+		Type:    StatePeerRemoved,
+		Removed: nodeIDs,
+	}
+}
+
+func UpdateExpire(nodeID NodeID, expiry time.Time) StateUpdate {
 	return StateUpdate{
 		Type: StatePeerChangedPatch,
 		ChangePatches: []*tailcfg.PeerChange{
@@ -210,14 +151,81 @@ func StateUpdateExpire(nodeID NodeID, expiry time.Time) StateUpdate {
 	}
 }
 
-var (
-	NotifyOriginKey   = ctxkey.New("notify.origin", "")
-	NotifyHostnameKey = ctxkey.New("notify.hostname", "")
-)
+const RegistrationIDLength = 24
 
-func NotifyCtx(ctx context.Context, origin, hostname string) context.Context {
-	ctx2, _ := context.WithTimeout(ctx, 3*time.Second)
-	ctx2 = NotifyOriginKey.WithValue(ctx2, origin)
-	ctx2 = NotifyHostnameKey.WithValue(ctx2, hostname)
-	return ctx2
+type RegistrationID string
+
+func NewRegistrationID() (RegistrationID, error) {
+	rid, err := util.GenerateRandomStringURLSafe(RegistrationIDLength)
+	if err != nil {
+		return "", err
+	}
+
+	return RegistrationID(rid), nil
+}
+
+func MustRegistrationID() RegistrationID {
+	rid, err := NewRegistrationID()
+	if err != nil {
+		panic(err)
+	}
+
+	return rid
+}
+
+func RegistrationIDFromString(str string) (RegistrationID, error) {
+	if len(str) != RegistrationIDLength {
+		return "", fmt.Errorf("registration ID must be %d characters long", RegistrationIDLength)
+	}
+	return RegistrationID(str), nil
+}
+
+func (r RegistrationID) String() string {
+	return string(r)
+}
+
+type RegisterNode struct {
+	Node       Node
+	Registered chan *Node
+	closed     *atomic.Bool
+}
+
+func NewRegisterNode(node Node) RegisterNode {
+	return RegisterNode{
+		Node:       node,
+		Registered: make(chan *Node),
+		closed:     &atomic.Bool{},
+	}
+}
+
+func (rn *RegisterNode) SendAndClose(node *Node) {
+	if rn.closed.Swap(true) {
+		return
+	}
+
+	select {
+	case rn.Registered <- node:
+	default:
+	}
+
+	close(rn.Registered)
+}
+
+// DefaultBatcherWorkers returns the default number of batcher workers.
+// Default to 3/4 of CPU cores, minimum 1, no maximum.
+func DefaultBatcherWorkers() int {
+	return DefaultBatcherWorkersFor(runtime.NumCPU())
+}
+
+// DefaultBatcherWorkersFor returns the default number of batcher workers for a given CPU count.
+// Default to 3/4 of CPU cores, minimum 1, no maximum.
+func DefaultBatcherWorkersFor(cpuCount int) int {
+	const (
+		workerNumerator   = 3
+		workerDenominator = 4
+	)
+
+	defaultWorkers := max((cpuCount*workerNumerator)/workerDenominator, 1)
+
+	return defaultWorkers
 }

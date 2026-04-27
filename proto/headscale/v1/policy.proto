@@ -1,28 +1,31 @@
 syntax = "proto3";
 package headscale.v1;
-option  go_package = "github.com/juanfont/headscale/gen/go/v1";
+option go_package = "github.com/juanfont/headscale/gen/go/v1";
 
 import "google/protobuf/timestamp.proto";
 
 message SetPolicyRequest {
-    string policy = 1;
-
-    optional string user           = 2; // __CYLONIX_MOD__
-    optional string namespace      = 3; // __CYLONIX_MOD__
-    optional string network        = 4; // __CYLONIX_MOD__
+  string policy = 1;
+  // __BEGIN_CYLONIX_MOD__
+  optional string user = 2;
+  optional string namespace = 3;
+  optional string network = 4;
+  // __END_CYLONIX_MOD__
 }
 
 message SetPolicyResponse {
-    string                    policy     = 1;
-    google.protobuf.Timestamp updated_at = 2;
+  string policy = 1;
+  google.protobuf.Timestamp updated_at = 2;
 }
 
 message GetPolicyRequest {
-    optional string namespace = 1; // __CYLONIX_MOD__
-    optional string network   = 2; // __CYLONIX_MOD__
+  // __BEGIN_CYLONIX_MOD__
+  optional string namespace = 1;
+  optional string network = 2;
+  // __END_CYLONIX_MOD__
 }
 
 message GetPolicyResponse {
-    string                    policy     = 1;
-    google.protobuf.Timestamp updated_at = 2;
+  string policy = 1;
+  google.protobuf.Timestamp updated_at = 2;
 }

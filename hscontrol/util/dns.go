@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 
-	"github.com/spf13/viper"
 	"go4.org/netipx"
 	"tailscale.com/util/dnsname"
 )
@@ -21,66 +22,134 @@ const (
 	LabelHostnameLength = 63
 )
 
-var invalidCharsInUserRegex = regexp.MustCompile("[^a-z0-9-.]+")
+var invalidDNSRegex = regexp.MustCompile("[^a-z0-9-.]+")
 
-var ErrInvalidUserName = errors.New("invalid user name")
+var ErrInvalidHostName = errors.New("invalid hostname")
 
-func NormalizeToFQDNRulesConfigFromViper(name string) (string, error) {
-	strip := viper.GetBool("oidc.strip_email_domain")
-
-	return NormalizeToFQDNRules(name, strip)
-}
-
-// NormalizeToFQDNRules will replace forbidden chars in user
-// it can also return an error if the user doesn't respect RFC 952 and 1123.
-func NormalizeToFQDNRules(name string, stripEmailDomain bool) (string, error) {
-	name = strings.ToLower(name)
-	name = strings.ReplaceAll(name, "'", "")
-	atIdx := strings.Index(name, "@")
-	if stripEmailDomain && atIdx > 0 {
-		name = name[:atIdx]
-	} else {
-		name = strings.ReplaceAll(name, "@", ".")
+// ValidateUsername checks if a username is valid.
+// It must be at least 2 characters long, start with a letter, and contain
+// only letters, numbers, hyphens, dots, and underscores.
+// It cannot contain more than one '@'.
+// It cannot contain invalid characters.
+func ValidateUsername(username string) error {
+	// Ensure the username meets the minimum length requirement
+	if len(username) < 2 {
+		return errors.New("username must be at least 2 characters long")
 	}
-	name = invalidCharsInUserRegex.ReplaceAllString(name, "-")
 
-	for _, elt := range strings.Split(name, ".") {
-		if len(elt) > LabelHostnameLength {
-			return "", fmt.Errorf(
-				"label %v is more than 63 chars: %w",
-				elt,
-				ErrInvalidUserName,
-			)
+	// Ensure the username starts with a letter
+	if !unicode.IsLetter(rune(username[0])) {
+		return errors.New("username must start with a letter")
+	}
+
+	atCount := 0
+
+	for _, char := range username {
+		switch {
+		case unicode.IsLetter(char),
+			unicode.IsDigit(char),
+			char == '-',
+			char == '.',
+			char == '_':
+			// Valid characters
+		case char == '@':
+			atCount++
+			if atCount > 1 {
+				return errors.New("username cannot contain more than one '@'")
+			}
+		default:
+			return fmt.Errorf("username contains invalid character: '%c'", char)
 		}
 	}
 
-	return name, nil
+	return nil
 }
 
-func CheckForFQDNRules(name string) error {
+// ValidateHostname checks if a hostname meets DNS requirements.
+// This function does NOT modify the input - it only validates.
+// The hostname must already be lowercase and contain only valid characters.
+func ValidateHostname(name string) error {
+	if len(name) < 2 {
+		return fmt.Errorf(
+			"hostname %q is too short, must be at least 2 characters",
+			name,
+		)
+	}
 	if len(name) > LabelHostnameLength {
 		return fmt.Errorf(
-			"DNS segment must not be over 63 chars. %v doesn't comply with this rule: %w",
+			"hostname %q is too long, must not exceed 63 characters",
 			name,
-			ErrInvalidUserName,
 		)
 	}
 	if strings.ToLower(name) != name {
 		return fmt.Errorf(
-			"DNS segment should be lowercase. %v doesn't comply with this rule: %w",
+			"hostname %q must be lowercase (try %q)",
 			name,
-			ErrInvalidUserName,
+			strings.ToLower(name),
 		)
 	}
-	if invalidCharsInUserRegex.MatchString(name) {
+
+	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
 		return fmt.Errorf(
-			"DNS segment should only be composed of lowercase ASCII letters numbers, hyphen and dots. %v doesn't comply with theses rules: %w",
+			"hostname %q cannot start or end with a hyphen",
 			name,
-			ErrInvalidUserName,
+		)
+	}
+
+	if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") {
+		return fmt.Errorf(
+			"hostname %q cannot start or end with a dot",
+			name,
+		)
+	}
+
+	if invalidDNSRegex.MatchString(name) {
+		return fmt.Errorf(
+			"hostname %q contains invalid characters, only lowercase letters, numbers, hyphens and dots are allowed",
+			name,
 		)
 	}
 
 	return nil
+}
+
+// NormaliseHostname transforms a string into a valid DNS hostname.
+// Returns error if the transformation results in an invalid hostname.
+//
+// Transformations applied:
+// - Converts to lowercase
+// - Removes invalid DNS characters
+// - Truncates to 63 characters if needed
+//
+// After transformation, validates the result.
+func NormaliseHostname(name string) (string, error) {
+	// Early return if already valid
+	err := ValidateHostname(name)
+	if err == nil {
+		return name, nil
+	}
+
+	// Transform to lowercase
+	name = strings.ToLower(name)
+
+	// Strip invalid DNS characters
+	name = invalidDNSRegex.ReplaceAllString(name, "")
+
+	// Truncate to DNS label limit
+	if len(name) > LabelHostnameLength {
+		name = name[:LabelHostnameLength]
+	}
+
+	// Validate result after transformation
+	err = ValidateHostname(name)
+	if err != nil {
+		return "", fmt.Errorf(
+			"hostname invalid after normalisation: %w",
+			err,
+		)
+	}
+
+	return name, nil
 }
 
 // generateMagicDNSRootDomains generates a list of DNS entries to be included in `Routes` in `MapResponse`.
@@ -122,7 +191,7 @@ func GenerateIPv4DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 	// here we generate the base domain (e.g., 100.in-addr.arpa., 16.172.in-addr.arpa., etc.)
 	rdnsSlice := []string{}
 	for i := lastOctet - 1; i >= 0; i-- {
-		rdnsSlice = append(rdnsSlice, fmt.Sprintf("%d", netRange.IP[i]))
+		rdnsSlice = append(rdnsSlice, strconv.FormatUint(uint64(netRange.IP[i]), 10))
 	}
 	rdnsSlice = append(rdnsSlice, "in-addr.arpa.")
 	rdnsBase := strings.Join(rdnsSlice, ".")
@@ -177,7 +246,7 @@ func GenerateIPv6DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 	// and from what I can see, the generateMagicDNSRootDomains
 	// function is called only once over the lifetime of a server process.
 	prefixConstantParts := []string{}
-	for i := 0; i < maskBits/nibbleLen; i++ {
+	for i := range maskBits / nibbleLen {
 		prefixConstantParts = append(
 			[]string{string(nibbleStr[i])},
 			prefixConstantParts...)
@@ -186,7 +255,7 @@ func GenerateIPv6DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 	makeDomain := func(variablePrefix ...string) (dnsname.FQDN, error) {
 		prefix := strings.Join(append(variablePrefix, prefixConstantParts...), ".")
 
-		return dnsname.ToFQDN(fmt.Sprintf("%s.ip6.arpa", prefix))
+		return dnsname.ToFQDN(prefix + ".ip6.arpa")
 	}
 
 	var fqdns []dnsname.FQDN
@@ -196,7 +265,7 @@ func GenerateIPv6DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 	} else {
 		domCount := 1 << (maskBits % nibbleLen)
 		fqdns = make([]dnsname.FQDN, 0, domCount)
-		for i := 0; i < domCount; i++ {
+		for i := range domCount {
 			varNibble := fmt.Sprintf("%x", i)
 			dom, err := makeDomain(varNibble)
 			if err != nil {
