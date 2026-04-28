@@ -263,6 +263,6 @@ tool (
 // cylonix-v1.96.4 branch (cylonix commits replayed onto upstream v1.96.4)
 // while it is being verified. Once verified and pushed to
 // github.com/cylonix/tailscale, switch back to a tagged version reference.
-replace tailscale.com => github.com/cylonix/tailscale v1.96.4-cylonix.1
+replace tailscale.com => github.com/cylonix/tailscale v1.96.4-cylonix.2
 
 // __END_CYLONIX_MOD__

@@ -879,7 +879,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "123456789012345678901234567890123456789012345678901234567890123", // __CYLONIX_MOD__ NormaliseHostname truncates to 63
 		},
 		{
 			name: "hostname_very_long_truncated",
@@ -888,7 +888,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "test-node-with-very-long-hostname-that-exceeds-dns-label-limits", // __CYLONIX_MOD__ NormaliseHostname truncates to 63
 		},
 		{
 			name: "hostname_with_special_chars",
@@ -897,7 +897,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "node-with-special", // __CYLONIX_MOD__ NormaliseHostname strips invalid chars
 		},
 		{
 			name: "hostname_with_unicode",
@@ -951,7 +951,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "node---test", // __CYLONIX_MOD__ NormaliseHostname strips emoji
 		},
 		{
 			name: "uppercase_to_lowercase",
@@ -969,25 +969,25 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "testnode", // __CYLONIX_MOD__ NormaliseHostname strips underscore
 		},
 		{
-			name: "at_sign_invalid",
+			name: "at_sign_stripped", // __CYLONIX_MOD__ renamed: NormaliseHostname now salvages instead of rejecting
 			hostinfo: &tailcfg.Hostinfo{
 				Hostname: "Test@Host",
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "testhost", // __CYLONIX_MOD__ NormaliseHostname lowercases and strips @
 		},
 		{
-			name: "chinese_chars_with_dash_invalid",
+			name: "chinese_chars_with_dash_stripped", // __CYLONIX_MOD__ renamed: NormaliseHostname now salvages
 			hostinfo: &tailcfg.Hostinfo{
 				Hostname: "server-北京-01",
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "server--01", // __CYLONIX_MOD__ NormaliseHostname strips non-ASCII
 		},
 		{
 			name: "chinese_only_invalid",
@@ -1059,7 +1059,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       strings.Repeat("t", 63), // __CYLONIX_MOD__ NormaliseHostname truncates to 63
 		},
 	}
 
@@ -1129,13 +1129,13 @@ func TestEnsureHostnameWithHostinfo(t *testing.T) {
 			wantHostname: "node-mkey1234",
 		},
 		{
-			name: "long_hostname_rejected",
+			name: "long_hostname_truncated", // __CYLONIX_MOD__ renamed: NormaliseHostname truncates instead of rejecting
 			hostinfo: &tailcfg.Hostinfo{
 				Hostname: "test-node-with-very-long-hostname-that-exceeds-dns-label-limits-of-63-characters",
 			},
 			machineKey:   "mkey12345678",
 			nodeKey:      "nkey12345678",
-			wantHostname: "invalid-",
+			wantHostname: "test-node-with-very-long-hostname-that-exceeds-dns-label-limits", // __CYLONIX_MOD__ NormaliseHostname truncates to 63
 		},
 		{
 			name:         "nil_hostinfo_node_key_only",

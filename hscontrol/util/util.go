@@ -287,10 +287,18 @@ func EnsureHostname(hostinfo *tailcfg.Hostinfo, machineKey, nodeKey string) stri
 		return fmt.Sprintf("node-%s", keyPrefix)
 	}
 
-	lowercased := strings.ToLower(hostinfo.Hostname)
-	if err := ValidateHostname(lowercased); err == nil {
-		return lowercased
+	// __BEGIN_CYLONIX_MOD__ Try NormaliseHostname (lowercase + strip
+	// non-DNS chars + truncate to 63) before substituting an
+	// "invalid-<random>" placeholder. This salvages real device
+	// hostnames that contain spaces/punctuation (e.g. android's
+	// "Redmi Note 13 5G" → "redmi-note-13-5g", apple's "Randy's
+	// iPhone" → "randys-iphone") instead of replacing the whole label.
+	// Falls back to InvalidString only when normalisation can't
+	// produce anything DNS-valid (e.g. all non-ASCII / emoji).
+	if name, err := NormaliseHostname(hostinfo.Hostname); err == nil {
+		return name
 	}
+	// __END_CYLONIX_MOD__
 
 	return InvalidString()
 }
