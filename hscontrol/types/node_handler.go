@@ -1,6 +1,8 @@
 package types
 
 import (
+	"net/netip"
+
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -23,6 +25,12 @@ type NodeHandler interface {
 
 	// Update is invoked when a node is updated.
 	Update(*Node) (*Node, error)
+
+	// BackfillNodeIPv6 allocates an IPv6 address for a node that is missing one
+	// (e.g. it was registered before IPv6 support existed). It mutates the
+	// passed node's IPv6 field and returns the assigned address so the caller
+	// can persist it, or (nil, nil) if nothing needed doing. __CYLONIX_MOD__
+	BackfillNodeIPv6(*Node) (*netip.Addr, error)
 
 	// Refresh token refreshes the token that authorized the node.
 	RefreshToken(*Node) error

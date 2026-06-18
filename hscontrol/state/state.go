@@ -2531,9 +2531,39 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 		endpointChanged    bool
 		derpChanged        bool
 	)
+
+	// __BEGIN_CYLONIX_MOD__ Backfill a v6 address for nodes that were assigned
+	// only a v4 address before IPv6 support existed. Many devices reconnect by
+	// polling for their netmap without re-registering, so this path (in addition
+	// to PreAdd) must allocate the missing v6. The allocation is an ipdrawer
+	// network call, so it is done OUTSIDE the NodeStore lock; the result is
+	// applied inside the UpdateNode callback below and persisted by
+	// persistNodeToDB.
+	var backfilledIPv6 *netip.Addr
+	if s.cfg != nil && s.cfg.NodeHandler != nil {
+		if cur, ok := s.GetNodeByID(id); ok && cur.Valid() {
+			if node := cur.AsStruct(); node.IPv6 == nil {
+				v6, err := s.cfg.NodeHandler.BackfillNodeIPv6(node)
+				if err != nil {
+					log.Warn().Err(err).Uint64("node.id", id.Uint64()).
+						Msg("cylonix BackfillNodeIPv6 failed; continuing without v6")
+				} else {
+					backfilledIPv6 = v6
+				}
+			}
+		}
+	}
+	// __END_CYLONIX_MOD__
+
 	// We need to ensure we update the node as it is in the NodeStore at
 	// the time of the request.
 	updatedNode, ok := s.nodeStore.UpdateNode(id, func(currentNode *types.Node) {
+		// __BEGIN_CYLONIX_MOD__ Apply the backfilled v6 so it flows into
+		// updatedNode and is saved by persistNodeToDB below.
+		if backfilledIPv6 != nil {
+			currentNode.IPv6 = backfilledIPv6
+		}
+		// __END_CYLONIX_MOD__
 		peerChange := currentNode.PeerChangeFromMapRequest(req)
 
 		// Track what specifically changed
