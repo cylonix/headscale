@@ -734,6 +734,31 @@ AND auth_key_id NOT IN (
 				// This must run after migration 202505141324 which creates tables with forced_tags.
 				ID: "202511131445-node-forced-tags-to-tags",
 				Migrate: func(tx *gorm.DB) error {
+					m := tx.Migrator()
+					hasForced := m.HasColumn(&types.Node{}, "forced_tags")
+					hasTags := m.HasColumn(&types.Node{}, "tags")
+
+					// __BEGIN_CYLONIX_MOD__
+					// On the cylonix v1 upgrade lineage an earlier AutoMigrate
+					// (202501311657) adds an empty `tags` column from the v0.28
+					// Node struct while the legacy `forced_tags` still holds the
+					// data, so a plain RenameColumn fails with "column tags
+					// already exists". forced_tags is the source of truth here,
+					// so drop the empty AutoMigrate-created tags column before
+					// renaming. On a fresh/already-migrated DB (no forced_tags)
+					// this whole migration is a no-op.
+					if hasForced && hasTags {
+						if err := m.DropColumn(&types.Node{}, "tags"); err != nil {
+							return fmt.Errorf("dropping pre-existing tags column before rename: %w", err)
+						}
+					}
+					if !hasForced {
+						// Already migrated (tags exists) or neither column
+						// exists; nothing to rename.
+						return nil
+					}
+					// __END_CYLONIX_MOD__
+
 					// Rename the column from forced_tags to tags
 					err := tx.Migrator().RenameColumn(&types.Node{}, "forced_tags", "tags")
 					if err != nil {
