@@ -250,6 +250,13 @@ func (h *Headscale) redirect(w http.ResponseWriter, req *http.Request) {
 	http.Redirect(w, req, target, http.StatusFound)
 }
 
+// ListOnlineNodeIDs exposes the NodeStore's set of currently-connected node IDs
+// so the embedding cylonix manager can compute online device/user counts from
+// live connection state instead of LastSeen recency. __CYLONIX_MOD__
+func (h *Headscale) ListOnlineNodeIDs() []types.NodeID {
+	return h.state.ListOnlineNodeIDs()
+}
+
 func (h *Headscale) scheduledTasks(ctx context.Context) {
 	expireTicker := time.NewTicker(updateInterval)
 	defer expireTicker.Stop()

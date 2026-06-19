@@ -669,6 +669,22 @@ func (s *State) ListNodesByUser(userID types.UserID) views.Slice[types.NodeView]
 	return s.nodeStore.ListNodesByUser(userID)
 }
 
+// ListOnlineNodeIDs returns the IDs of all nodes currently connected, per the
+// NodeStore — the source of truth for online status in v0.28 (Connect sets
+// IsOnline=true; LastSeen is only written on Disconnect). Callers (e.g. the
+// cylonix manager's online counts) should use this rather than LastSeen
+// recency, which no longer reflects an active connection. __CYLONIX_MOD__
+func (s *State) ListOnlineNodeIDs() []types.NodeID {
+	nodes := s.nodeStore.ListNodes()
+	ids := make([]types.NodeID, 0, nodes.Len())
+	for _, nv := range nodes.All() {
+		if o := nv.IsOnline(); o.Valid() && o.Get() {
+			ids = append(ids, nv.ID())
+		}
+	}
+	return ids
+}
+
 // ListPeers retrieves nodes that can communicate with the specified node based on policy.
 // __BEGIN_CYLONIX_MOD__
 // When a NodeHandler is configured, the caller-visible peer set is the
