@@ -2715,6 +2715,16 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 		return nodeRouteChange, nil
 	}
 
+	// __BEGIN_CYLONIX_MOD__ A freshly backfilled IPv6 changes the node's
+	// addresses. The lightweight endpoint/DERP patch path below carries ONLY
+	// endpoints/DERP, not address changes, so when a backfill coincides with a
+	// reconnect (endpoint change) peers would never learn the new v6. Force a
+	// full node update so the new address propagates to all peers' netmaps.
+	if backfilledIPv6 != nil {
+		return change.NodeAdded(id), nil
+	}
+	// __END_CYLONIX_MOD__
+
 	// Determine the most specific change type based on what actually changed.
 	// This allows us to send lightweight patch updates instead of full map responses.
 	return buildMapRequestChangeResponse(id, updatedNode, hostinfoChanged, endpointChanged, derpChanged)
