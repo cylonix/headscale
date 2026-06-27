@@ -493,7 +493,32 @@ func (node *Node) Proto() *v1.Node {
 		RegisterMethod: node.RegisterMethodToV1Enum(),
 
 		CreatedAt: timestamppb.New(node.CreatedAt),
+
+		// __BEGIN_CYLONIX_ADD__
+		// Mirror the cylonix fork fields that ParseProtoNode (the read side)
+		// honors: Namespace/NetworkDomain/WireguardOnly/StableID/CapVersion/
+		// Health/Capabilities. These were dropped from Proto() during the
+		// upstream v0.28 merge (fd41ed4c), which broke gRPC round-trips — e.g.
+		// the manager's wg-node sync via GetNode saw an empty Namespace and
+		// failed its tenant check. Keep this symmetric with ParseProtoNode.
+		Namespace:     node.Namespace,
+		NetworkDomain: node.NetworkDomain,
+		WireguardOnly: node.IsWireguardOnly,
+		StableId:      node.StableID,
+		CapVersion:    node.CapVersion,
+		Health:        node.Health,
+		// __END_CYLONIX_ADD__
 	}
+
+	// __BEGIN_CYLONIX_ADD__
+	if len(node.Capabilities) > 0 {
+		caps := make([]string, len(node.Capabilities))
+		for i, c := range node.Capabilities {
+			caps[i] = c.Name
+		}
+		nodeProto.Capabilities = caps
+	}
+	// __END_CYLONIX_ADD__
 
 	// Set User field based on node ownership
 	// Note: User will be set to TaggedDevices in the gRPC layer (grpcv1.go)
