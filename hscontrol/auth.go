@@ -641,8 +641,19 @@ func (h *Headscale) refreshNodeKeyAndExpiry(node *types.Node, newKey key.NodePub
 	// the headscale `nodes` row; without this update the NodeStore index
 	// nodesByNodeKey still maps the OLD key, and the noise poll endpoint
 	// returns 404 for the rotated client.
+	//
+	// The expiry MUST be updated here too: the netmap (and thus the self
+	// node's KeyExpiry the client renders) is built from the NodeStore
+	// NodeView, not the DB row. Updating only the DB (NodeSetExpiry below)
+	// left the NodeStore — and so the netmap — with the OLD expiry, so after
+	// reauth the client kept warning "key expires in N days" forever even
+	// though the admin UI (which reads the DB) showed the new expiry.
 	if _, ok := h.state.UpdateNode(node.ID, func(n *types.Node) {
 		n.NodeKey = newKey
+		if newExpiry != nil {
+			e := *newExpiry
+			n.Expiry = &e
+		}
 	}); !ok {
 		log.Warn().
 			Uint64("node.id", node.ID.Uint64()).
