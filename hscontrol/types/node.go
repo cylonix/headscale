@@ -1214,10 +1214,22 @@ func (nv NodeView) TailNode(
 	}
 	// __END_CYLONIX_ADD__
 
+	// __BEGIN_CYLONIX_ADD__
+	// Prefer the cylonix-assigned StableID (a stable per-device UUID set by the
+	// manager from wgNode.ID) when present, falling back to the integer node ID.
+	// This __CYLONIX_MOD__ lived in mapper/tail.go before the v0.28 merge moved
+	// tail-node conversion into this file (upstream c8376e44), which reverted it
+	// to the upstream integer-only behavior and silently dropped the mod.
+	stableID := nv.ID().StableID()
+	if sv := nv.StableID(); sv.Valid() {
+		stableID = tailcfg.StableNodeID(sv.Get())
+	}
+	// __END_CYLONIX_ADD__
+
 	tNode := tailcfg.Node{
 		//nolint:gosec // G115: NodeID values are within int64 range
 		ID:       tailcfg.NodeID(nv.ID()),
-		StableID: nv.ID().StableID(),
+		StableID: stableID, // __CYLONIX_MOD__
 		Name:     hostname,
 		Cap:      capVer,
 		CapMap:   capMap,
