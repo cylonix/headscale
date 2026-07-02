@@ -1428,6 +1428,12 @@ func (api headscaleV1APIServer) SetPolicy(
 		if changed {
 			cs = append(cs, change.PolicyChange())
 		}
+		// The policy blob may carry a per-tenant derpMap overlay that the
+		// mapper merges into every map response. SetPolicyForTailnet only
+		// reports filter changes, so a derpMap-only edit would otherwise
+		// distribute nothing. Always push a DERP map update; it is a small
+		// response and each node re-derives its own merged map.
+		cs = append(cs, change.DERPMap())
 	} else {
 		// Always reload policy to ensure route re-evaluation, even if
 		// policy content hasn't changed. This ensures that routes are

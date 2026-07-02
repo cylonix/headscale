@@ -204,3 +204,59 @@ func TestParseVersion(t *testing.T) {
 	assert.Equal(t, 80, minor)
 	assert.Equal(t, 4, patch)
 }
+
+// __BEGIN_CYLONIX_ADD__
+
+func TestMergeDERPMapFromPolicy(t *testing.T) {
+	global := &tailcfg.DERPMap{
+		Regions: map[int]*tailcfg.DERPRegion{
+			1: {RegionID: 1, RegionCode: "nyc"},
+		},
+	}
+
+	// Policy with a derpMap section (hujson: comments and trailing commas)
+	// merges the tenant region over the global map.
+	policyData := `{
+		// tenant policy
+		"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}],
+		"derpMap": {
+			"regions": {
+				"903": {
+					"regionID": 903,
+					"regionCode": "cylonix-ca",
+					"nodes": [{
+						"name": "derp-ca-1",
+						"regionID": 903,
+						"hostName": "137.184.40.154",
+					}],
+				},
+			},
+		},
+	}`
+	merged, err := mergeDERPMapFromPolicy(policyData, global)
+	assert.Nil(t, err)
+	assert.NotNil(t, merged.Regions[1])
+	assert.NotNil(t, merged.Regions[903])
+	assert.Equal(t, "cylonix-ca", merged.Regions[903].RegionCode)
+	assert.Len(t, merged.Regions[903].Nodes, 1)
+
+	// The input map must not be mutated: WithDERPMap hands in a fresh
+	// AsStruct copy, but derpMapForNode relies on merge not aliasing.
+	assert.Nil(t, global.Regions[903])
+
+	// Policy without a derpMap section returns the input unchanged.
+	merged, err = mergeDERPMapFromPolicy(`{"acls": []}`, global)
+	assert.Nil(t, err)
+	assert.Equal(t, global, merged)
+
+	// Empty policy data returns the input unchanged.
+	merged, err = mergeDERPMapFromPolicy("", global)
+	assert.Nil(t, err)
+	assert.Equal(t, global, merged)
+
+	// Invalid hujson errors out (callers fall back to the global map).
+	_, err = mergeDERPMapFromPolicy("{not-valid", global)
+	assert.NotNil(t, err)
+}
+
+// __END_CYLONIX_ADD__

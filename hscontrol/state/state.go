@@ -1277,6 +1277,17 @@ func (s *State) GetPolicy() (*types.Policy, error) {
 	return s.db.GetPolicy(nil, nil) // __CYLONIX_MOD__ unscoped lookup
 }
 
+// __BEGIN_CYLONIX_ADD__
+
+// GetPolicyForNode retrieves the policy row scoped to a node's cylonix
+// namespace and network domain. Used to overlay per-tenant policy settings
+// (e.g. the derpMap section) onto map responses.
+func (s *State) GetPolicyForNode(namespace, network string) (*types.Policy, error) {
+	return s.db.GetPolicy(&namespace, &network)
+}
+
+// __END_CYLONIX_ADD__
+
 // SetPolicyInDB stores policy data in the database.
 func (s *State) SetPolicyInDB(data string) (*types.Policy, error) {
 	return s.db.SetPolicy(data, "", "") // __CYLONIX_MOD__ no namespace/network scoping

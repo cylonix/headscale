@@ -2,6 +2,7 @@ package mapper
 
 import (
 	"encoding/json"
+	"errors" // __CYLONIX_ADD__
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -409,11 +410,40 @@ func ReadMapResponsesFromDirectory(dir string) (map[types.NodeID][]tailcfg.MapRe
 // __BEGIN_CYLONIX_ADD__
 
 // DerpMapPolicy carries an optional cylonix per-tenant DERP overlay parsed
-// from the policy hujson blob. The builder pattern should plumb these via
-// state/PolicyManager in a later pass; for now the type is retained so
-// callers referencing it keep compiling.
+// from the policy hujson blob. It is applied to map responses by the
+// builder's WithDERPMap via derpMapForNode.
 type DerpMapPolicy struct {
 	DerpMap *tailcfg.DERPMap `json:"derpMap"`
+}
+
+// derpMapForNode returns the global DERPMap overlaid with the optional
+// per-tenant derpMap from the node's scoped policy. Any failure falls back
+// to the global map so a bad policy blob cannot take down map distribution;
+// the failure is logged so a missing overlay is observable.
+func (m *mapper) derpMapForNode(nv types.NodeView, derpMap *tailcfg.DERPMap) *tailcfg.DERPMap {
+	pol, err := m.state.GetPolicyForNode(nv.Namespace(), nv.NetworkDomain())
+	if err != nil {
+		if !errors.Is(err, types.ErrPolicyNotFound) {
+			log.Error().Err(err).
+				Str("namespace", nv.Namespace()).
+				Str("network", nv.NetworkDomain()).
+				Str("node", nv.Hostname()).
+				Msg("Could not get scoped policy for DERP map; serving global map")
+		}
+		return derpMap
+	}
+
+	merged, err := mergeDERPMapFromPolicy(pol.Data, derpMap)
+	if err != nil {
+		log.Error().Err(err).
+			Str("namespace", nv.Namespace()).
+			Str("network", nv.NetworkDomain()).
+			Str("node", nv.Hostname()).
+			Msg("Could not merge policy DERP map; serving global map")
+		return derpMap
+	}
+
+	return merged
 }
 
 // mergeDERPMapFromPolicy merges the global DERPMap with an optional per-tenant

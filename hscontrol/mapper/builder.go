@@ -100,10 +100,19 @@ func (b *MapResponseBuilder) WithDebugType(t debugType) *MapResponseBuilder {
 }
 
 // WithDERPMap adds the DERP map to the response.
+// __BEGIN_CYLONIX_MOD__ Overlay the per-tenant derpMap carried in the node's
+// scoped policy (multi-tenancy mode) onto the global DERP map so cylonix
+// relay regions reach the clients.
 func (b *MapResponseBuilder) WithDERPMap() *MapResponseBuilder {
-	b.resp.DERPMap = b.mapper.state.DERPMap().AsStruct()
+	derpMap := b.mapper.state.DERPMap().AsStruct()
+	if nv, ok := b.mapper.state.GetNodeByID(b.nodeID); ok {
+		derpMap = b.mapper.derpMapForNode(nv, derpMap)
+	}
+	b.resp.DERPMap = derpMap
 	return b
 }
+
+// __END_CYLONIX_MOD__
 
 // WithDomain adds the domain configuration.
 // __BEGIN_CYLONIX_MOD__ When a NodeHandler is configured, prefer the
