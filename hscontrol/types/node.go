@@ -17,7 +17,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm" // __CYLONIX_ADD__ needed for Capability.gorm.Model
+	"google.golang.org/protobuf/types/known/wrapperspb" // __CYLONIX_ADD__ needed for ProtoHostinfo
+	"gorm.io/gorm"                                      // __CYLONIX_ADD__ needed for Capability.gorm.Model
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -507,6 +508,7 @@ func (node *Node) Proto() *v1.Node {
 		StableId:      node.StableID,
 		CapVersion:    node.CapVersion,
 		Health:        node.Health,
+		Hostinfo:      node.ProtoHostinfo(),
 		// __END_CYLONIX_ADD__
 	}
 
@@ -541,6 +543,152 @@ func (node *Node) Proto() *v1.Node {
 
 	return nodeProto
 }
+
+// __BEGIN_CYLONIX_ADD__
+// ProtoHostinfo converts the node's tailcfg.Hostinfo into the v1.Hostinfo
+// proto message so gRPC/REST clients (e.g. the manager UI machine details
+// page) can render host details such as OS, device model and logtail IDs.
+// Originally added in 78800114; dropped from Proto() during the upstream
+// v0.28 merge and restored here.
+func (node *Node) ProtoHostinfo() *v1.Hostinfo {
+	if node.Hostinfo == nil {
+		return nil
+	}
+
+	hi := node.Hostinfo
+	protoHostinfo := &v1.Hostinfo{
+		IpnVersion:      hi.IPNVersion,
+		FrontendLogId:   hi.FrontendLogID,
+		BackendLogId:    hi.BackendLogID,
+		Os:              hi.OS,
+		OsVersion:       hi.OSVersion,
+		Hostname:        hi.Hostname,
+		ShieldsUp:       hi.ShieldsUp,
+		ShareeNode:      hi.ShareeNode,
+		NoLogsNoSupport: hi.NoLogsNoSupport,
+		WireIngress:     hi.WireIngress,
+		IngressEnabled:  hi.IngressEnabled,
+		AllowsUpdate:    hi.AllowsUpdate,
+		Machine:         hi.Machine,
+		GoArch:          hi.GoArch,
+		GoArchVar:       hi.GoArchVar,
+		GoVersion:       hi.GoVersion,
+		Cloud:           hi.Cloud,
+		Package:         hi.Package,
+		DeviceModel:     hi.DeviceModel,
+		PushDeviceToken: hi.PushDeviceToken,
+		Distro:          hi.Distro,
+		DistroVersion:   hi.DistroVersion,
+		DistroCodeName:  hi.DistroCodeName,
+		App:             hi.App,
+		ServicesHash:    hi.ServicesHash,
+	}
+
+	// Convert optional boolean fields
+	if v, ok := hi.Container.Get(); ok {
+		protoHostinfo.Container = wrapperspb.Bool(v)
+	}
+	if v, ok := hi.Desktop.Get(); ok {
+		protoHostinfo.Desktop = wrapperspb.Bool(v)
+	}
+	if v, ok := hi.Userspace.Get(); ok {
+		protoHostinfo.Userspace = wrapperspb.Bool(v)
+	}
+	if v, ok := hi.UserspaceRouter.Get(); ok {
+		protoHostinfo.UserspaceRouter = wrapperspb.Bool(v)
+	}
+	if v, ok := hi.AppConnector.Get(); ok {
+		protoHostinfo.AppConnector = wrapperspb.Bool(v)
+	}
+
+	// Convert string slices
+	protoHostinfo.RequestTags = append([]string(nil), hi.RequestTags...)
+	protoHostinfo.WolMacs = append([]string(nil), hi.WoLMACs...)
+	protoHostinfo.SshHostKeys = append([]string(nil), hi.SSH_HostKeys...)
+
+	// Convert RoutableIPs
+	if len(hi.RoutableIPs) > 0 {
+		protoHostinfo.RoutableIps = make([]string, len(hi.RoutableIPs))
+		for i, prefix := range hi.RoutableIPs {
+			protoHostinfo.RoutableIps[i] = prefix.String()
+		}
+	}
+
+	// Convert Services
+	if len(hi.Services) > 0 {
+		protoHostinfo.Services = make([]*v1.Service, len(hi.Services))
+		for i, svc := range hi.Services {
+			protoHostinfo.Services[i] = &v1.Service{
+				Proto:       string(svc.Proto),
+				Port:        uint32(svc.Port),
+				Description: svc.Description,
+			}
+		}
+	}
+
+	// Convert NetInfo
+	if hi.NetInfo != nil {
+		protoHostinfo.NetInfo = &v1.NetInfo{
+			PreferredDerp: int32(hi.NetInfo.PreferredDERP),
+			LinkType:      hi.NetInfo.LinkType,
+			FirewallMode:  hi.NetInfo.FirewallMode,
+			HavePortMap:   hi.NetInfo.HavePortMap,
+		}
+
+		// Convert optional boolean fields using google.protobuf.BoolValue
+		if v, ok := hi.NetInfo.MappingVariesByDestIP.Get(); ok {
+			protoHostinfo.NetInfo.MappingVariesByDestIp = wrapperspb.Bool(v)
+		}
+		// tailcfg.NetInfo.HairPinning was removed upstream (tailscale
+		// v1.96); the proto field is left unset.
+		if v, ok := hi.NetInfo.WorkingIPv6.Get(); ok {
+			protoHostinfo.NetInfo.WorkingIpv6 = wrapperspb.Bool(v)
+		}
+		if v, ok := hi.NetInfo.OSHasIPv6.Get(); ok {
+			protoHostinfo.NetInfo.OsHasIpv6 = wrapperspb.Bool(v)
+		}
+		if v, ok := hi.NetInfo.WorkingUDP.Get(); ok {
+			protoHostinfo.NetInfo.WorkingUdp = wrapperspb.Bool(v)
+		}
+		if v, ok := hi.NetInfo.WorkingICMPv4.Get(); ok {
+			protoHostinfo.NetInfo.WorkingIcmpv4 = wrapperspb.Bool(v)
+		}
+		if v, ok := hi.NetInfo.UPnP.Get(); ok {
+			protoHostinfo.NetInfo.Upnp = wrapperspb.Bool(v)
+		}
+		if v, ok := hi.NetInfo.PMP.Get(); ok {
+			protoHostinfo.NetInfo.Pmp = wrapperspb.Bool(v)
+		}
+		if v, ok := hi.NetInfo.PCP.Get(); ok {
+			protoHostinfo.NetInfo.Pcp = wrapperspb.Bool(v)
+		}
+
+		// Convert DERP latency map
+		if len(hi.NetInfo.DERPLatency) > 0 {
+			protoHostinfo.NetInfo.DerpLatency = make(map[string]float64)
+			for region, latency := range hi.NetInfo.DERPLatency {
+				protoHostinfo.NetInfo.DerpLatency[region] = latency
+			}
+		}
+	}
+
+	// Convert Location
+	if hi.Location != nil {
+		protoHostinfo.Location = &v1.Location{
+			Country:     hi.Location.Country,
+			CountryCode: hi.Location.CountryCode,
+			City:        hi.Location.City,
+			CityCode:    hi.Location.CityCode,
+			Latitude:    hi.Location.Latitude,
+			Longitude:   hi.Location.Longitude,
+			Priority:    int32(hi.Location.Priority),
+		}
+	}
+
+	return protoHostinfo
+}
+
+// __END_CYLONIX_ADD__
 
 func (node *Node) GetFQDN(baseDomain string) (string, error) {
 	if node.GivenName == "" {
