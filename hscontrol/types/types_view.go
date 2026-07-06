@@ -266,6 +266,11 @@ func (v NodeView) IsOnline() views.ValuePointer[bool] { return views.ValuePointe
 func (v NodeView) String() string { return v.ж.String() }
 
 // __BEGIN_CYLONIX_ADD__
+// SessionEpoch and ActiveSessions expose the in-memory poll-session
+// accounting (backport of the upstream v0.29 ActiveSessions fix).
+func (v NodeView) SessionEpoch() uint64 { return v.ж.SessionEpoch }
+func (v NodeView) ActiveSessions() int  { return v.ж.ActiveSessions }
+
 func (v NodeView) IsWireguardOnly() views.ValuePointer[bool] {
 	return views.ValuePointerOf(v.ж.IsWireguardOnly)
 }
@@ -327,16 +332,18 @@ var _NodeViewNeedsRegeneration = Node(struct {
 	UpdatedAt       time.Time
 	DeletedAt       *time.Time
 	IsOnline        *bool
-	IsWireguardOnly *bool // __CYLONIX_ADD__
-	StableID        *string // __CYLONIX_ADD__
-	Namespace       string // __CYLONIX_ADD__
-	NetworkDomain   string // __CYLONIX_ADD__
-	CapVersion      *uint32 // __CYLONIX_ADD__
+	SessionEpoch    uint64       // __CYLONIX_ADD__
+	ActiveSessions  int          // __CYLONIX_ADD__
+	IsWireguardOnly *bool        // __CYLONIX_ADD__
+	StableID        *string      // __CYLONIX_ADD__
+	Namespace       string       // __CYLONIX_ADD__
+	NetworkDomain   string       // __CYLONIX_ADD__
+	CapVersion      *uint32      // __CYLONIX_ADD__
 	Capabilities    []Capability // __CYLONIX_ADD__
-	Health          *string // __CYLONIX_ADD__
-	IsJailed        bool // __CYLONIX_ADD__
-	WouldShareTo    []User // __CYLONIX_ADD__
-	AcceptedShareTo []User // __CYLONIX_ADD__
+	Health          *string      // __CYLONIX_ADD__
+	IsJailed        bool         // __CYLONIX_ADD__
+	WouldShareTo    []User       // __CYLONIX_ADD__
+	AcceptedShareTo []User       // __CYLONIX_ADD__
 }{})
 
 // View returns a read-only view of PreAuthKey.

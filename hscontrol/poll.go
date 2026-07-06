@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/types/change" // __CYLONIX_ADD__
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -138,6 +139,15 @@ func (m *mapSession) serveLongPoll() {
 
 	log.Trace().Caller().Uint64("node.id", m.node.ID.Uint64()).Str("node.name", m.node.Hostname).Msg("Long poll session started because client connected")
 
+	// __CYLONIX_ADD__ connectGen is set by state.Connect below and captured
+	// by the deferred cleanup closure (backport of the upstream v0.29
+	// ActiveSessions fix). Each Connect acquires one live session in state;
+	// the cleanup must release it with exactly one Disconnect call, in every
+	// exit path, or the node's session count leaks and it stays online
+	// forever. Zero means this session never reached Connect, so there is
+	// no session to release.
+	var connectGen uint64
+
 	// Clean up the session when the client disconnects
 	defer func() {
 		m.cancelChMu.Lock()
@@ -145,38 +155,56 @@ func (m *mapSession) serveLongPoll() {
 		close(m.cancelCh)
 		m.cancelChMu.Unlock()
 
-		_ = m.h.mapBatcher.RemoveNode(m.node.ID, m.ch)
+		stillConnected := m.h.mapBatcher.RemoveNode(m.node.ID, m.ch) // __CYLONIX_MOD__ capture whether other connections remain
+
+		// __CYLONIX_ADD__ This session never reached state.Connect; there
+		// is no session to release.
+		if connectGen == 0 {
+			return
+		}
 
 		// When a node disconnects, it might rapidly reconnect (e.g. mobile clients, network weather).
 		// Instead of immediately marking the node as offline, we wait a few seconds to see if it reconnects.
-		// If it does reconnect, the existing mapSession will be replaced and the node remains online.
-		// If it doesn't reconnect within the timeout, we mark it as offline.
+		// If it reconnects during the wait, the new session's Connect raises the
+		// session count, so the release below keeps the node online.
 		//
 		// This avoids flapping nodes in the UI and unnecessary churn in the network.
 		// This is not my favourite solution, but it kind of works in our eventually consistent world.
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		disconnected := true
-		// Wait up to 10 seconds for the node to reconnect.
-		// 10 seconds was arbitrary chosen as a reasonable time to reconnect.
-		for range 10 {
-			if m.h.mapBatcher.IsConnected(m.node.ID) {
-				disconnected = false
-				break
+		//
+		// __CYLONIX_MOD__ When another session already replaced this one
+		// (stillConnected), skip the wait — but never the release itself.
+		if !stillConnected {
+			// Wait up to 10 seconds for the node to reconnect.
+			// 10 seconds was arbitrary chosen as a reasonable time to reconnect.
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			for range 10 {
+				if m.h.mapBatcher.IsConnected(m.node.ID) {
+					break
+				}
+				<-ticker.C
 			}
-			<-ticker.C
 		}
 
-		if disconnected {
-			disconnectChanges, err := m.h.state.Disconnect(m.node.ID)
-			if err != nil {
-				m.errf(err, "Failed to disconnect node %s", m.node.Hostname)
-			}
-
-			m.h.Change(disconnectChanges...)
-			m.afterServeLongPoll()
-			m.infof("node has disconnected, mapSession: %p, chan: %p", m, m.ch)
+		// __CYLONIX_MOD__ Release this session unconditionally. The node
+		// goes offline exactly when the last live session is released, so
+		// releases from replaced or stale sessions are harmless regardless
+		// of the order they run in.
+		disconnectChanges, err := m.h.state.Disconnect(m.node.ID, connectGen)
+		if err != nil {
+			m.errf(err, "Failed to disconnect node %s", m.node.Hostname)
 		}
+
+		// __CYLONIX_ADD__ empty changes means another live session keeps
+		// the node online; nothing to notify.
+		if len(disconnectChanges) == 0 {
+			return
+		}
+
+		m.h.Change(disconnectChanges...)
+		m.afterServeLongPoll()
+		m.infof("node has disconnected, mapSession: %p, chan: %p", m, m.ch)
 	}()
 
 	// Set up the client stream
@@ -207,7 +235,8 @@ func (m *mapSession) serveLongPoll() {
 	// 2. Connect: marks the node online and recalculates primary routes based on the updated state
 	// While this results in two notifications, it ensures route data is synchronized before
 	// primary route selection occurs, which is critical for proper HA subnet router failover.
-	connectChanges := m.h.state.Connect(m.node.ID)
+	var connectChanges []change.Change
+	connectChanges, connectGen = m.h.state.Connect(m.node.ID) // __CYLONIX_MOD__ acquire a poll session; the deferred teardown releases it
 
 	m.infof("node has connected, mapSession: %p, chan: %p", m, m.ch)
 
@@ -293,201 +322,201 @@ func (m *mapSession) writeMap(msg *tailcfg.MapResponse) error {
 
 	startWrite := time.Now()
 
-/* __BEGIN_CYLONIX_LEGACY_REMOVED__
-   The cylonix pollFailoverRoutes / handleEndpointUpdate / handleSaveNode
-   helpers below depended on removed v0.28 APIs (h.nodeNotifier,
-   h.db.SaveNodeRoutes, h.db.EnableAutoApprovedRoutes, types.StateUpdate
-   fan-out). Their responsibilities have moved into
-   state.UpdateNodeFromMapRequest / state.AutoApproveRoutes and the
-   mapBatcher. The original source is preserved as a comment below.
+	/* __BEGIN_CYLONIX_LEGACY_REMOVED__
+	      The cylonix pollFailoverRoutes / handleEndpointUpdate / handleSaveNode
+	      helpers below depended on removed v0.28 APIs (h.nodeNotifier,
+	      h.db.SaveNodeRoutes, h.db.EnableAutoApprovedRoutes, types.StateUpdate
+	      fan-out). Their responsibilities have moved into
+	      state.UpdateNodeFromMapRequest / state.AutoApproveRoutes and the
+	      mapBatcher. The original source is preserved as a comment below.
 
-func (m *mapSession) handleEndpointUpdate_legacy() {
-	m.tracef("received endpoint update")
+	   func (m *mapSession) handleEndpointUpdate_legacy() {
+	   	m.tracef("received endpoint update")
 
-	change := m.node.PeerChangeFromMapRequest(m.req)
+	   	change := m.node.PeerChangeFromMapRequest(m.req)
 
-	online := m.h.nodeNotifier.IsLikelyConnected(m.node.ID)
-	change.Online = &online
+	   	online := m.h.nodeNotifier.IsLikelyConnected(m.node.ID)
+	   	change.Online = &online
 
-	m.node.ApplyPeerChange(&change)
+	   	m.node.ApplyPeerChange(&change)
 
-	sendUpdate, routesChanged := hostInfoChanged(m.node.Hostinfo, m.req.Hostinfo)
+	   	sendUpdate, routesChanged := hostInfoChanged(m.node.Hostinfo, m.req.Hostinfo)
 
-	// The node might not set NetInfo if it has not changed and if
-	// the full HostInfo object is overrwritten, the information is lost.
-	// If there is no NetInfo, keep the previous one.
-	// From 1.66 the client only sends it if changed:
-	// https://github.com/tailscale/tailscale/commit/e1011f138737286ecf5123ff887a7a5800d129a2
-	// TODO(kradalby): evaulate if we need better comparing of hostinfo
-	// before we take the changes.
-	if m.req.Hostinfo.NetInfo == nil {
-		m.req.Hostinfo.NetInfo = m.node.Hostinfo.NetInfo
-	}
-	m.node.Hostinfo = m.req.Hostinfo
+	   	// The node might not set NetInfo if it has not changed and if
+	   	// the full HostInfo object is overrwritten, the information is lost.
+	   	// If there is no NetInfo, keep the previous one.
+	   	// From 1.66 the client only sends it if changed:
+	   	// https://github.com/tailscale/tailscale/commit/e1011f138737286ecf5123ff887a7a5800d129a2
+	   	// TODO(kradalby): evaulate if we need better comparing of hostinfo
+	   	// before we take the changes.
+	   	if m.req.Hostinfo.NetInfo == nil {
+	   		m.req.Hostinfo.NetInfo = m.node.Hostinfo.NetInfo
+	   	}
+	   	m.node.Hostinfo = m.req.Hostinfo
 
-	logTracePeerChange(m.node.Hostname, sendUpdate, &change)
+	   	logTracePeerChange(m.node.Hostname, sendUpdate, &change)
 
-	// If there is no changes and nothing to save,
-	// return early.
-	if peerChangeEmpty(change) && !sendUpdate {
-		mapResponseEndpointUpdates.WithLabelValues("noop").Inc()
-		return
-	}
+	   	// If there is no changes and nothing to save,
+	   	// return early.
+	   	if peerChangeEmpty(change) && !sendUpdate {
+	   		mapResponseEndpointUpdates.WithLabelValues("noop").Inc()
+	   		return
+	   	}
 
-	// Check if the Hostinfo of the node has changed.
-	// If it has changed, check if there has been a change to
-	// the routable IPs of the host and update update them in
-	// the database. Then send a Changed update
-	// (containing the whole node object) to peers to inform about
-	// the route change.
-	// If the hostinfo has changed, but not the routes, just update
-	// hostinfo and let the function continue.
-	if routesChanged {
-		var err error
-		_, err = m.h.db.SaveNodeRoutes(m.node)
-		if err != nil {
-			m.errf(err, "Error processing node routes")
-			http.Error(m.w, "", http.StatusInternalServerError)
-			mapResponseEndpointUpdates.WithLabelValues("error").Inc()
+	   	// Check if the Hostinfo of the node has changed.
+	   	// If it has changed, check if there has been a change to
+	   	// the routable IPs of the host and update update them in
+	   	// the database. Then send a Changed update
+	   	// (containing the whole node object) to peers to inform about
+	   	// the route change.
+	   	// If the hostinfo has changed, but not the routes, just update
+	   	// hostinfo and let the function continue.
+	   	if routesChanged {
+	   		var err error
+	   		_, err = m.h.db.SaveNodeRoutes(m.node)
+	   		if err != nil {
+	   			m.errf(err, "Error processing node routes")
+	   			http.Error(m.w, "", http.StatusInternalServerError)
+	   			mapResponseEndpointUpdates.WithLabelValues("error").Inc()
 
-			return
-		}
+	   			return
+	   		}
 
-		// __BEGIN_CYLONIX_MOD__
-		pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
-		if err != nil {
-			m.errf(err, "Could not get ACL policy")
-			return
-		}
-		// __END_CYLONIX_MOD__
+	   		// __BEGIN_CYLONIX_MOD__
+	   		pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
+	   		if err != nil {
+	   			m.errf(err, "Could not get ACL policy")
+	   			return
+	   		}
+	   		// __END_CYLONIX_MOD__
 
-		if pol != nil {
-			// update routes with peer information
-			err := m.h.db.EnableAutoApprovedRoutes(pol, m.node)
-			if err != nil {
-				m.errf(err, "Error running auto approved routes")
-				mapResponseEndpointUpdates.WithLabelValues("error").Inc()
-			}
-		}
+	   		if pol != nil {
+	   			// update routes with peer information
+	   			err := m.h.db.EnableAutoApprovedRoutes(pol, m.node)
+	   			if err != nil {
+	   				m.errf(err, "Error running auto approved routes")
+	   				mapResponseEndpointUpdates.WithLabelValues("error").Inc()
+	   			}
+	   		}
 
-		// Send an update to the node itself with to ensure it
-		// has an updated packetfilter allowing the new route
-		// if it is defined in the ACL.
-		ctx := types.NotifyCtx(context.Background(), "poll-nodeupdate-self-hostinfochange", m.node.Hostname)
-		m.h.nodeNotifier.NotifyByNodeID(
-			ctx,
-			types.StateUpdate{
-				Type:        types.StateSelfUpdate,
-				ChangeNodes: []types.NodeID{m.node.ID},
+	   		// Send an update to the node itself with to ensure it
+	   		// has an updated packetfilter allowing the new route
+	   		// if it is defined in the ACL.
+	   		ctx := types.NotifyCtx(context.Background(), "poll-nodeupdate-self-hostinfochange", m.node.Hostname)
+	   		m.h.nodeNotifier.NotifyByNodeID(
+	   			ctx,
+	   			types.StateUpdate{
+	   				Type:        types.StateSelfUpdate,
+	   				ChangeNodes: []types.NodeID{m.node.ID},
 
-				Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
-				NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
-			},
-			m.node.ID)
-	}
+	   				Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
+	   				NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
+	   			},
+	   			m.node.ID)
+	   	}
 
-	if err := m.h.db.DB.Save(m.node).Error; err != nil {
-		m.errf(err, "Failed to persist/update node in the database")
-		http.Error(m.w, "", http.StatusInternalServerError)
-		mapResponseEndpointUpdates.WithLabelValues("error").Inc()
+	   	if err := m.h.db.DB.Save(m.node).Error; err != nil {
+	   		m.errf(err, "Failed to persist/update node in the database")
+	   		http.Error(m.w, "", http.StatusInternalServerError)
+	   		mapResponseEndpointUpdates.WithLabelValues("error").Inc()
 
-		return
-	}
+	   		return
+	   	}
 
-	ctx := types.NotifyCtx(context.Background(), "poll-nodeupdate-peers-patch", m.node.Hostname)
-	m.h.nodeNotifier.NotifyWithIgnore(
-		ctx,
-		types.StateUpdate{
-			Type:        types.StatePeerChanged,
-			ChangeNodes: []types.NodeID{m.node.ID},
-			Message:     "called from handlePoll -> update",
+	   	ctx := types.NotifyCtx(context.Background(), "poll-nodeupdate-peers-patch", m.node.Hostname)
+	   	m.h.nodeNotifier.NotifyWithIgnore(
+	   		ctx,
+	   		types.StateUpdate{
+	   			Type:        types.StatePeerChanged,
+	   			ChangeNodes: []types.NodeID{m.node.ID},
+	   			Message:     "called from handlePoll -> update",
 
-			Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
-			NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
-		},
-		m.node.ID)
+	   			Namespace:     m.node.Namespace,     // __CYLONIX_ADD__
+	   			NetworkDomain: m.node.NetworkDomain, // __CYLONIX_ADD__
+	   		},
+	   		m.node.ID)
 
-	m.w.WriteHeader(http.StatusOK)
-	mapResponseEndpointUpdates.WithLabelValues("ok").Inc()
+	   	m.w.WriteHeader(http.StatusOK)
+	   	mapResponseEndpointUpdates.WithLabelValues("ok").Inc()
 
-	return
-}
+	   	return
+	   }
 
-// handleSaveNode saves node updates in the maprequest _streaming_
-// path and is mostly the same code as in handleEndpointUpdate.
-// It is not attempted to be deduplicated since it will go away
-// when we stop supporting older than 68 which removes updates
-// when the node is streaming.
-func (m *mapSession) handleSaveNode() error {
-	m.tracef("saving node update from stream session")
+	   // handleSaveNode saves node updates in the maprequest _streaming_
+	   // path and is mostly the same code as in handleEndpointUpdate.
+	   // It is not attempted to be deduplicated since it will go away
+	   // when we stop supporting older than 68 which removes updates
+	   // when the node is streaming.
+	   func (m *mapSession) handleSaveNode() error {
+	   	m.tracef("saving node update from stream session")
 
-	change := m.node.PeerChangeFromMapRequest(m.req)
+	   	change := m.node.PeerChangeFromMapRequest(m.req)
 
-	// A stream is being set up, the node is Online
-	online := true
-	change.Online = &online
+	   	// A stream is being set up, the node is Online
+	   	online := true
+	   	change.Online = &online
 
-	m.node.ApplyPeerChange(&change)
+	   	m.node.ApplyPeerChange(&change)
 
-	sendUpdate, routesChanged := hostInfoChanged(m.node.Hostinfo, m.req.Hostinfo)
-	m.node.Hostinfo = m.req.Hostinfo
+	   	sendUpdate, routesChanged := hostInfoChanged(m.node.Hostinfo, m.req.Hostinfo)
+	   	m.node.Hostinfo = m.req.Hostinfo
 
-	// If there is no changes and nothing to save,
-	// return early.
-	if peerChangeEmpty(change) || !sendUpdate {
-		return nil
-	}
+	   	// If there is no changes and nothing to save,
+	   	// return early.
+	   	if peerChangeEmpty(change) || !sendUpdate {
+	   		return nil
+	   	}
 
-	// Check if the Hostinfo of the node has changed.
-	// If it has changed, check if there has been a change to
-	// the routable IPs of the host and update update them in
-	// the database. Then send a Changed update
-	// (containing the whole node object) to peers to inform about
-	// the route change.
-	// If the hostinfo has changed, but not the routes, just update
-	// hostinfo and let the function continue.
-	if routesChanged {
-		var err error
-		_, err = m.h.db.SaveNodeRoutes(m.node)
-		if err != nil {
-			return err
-		}
+	   	// Check if the Hostinfo of the node has changed.
+	   	// If it has changed, check if there has been a change to
+	   	// the routable IPs of the host and update update them in
+	   	// the database. Then send a Changed update
+	   	// (containing the whole node object) to peers to inform about
+	   	// the route change.
+	   	// If the hostinfo has changed, but not the routes, just update
+	   	// hostinfo and let the function continue.
+	   	if routesChanged {
+	   		var err error
+	   		_, err = m.h.db.SaveNodeRoutes(m.node)
+	   		if err != nil {
+	   			return err
+	   		}
 
-		// __BEGIN_CYLONIX_MOD__
-		pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
-		if err != nil {
-			m.errf(err, "Could not get ACL policy")
-			return err
-		}
-		// __END_CYLONIX_MOD__
+	   		// __BEGIN_CYLONIX_MOD__
+	   		pol, err := m.h.ACLPolicy(&m.node.Namespace, &m.node.NetworkDomain)
+	   		if err != nil {
+	   			m.errf(err, "Could not get ACL policy")
+	   			return err
+	   		}
+	   		// __END_CYLONIX_MOD__
 
-		if pol != nil {
-			// update routes with peer information
-			err := m.h.db.EnableAutoApprovedRoutes(pol, m.node)
-			if err != nil {
-				return err
-			}
-		}
-	}
+	   		if pol != nil {
+	   			// update routes with peer information
+	   			err := m.h.db.EnableAutoApprovedRoutes(pol, m.node)
+	   			if err != nil {
+	   				return err
+	   			}
+	   		}
+	   	}
 
-	if err := m.h.db.DB.Save(m.node).Error; err != nil {
-		return err
-	}
+	   	if err := m.h.db.DB.Save(m.node).Error; err != nil {
+	   		return err
+	   	}
 
-	ctx := types.NotifyCtx(context.Background(), "pre-68-update-while-stream", m.node.Hostname)
-	m.h.nodeNotifier.NotifyWithIgnore(
-		ctx,
-		types.StateUpdate{
-			Type:        types.StatePeerChanged,
-			ChangeNodes: []types.NodeID{m.node.ID},
-			Message:     "called from handlePoll -> pre-68-update-while-stream",
+	   	ctx := types.NotifyCtx(context.Background(), "pre-68-update-while-stream", m.node.Hostname)
+	   	m.h.nodeNotifier.NotifyWithIgnore(
+	   		ctx,
+	   		types.StateUpdate{
+	   			Type:        types.StatePeerChanged,
+	   			ChangeNodes: []types.NodeID{m.node.ID},
+	   			Message:     "called from handlePoll -> pre-68-update-while-stream",
 
-			Namespace:     m.node.Namespace,
-			NetworkDomain: m.node.NetworkDomain,
-		},
-		m.node.ID)
-*/
-// __END_CYLONIX_LEGACY_REMOVED__
+	   			Namespace:     m.node.Namespace,
+	   			NetworkDomain: m.node.NetworkDomain,
+	   		},
+	   		m.node.ID)
+	*/
+	// __END_CYLONIX_LEGACY_REMOVED__
 
 	_, err = m.w.Write(data)
 	if err != nil {

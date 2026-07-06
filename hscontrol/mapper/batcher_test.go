@@ -43,7 +43,7 @@ func (t *testBatcherWrapper) AddNode(id types.NodeID, c chan<- *tailcfg.MapRespo
 	// This ensures the NodeStore has correct online status for change processing
 	if t.state != nil {
 		// Use Connect to properly mark node online in NodeStore but don't send its changes
-		_ = t.state.Connect(id)
+		_, _ = t.state.Connect(id) // __CYLONIX_MOD__ Connect now also returns the connection generation
 	}
 
 	// First add the node to the real batcher
@@ -69,7 +69,7 @@ func (t *testBatcherWrapper) RemoveNode(id types.NodeID, c chan<- *tailcfg.MapRe
 	// This ensures the NodeStore has correct offline status when the change is processed
 	if t.state != nil {
 		// Use Disconnect to properly mark node offline in NodeStore but don't send its changes
-		_, _ = t.state.Disconnect(id)
+		_, _ = t.state.Disconnect(id, 0) // __CYLONIX_MOD__ gen 0 forces the disconnect (tests don't track sessions)
 	}
 
 	// Send the offline notification that poll.go would normally send

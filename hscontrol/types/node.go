@@ -165,6 +165,20 @@ type Node struct {
 
 	IsOnline *bool `gorm:"-"`
 
+	// __BEGIN_CYLONIX_ADD__ (backport of the upstream v0.29 poll-session
+	// accounting, upstream commit 759381ad; in-memory only, never persisted)
+	//
+	// SessionEpoch is a monotonic counter bumped by every State.Connect,
+	// identifying a poll session for logging.
+	SessionEpoch uint64 `gorm:"-"`
+	// ActiveSessions is a refcount of live poll sessions. State.Connect
+	// increments it; State.Disconnect decrements it and marks the node
+	// offline exactly when it reaches zero, so overlapping sessions
+	// (rapid reconnects, late teardowns) release in any order without
+	// stranding the node offline (or online).
+	ActiveSessions int `gorm:"-"`
+	// __END_CYLONIX_ADD__
+
 	// __BEGIN_CYLONIX_ADD__
 	// Cylonix multi-tenant extensions + per-node extras. The
 	// nodes_network_domain_given_name compound unique index is created as a

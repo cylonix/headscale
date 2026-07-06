@@ -533,17 +533,34 @@ func (s *State) DeleteNode(node types.NodeView) (change.Change, error) {
 }
 
 // Connect marks a node as connected and updates its primary routes in the state.
-func (s *State) Connect(id types.NodeID) []change.Change {
+//
+// __CYLONIX_MOD__ Connect acquires one live poll session and returns a
+// session epoch alongside the changes (backport of the upstream v0.29
+// ActiveSessions/SessionEpoch fix, upstream commit 759381ad). The caller
+// must release the session with exactly one Disconnect call once the
+// session ends (see poll.go); the node goes offline when its LAST live
+// session is released. Without this, a stale session teardown whose ~10s
+// reconnect grace expired just as the client reconnected would run
+// Disconnect AFTER the new session's Connect, clobbering IsOnline and
+// broadcasting NodeOffline — peers then saw the node offline until its
+// next reconnect even though its poll stream was alive.
+func (s *State) Connect(id types.NodeID) ([]change.Change, uint64) {
 	// CRITICAL FIX: Update the online status in NodeStore BEFORE creating change notification
 	// This ensures that when the NodeCameOnline change is distributed and processed by other nodes,
 	// the NodeStore already reflects the correct online status for full map generation.
 	// now := time.Now()
+	var epoch uint64 // __CYLONIX_ADD__
 	node, ok := s.nodeStore.UpdateNode(id, func(n *types.Node) {
+		// __BEGIN_CYLONIX_ADD__
+		n.SessionEpoch++
+		epoch = n.SessionEpoch
+		n.ActiveSessions++
+		// __END_CYLONIX_ADD__
 		n.IsOnline = ptr.To(true)
 		// n.LastSeen = ptr.To(now)
 	})
 	if !ok {
-		return nil
+		return nil, 0
 	}
 
 	c := []change.Change{change.NodeOnlineFor(node)}
@@ -559,14 +576,39 @@ func (s *State) Connect(id types.NodeID) []change.Change {
 		c = append(c, change.NodeAdded(id))
 	}
 
-	return c
+	return c, epoch
 }
 
 // Disconnect marks a node as disconnected and updates its primary routes in the state.
-func (s *State) Disconnect(id types.NodeID) ([]change.Change, error) {
-	now := time.Now()
+//
+// __CYLONIX_MOD__ Disconnect releases one poll session previously acquired
+// by Connect and marks the node offline only when that was its last live
+// session (backport of the upstream v0.29 ActiveSessions fix). Sessions
+// are counted rather than compared by epoch: overlapping sessions for one
+// node — a rapid reconnect, or a cancelled map request whose handler ran
+// late — release in any order without stranding the node. An
+// epoch-equality gate here loses when a dead-on-arrival session's Connect
+// steals the latest epoch and its cleanup skips the release: the surviving
+// session's Disconnect would then be rejected as stale and the node stays
+// online forever. The count check and the IsOnline write share a
+// NodeStore.UpdateNode closure, making them atomic against concurrent
+// connects. epoch identifies the session for logging only.
+func (s *State) Disconnect(id types.NodeID, epoch uint64) ([]change.Change, error) {
+	// __BEGIN_CYLONIX_MOD__
+	var wentOffline bool
 
 	node, ok := s.nodeStore.UpdateNode(id, func(n *types.Node) {
+		if n.ActiveSessions > 0 {
+			n.ActiveSessions--
+		}
+
+		if n.ActiveSessions > 0 {
+			return
+		}
+
+		wentOffline = true
+
+		now := time.Now()
 		n.LastSeen = ptr.To(now)
 		// NodeStore is the source of truth for all node state including online status.
 		n.IsOnline = ptr.To(false)
@@ -575,6 +617,17 @@ func (s *State) Disconnect(id types.NodeID) ([]change.Change, error) {
 	if !ok {
 		return nil, fmt.Errorf("node not found: %d", id)
 	}
+
+	if !wentOffline {
+		log.Debug().
+			Uint64("node.id", id.Uint64()).
+			Uint64("disconnect_epoch", epoch).
+			Int("active_sessions", node.ActiveSessions()).
+			Msg("session released, other sessions keep node online")
+
+		return nil, nil
+	}
+	// __END_CYLONIX_MOD__
 
 	log.Info().Uint64("node.id", id.Uint64()).Str("node.name", node.Hostname()).Msg("Node disconnected")
 
@@ -714,8 +767,8 @@ func (s *State) ListPeers(nodeID types.NodeID, peerIDs ...types.NodeID) views.Sl
 	requesting, requestingOk := s.nodeStore.GetNode(nodeID)
 
 	var (
-		policyPeers     views.Slice[types.NodeView]
-		gotPolicyPeers  bool
+		policyPeers    views.Slice[types.NodeView]
+		gotPolicyPeers bool
 	)
 	if requestingOk && requesting.Valid() {
 		tailnet := requesting.NetworkDomain()
@@ -778,7 +831,6 @@ func (s *State) ListPeers(nodeID types.NodeID, peerIDs ...types.NodeID) views.Sl
 	}
 	return views.SliceOf(out)
 }
-
 
 // filterPeersByID returns the subset of nodes from the store whose IDs are
 // in peerIDs. Extracted from the previous inlined ListPeers code path so

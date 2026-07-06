@@ -109,6 +109,8 @@ var _NodeCloneNeedsRegeneration = Node(struct {
 	UpdatedAt       time.Time
 	DeletedAt       *time.Time
 	IsOnline        *bool
+	SessionEpoch    uint64       // __CYLONIX_ADD__
+	ActiveSessions  int          // __CYLONIX_ADD__
 	IsWireguardOnly *bool        // __CYLONIX_ADD__
 	StableID        *string      // __CYLONIX_ADD__
 	Namespace       string       // __CYLONIX_ADD__
