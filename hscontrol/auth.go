@@ -446,6 +446,22 @@ func (h *Headscale) waitForFollowup(
 				// registration is expired in the cache, instruct the client to try a new registration
 				return h.reqToNewRegisterResponse(req, machineKey)
 			}
+
+			// The followup poll is only authenticated by the auth ID in the
+			// URL, so fail closed unless the Noise session asking for the
+			// result was started with the same machine key that opened the
+			// registration. [State.HandleNodeFromAuthPath] resolves the node
+			// from the cached [types.RegistrationData.MachineKey], so the two
+			// match on the normal path. [Headscale.handleRegister] and
+			// [Headscale.handleLogout] apply the same check.
+			if node.MachineKey != machineKey {
+				return nil, NewHTTPError(
+					http.StatusUnauthorized,
+					"node exists with a different machine key",
+					nil,
+				)
+			}
+
 			return nodeToRegisterResponse(node.View(), h.cfg), nil
 		}
 	}
