@@ -1712,8 +1712,14 @@ func (s *State) applyAuthNodeUpdate(params authNodeUpdateParams) (types.NodeView
 			} else {
 				node.Expiry = params.RegEntry.Node.Expiry
 			}
+		case isTagged && node.IsExpired():
+			// Tagged → Tagged, but carrying a stale PAST expiry from an older
+			// headscale's logout stamp (#3371). Tagged nodes never expire, so
+			// clear it; a deliberate future expiry has IsExpired() == false and
+			// falls through to the no-op below.
+			node.Expiry = nil
 		}
-		// Tagged → Tagged: keep existing expiry (nil) - no action needed
+		// Tagged → Tagged with no stale expiry: keep existing expiry - no action.
 	})
 
 	if !ok {
@@ -2350,6 +2356,13 @@ func (s *State) HandleNodeFromPreAuthKey(
 			// User-owned nodes update expiry from the client request.
 			if !node.IsTagged() {
 				node.Expiry = &regReq.Expiry
+			} else if node.IsExpired() {
+				// #3371: a tagged node must never carry key expiry. Clear a
+				// stale PAST expiry left by a logout (older headscale) so
+				// re-auth is not permanently blocked. A deliberate future
+				// expiry (headscale nodes expire) has IsExpired() == false and
+				// is left untouched.
+				node.Expiry = nil
 			}
 		})
 
