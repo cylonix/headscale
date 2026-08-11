@@ -2,6 +2,7 @@ package mapper
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"sort"
 	"time"
@@ -123,10 +124,22 @@ func (b *MapResponseBuilder) WithDomain() *MapResponseBuilder {
 	if b.mapper.cfg != nil && b.mapper.cfg.NodeHandler != nil {
 		if node, ok := b.mapper.state.GetNodeByID(b.nodeID); ok && node.Owner().Valid() {
 			owner := node.Owner().AsStruct()
-			if nd, err := b.mapper.cfg.NodeHandler.NetworkDomain(owner); err == nil && len(nd) > 0 {
+			nd, err := b.mapper.cfg.NodeHandler.NetworkDomain(owner)
+			if err != nil {
+				// A transient lookup failure must fail the build rather
+				// than silently downgrade to the server default domain:
+				// Domain feeds the client-side l2relay segment hash, so
+				// serving the wrong one flips segment IDs across the
+				// tenant's LAN.
+				b.addError(fmt.Errorf("resolving network domain: %w", err))
+				return b
+			}
+			if len(nd) > 0 {
 				b.resp.Domain = string(nd)
 				return b
 			}
+			// Empty without error: the tenant genuinely has no network
+			// domain configured — fall through to the server default.
 		}
 	}
 	b.resp.Domain = b.mapper.cfg.Domain()

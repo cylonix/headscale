@@ -86,6 +86,9 @@ func (b *LockFreeBatcher) AddNode(id types.NodeID, c chan<- *tailcfg.MapResponse
 	select {
 	case c <- initialMap:
 		// Success
+		// __CYLONIX_ADD__ Initial full map enqueued: open the readiness
+		// gate and flush any updates buffered while it was generated.
+		newEntry.markReady()
 	case <-time.After(5 * time.Second):
 		log.Error().Uint64("node.id", id.Uint64()).Err(fmt.Errorf("timeout")).Msg("Initial map send timeout")
 		log.Debug().Caller().Uint64("node.id", id.Uint64()).Dur("timeout.duration", 5*time.Second).
@@ -496,7 +499,58 @@ type connectionEntry struct {
 	created  time.Time
 	lastUsed atomic.Int64 // Unix timestamp of last successful send
 	closed   atomic.Bool  // Indicates if this connection has been closed
+
+	// __BEGIN_CYLONIX_ADD__ Readiness gate closing the empty-netmap race.
+	// AddNode registers the connection BEFORE generating the initial full
+	// map (intentional, so the node cannot miss an update sent meanwhile).
+	// But a broadcast delivered in that window is enqueued AHEAD of the
+	// full map, and an origin-self change becomes a bare selfMapResponse
+	// (no peers/DERPMap/Domain/UserProfiles) that reaches the client as
+	// the FIRST response of a fresh session, where the per-session caches
+	// it relies on are still empty — wiping peers, DNS, and DERP client
+	// side. Until the initial map has been enqueued, send() buffers
+	// updates here; markReady() flushes them, in order, behind it.
+	ready     atomic.Bool
+	pendingMu sync.Mutex
+	pending   []*tailcfg.MapResponse
+	// __END_CYLONIX_ADD__
 }
+
+// __BEGIN_CYLONIX_ADD__
+// maxPendingPreReady bounds the pre-ready buffer. The gate is only closed
+// for the ~100-200ms it takes to generate the initial full map, so real
+// occupancy is 0-2 entries; overflow means something is badly wedged and
+// the connection is dropped so the client reconnects cleanly.
+const maxPendingPreReady = 32
+
+// markReady opens the gate after the initial full map has been enqueued and
+// flushes, in FIFO order, any updates buffered while it was generated.
+// Holding pendingMu across both the flush and the ready flip keeps ordering
+// strict: send() re-checks ready under the same lock, so everything buffered
+// lands behind the initial map and ahead of any later direct send. Buffered
+// updates may duplicate state already baked into the full map; duplicates
+// are harmless (netmap application is idempotent), drops are not.
+func (entry *connectionEntry) markReady() {
+	entry.pendingMu.Lock()
+	defer entry.pendingMu.Unlock()
+
+	for _, data := range entry.pending {
+		if entry.closed.Load() {
+			break
+		}
+		select {
+		case entry.c <- data:
+			entry.lastUsed.Store(time.Now().Unix())
+		case <-time.After(50 * time.Millisecond):
+			log.Warn().Str("conn.id", entry.id).
+				Msg("markReady: dropping buffered update because channel is blocked")
+		}
+	}
+	entry.pending = nil
+	entry.ready.Store(true)
+}
+
+// __END_CYLONIX_ADD__
 
 // multiChannelNodeConn manages multiple concurrent connections for a single node.
 type multiChannelNodeConn struct {
@@ -676,6 +730,31 @@ func (entry *connectionEntry) send(data *tailcfg.MapResponse) error {
 	if entry.closed.Load() {
 		return fmt.Errorf("connection %s: %w", entry.id, errConnectionClosed)
 	}
+
+	// __BEGIN_CYLONIX_ADD__ While the initial full map has not been
+	// enqueued yet, buffer updates instead of sending so nothing jumps the
+	// queue ahead of it (see the readiness-gate comment on the struct).
+	// Buffering reports success: a gated delivery must NOT look like a
+	// failed connection to multiChannelNodeConn.send, which removes
+	// connections that fail.
+	if !entry.ready.Load() {
+		entry.pendingMu.Lock()
+		// Re-check under the lock: markReady may have flushed concurrently.
+		if !entry.ready.Load() {
+			if len(entry.pending) >= maxPendingPreReady {
+				entry.pendingMu.Unlock()
+				return fmt.Errorf("connection %s: pre-ready buffer overflow", entry.id)
+			}
+			entry.pending = append(entry.pending, data)
+			entry.pendingMu.Unlock()
+			mapResponsePreReadyBuffered.Inc()
+			log.Debug().Caller().Str("conn.id", entry.id).
+				Msg("send: buffered update because initial full map not yet enqueued")
+			return nil
+		}
+		entry.pendingMu.Unlock()
+	}
+	// __END_CYLONIX_ADD__
 
 	// Use a short timeout to detect stale connections where the client isn't reading the channel.
 	// This is critical for detecting Docker containers that are forcefully terminated

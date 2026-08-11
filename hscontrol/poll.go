@@ -42,6 +42,11 @@ type mapSession struct {
 	keepAlive       time.Duration
 	keepAliveTicker *time.Ticker
 
+	// __CYLONIX_ADD__ Set once the first full map (non-nil DERPMap) has
+	// been written on this stream; guards the first-response invariant in
+	// serveLongPoll. Only touched by the serveLongPoll goroutine.
+	wroteFirstFull bool
+
 	node *types.Node
 	w    http.ResponseWriter
 }
@@ -277,6 +282,24 @@ func (m *mapSession) serveLongPoll() {
 				m.tracef("update channel closed, streaming session is likely being replaced")
 				return
 			}
+
+			// __BEGIN_CYLONIX_ADD__ First-response invariant (defense in
+			// depth behind the batcher readiness gate): the first response
+			// written on a stream must be the initial full map. Its DERPMap
+			// is always set, while self/patch responses never set one; a
+			// patch slipping ahead of the full map hits empty client-side
+			// session caches and wipes peers/DERP/DNS. Dropping is safe:
+			// AddNode returned before this loop started, so the initial
+			// full map is already queued behind the dropped update.
+			if !m.wroteFirstFull && !update.KeepAlive {
+				if update.DERPMap == nil {
+					m.infof("dropping update queued ahead of the initial full map")
+					mapResponseSent.WithLabelValues("dropped", "pre-full-map").Inc()
+					continue
+				}
+				m.wroteFirstFull = true
+			}
+			// __END_CYLONIX_ADD__
 
 			if err := m.writeMap(update); err != nil {
 				m.errf(err, "cannot write update to client")
