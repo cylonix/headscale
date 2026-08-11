@@ -188,6 +188,13 @@ type RegisterNode struct {
 	Node       Node
 	Registered chan *Node
 	closed     *atomic.Bool
+	// __BEGIN_CYLONIX_ADD__
+	// FollowUp is the auth URL last issued for this in-flight registration.
+	// Cylonix re-uses it across fresh register requests from the same machine
+	// so a node key rotation does not orphan the login session the user may
+	// already have open in a browser (pre-v0.28 behavior).
+	FollowUp string
+	// __END_CYLONIX_ADD__
 }
 
 func NewRegisterNode(node Node) RegisterNode {

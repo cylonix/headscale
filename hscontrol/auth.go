@@ -350,8 +350,18 @@ func (h *Headscale) waitForFollowup(
 		if node != nil {
 			return nodeToRegisterResponse(node.View(), h.cfg), nil
 		}
-		// Auth still pending. Re-issue the same AuthURL so the client retries.
-		return &tailcfg.RegisterResponse{AuthURL: req.Followup}, nil
+		// Auth still pending. Do not blindly echo the client-quoted followup
+		// URL: re-validate it with the manager via NodeHandler.AuthURL, which
+		// returns the same URL while its login session is still valid and
+		// mints a fresh one when it is not (expired or cleaned up). The
+		// machine's registration cache entry is refreshed with the result so
+		// a later fresh register (e.g. after a node key rotation) re-uses the
+		// same session (pre-v0.28 behavior).
+		authURL, err := h.reissueFollowupAuthURL(req, machineKey, logFn)
+		if err != nil {
+			return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate auth URL", err)
+		}
+		return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
 	}
 	// __END_CYLONIX_ADD__
 
@@ -381,6 +391,75 @@ func (h *Headscale) waitForFollowup(
 	// if the follow-up registration isn't found anymore, instruct the client to try a new registration
 	return h.reqToNewRegisterResponse(req, machineKey)
 }
+
+// __BEGIN_CYLONIX_ADD__
+// reissueFollowupAuthURL revalidates a pending login's auth URL with the
+// NodeHandler (cylonix-manager). While the client-quoted session is valid the
+// same URL is returned; if the session has expired or been cleaned up a fresh
+// one is minted. The machine's registration cache entry is refreshed with the
+// request's current node identity and the resulting URL so that a later fresh
+// register (e.g. after a node key rotation) re-uses the same login session.
+// Restores the pre-v0.28 machine-key-keyed registration cache behavior.
+func (h *Headscale) reissueFollowupAuthURL(
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
+	logFn func(string),
+) (string, error) {
+	regID, ok := h.state.FindRegistrationIDByMachineKey(machineKey)
+	var entry *types.RegisterNode
+	if ok {
+		entry, ok = h.state.GetRegistrationCacheEntry(regID)
+	}
+	if !ok || entry == nil {
+		// No in-flight entry for this machine (e.g. the server restarted):
+		// re-create one so the completion path (registerNodeForOIDCCallback)
+		// can find it once the user finishes signing in.
+		newRegID, err := types.NewRegistrationID()
+		if err != nil {
+			return "", fmt.Errorf("generating registration ID: %w", err)
+		}
+		hostname := util.EnsureHostname(
+			req.Hostinfo,
+			machineKey.String(),
+			req.NodeKey.String(),
+		)
+		hostinfo := cmp.Or(req.Hostinfo, &tailcfg.Hostinfo{})
+		hostinfo.Hostname = hostname
+		newEntry := types.NewRegisterNode(types.Node{
+			Hostname:   hostname,
+			MachineKey: machineKey,
+			NodeKey:    req.NodeKey,
+			Hostinfo:   hostinfo,
+			LastSeen:   ptr.To(time.Now()),
+		})
+		regID, entry = newRegID, &newEntry
+		logFn("re-created registration cache entry for followup")
+	}
+
+	// Refresh the in-flight node with the request's current identity so the
+	// completion path registers the key the client is actually using.
+	entry.Node.NodeKey = req.NodeKey
+	if req.Hostinfo != nil {
+		entry.Node.Hostinfo = req.Hostinfo
+		if req.Hostinfo.Hostname != "" {
+			entry.Node.Hostname = req.Hostinfo.Hostname
+		}
+	}
+	entry.Node.LastSeen = ptr.To(time.Now())
+
+	authURL, err := h.resolveAuthURL(&entry.Node, regID, req.Followup)
+	if err != nil {
+		return "", err
+	}
+	entry.FollowUp = authURL
+	h.state.SetRegistrationCacheEntry(regID, *entry)
+	if authURL != req.Followup {
+		logFn("followup auth URL replaced: " + authURL)
+	}
+	return authURL, nil
+}
+
+// __END_CYLONIX_ADD__
 
 // reqToNewRegisterResponse refreshes the registration flow by creating a new
 // registration ID and returning the corresponding AuthURL so the client can
@@ -560,6 +639,43 @@ func (h *Headscale) handleRegisterInteractive(
 	}
 	hostinfo.Hostname = hostname
 
+	// __BEGIN_CYLONIX_ADD__
+	// If this machine already has an in-flight registration, re-use its login
+	// session instead of minting a new one — the client may have rotated its
+	// node key after receiving the auth URL (restores pre-v0.28 behavior).
+	// NodeHandler.AuthURL validates the remembered session, updates its
+	// stored node key, and returns the same URL; if the session is gone a
+	// fresh one is minted under the same registration entry.
+	if h.cfg.NodeHandler != nil {
+		if regID, ok := h.state.FindRegistrationIDByMachineKey(machineKey); ok {
+			if entry, ok2 := h.state.GetRegistrationCacheEntry(regID); ok2 {
+				entry.Node.NodeKey = req.NodeKey
+				entry.Node.Hostname = hostname
+				entry.Node.Hostinfo = hostinfo
+				entry.Node.LastSeen = ptr.To(time.Now())
+				if !req.Expiry.IsZero() {
+					entry.Node.Expiry = &req.Expiry
+				}
+				authURL, err := h.resolveAuthURL(&entry.Node, regID, entry.FollowUp)
+				if err == nil {
+					entry.FollowUp = authURL
+					h.state.SetRegistrationCacheEntry(regID, *entry)
+					log.Info().
+						Str("machine.key", machineKey.ShortString()).
+						Str("node.key", req.NodeKey.ShortString()).
+						Msgf("Re-using in-flight registration %s (node key may have rotated)", regID)
+					return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
+				}
+				log.Warn().
+					Err(err).
+					Str("machine.key", machineKey.ShortString()).
+					Str("node.key", req.NodeKey.ShortString()).
+					Msg("Failed to re-use in-flight registration; starting a new one")
+			}
+		}
+	}
+	// __END_CYLONIX_ADD__
+
 	nodeToRegister := types.NewRegisterNode(
 		types.Node{
 			Hostname:   hostname,
@@ -586,6 +702,10 @@ func (h *Headscale) handleRegisterInteractive(
 	if err != nil {
 		return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate auth URL", err)
 	}
+	// Remember the issued URL so fresh registers from this machine (e.g.
+	// after a node key rotation) re-use the same login session.
+	nodeToRegister.FollowUp = authURL
+	h.state.SetRegistrationCacheEntry(registrationId, nodeToRegister)
 	return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
 	// __END_CYLONIX_MOD__
 }
