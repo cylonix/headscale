@@ -186,6 +186,31 @@ func TestNodeFQDN(t *testing.T) {
 			domain: "example.com",
 			want:   "test.example.com.",
 		},
+		// __BEGIN_CYLONIX_ADD__
+		// A node with a tenant network domain gets its FQDN under that
+		// domain, not the global base_domain.
+		{
+			name: "network-domain-overrides-base-domain",
+			node: Node{
+				GivenName: "test",
+				User: &User{
+					Name: "user",
+				},
+				NetworkDomain: "acme.cylonix.org",
+			},
+			domain: "local.cylonix.org",
+			want:   "test.acme.cylonix.org.",
+		},
+		{
+			name: "network-domain-without-base-domain",
+			node: Node{
+				GivenName:     "test",
+				NetworkDomain: "acme.cylonix.org",
+			},
+			domain: "",
+			want:   "test.acme.cylonix.org.",
+		},
+		// __END_CYLONIX_ADD__
 	}
 
 	for _, tc := range tests {

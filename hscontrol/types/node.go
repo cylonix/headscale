@@ -719,6 +719,23 @@ func (node *Node) GetFQDN(baseDomain string) (string, error) {
 		)
 	}
 
+	// __BEGIN_CYLONIX_MOD__
+	// Per-tenant MagicDNS: a node's FQDN lives under the tenant's network
+	// domain (e.g. "node.acme.cylonix.org") rather than the global
+	// base_domain, so each tenant gets its own MagicDNS suffix (clients
+	// derive the suffix from the self node's name). This mod predates the
+	// v0.28 merge; the merge's GetFQDN rewrite (upstream c8376e44) reverted
+	// it to base_domain-only and every node came out as
+	// "node.<base_domain>".
+	if node.NetworkDomain != "" {
+		hostname = fmt.Sprintf(
+			"%s.%s.",
+			node.GivenName,
+			node.NetworkDomain,
+		)
+	}
+	// __END_CYLONIX_MOD__
+
 	if len(hostname) > MaxHostnameLength {
 		return "", fmt.Errorf(
 			"failed to create valid FQDN (%s): %w",

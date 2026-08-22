@@ -128,6 +128,17 @@ func generateDNSConfig(
 
 	dnsConfig := cfg.TailcfgDNSConfig.Clone()
 
+	// __BEGIN_CYLONIX_MOD__
+	// Add the tenant's network domain as a search domain so bare hostnames
+	// (e.g. "ssh mynode") expand to the per-tenant MagicDNS FQDN
+	// "mynode.<network_domain>". The global base_domain search domain alone
+	// cannot match tenant-scoped node names. Dropped by the v0.28 merge's
+	// generateDNSConfig rewrite; restored.
+	if nd := node.NetworkDomain(); nd != "" && !slices.Contains(dnsConfig.Domains, nd) {
+		dnsConfig.Domains = append(dnsConfig.Domains, nd)
+	}
+	// __END_CYLONIX_MOD__
+
 	addNextDNSMetadata(dnsConfig.Resolvers, node)
 
 	return dnsConfig
