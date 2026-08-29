@@ -36,6 +36,15 @@ var (
 	invalidDNSRegex = regexp.MustCompile("[^a-z0-9-.]+")
 )
 
+// __BEGIN_CYLONIX_ADD__
+// zeroUUIDStableID is the serialized nil UUID that legacy manager
+// registrations persisted as a node's stable ID before the device row ID
+// was guaranteed to be populated at write time. See the StableID sanity
+// guard in TailNode.
+const zeroUUIDStableID = "00000000-0000-0000-0000-000000000000"
+
+// __END_CYLONIX_ADD__
+
 // RouteFunc is a function that takes a node ID and returns a list of
 // netip.Prefixes representing the primary routes for that node.
 type RouteFunc func(id NodeID) []netip.Prefix
@@ -1399,9 +1408,18 @@ func (nv NodeView) TailNode(
 	// This __CYLONIX_MOD__ lived in mapper/tail.go before the v0.28 merge moved
 	// tail-node conversion into this file (upstream c8376e44), which reverted it
 	// to the upstream integer-only behavior and silently dropped the mod.
+	//
+	// Sanity-guard the stored value: legacy rows exist where registration
+	// persisted the all-zero UUID (device row ID not yet populated at write
+	// time), and several nodes share it. StableID must be unique per node —
+	// clients key peer-messaging conversations and peer resolution on it — so
+	// an empty or zero value falls back to the (unique) integer node ID.
+	// Expired nodes never re-register, so these rows never self-heal.
 	stableID := nv.ID().StableID()
 	if sv := nv.StableID(); sv.Valid() {
-		stableID = tailcfg.StableNodeID(sv.Get())
+		if s := strings.TrimSpace(sv.Get()); s != "" && s != zeroUUIDStableID {
+			stableID = tailcfg.StableNodeID(s)
+		}
 	}
 	// __END_CYLONIX_ADD__
 
