@@ -334,10 +334,18 @@ func (h *Headscale) waitForFollowup(
 	// __BEGIN_CYLONIX_ADD__
 	// Cylonix flow: when a NodeHandler is wired up, the followup URL is the
 	// cylonix-manager UI login form (<base>/login/<sessionID>) — not the
-	// upstream <base>/register/<registrationID> form. The cylonix design is
-	// poll-and-backoff: server returns the same AuthURL while auth is still
-	// pending, client retries; server returns the registered RegisterResponse
-	// once NodeHandler.AuthStatus reports the user has completed sign-in.
+	// upstream <base>/register/<registrationID> form.
+	//
+	// Long-poll: park the followup request until NodeHandler.AuthStatus
+	// reports the user has completed sign-in, mirroring the upstream
+	// reg.Registered channel wait below. The previous poll-and-backoff
+	// design answered every followup RegisterReq immediately with the same
+	// AuthURL, so after the user confirmed the session the client only
+	// found out on its NEXT ~1-2 s poll — 0.6-2 s of the measured
+	// registration latency (REG_TO_RUNNING_LATENCY.md item A). The client
+	// side (WaitLoginURL) is built for long-held followup requests. On
+	// timeout we fall back to reissuing the AuthURL exactly as before, so
+	// a slow login degrades to the old behavior, never worse.
 	if h.cfg.NodeHandler != nil {
 		logFn := func(msg string) {
 			log.Debug().
@@ -345,25 +353,54 @@ func (h *Headscale) waitForFollowup(
 				Str("followup", req.Followup).
 				Msg(msg)
 		}
-		node, err := h.checkAuthStatus(nil, machineKey, req, logFn)
-		if err != nil {
-			return nil, NewHTTPError(http.StatusInternalServerError, "auth status check failed", err)
+
+		const (
+			followupHold         = 30 * time.Second
+			followupPollInterval = 300 * time.Millisecond
+		)
+		deadline := time.NewTimer(followupHold)
+		defer deadline.Stop()
+		ticker := time.NewTicker(followupPollInterval)
+		defer ticker.Stop()
+
+		for {
+			node, err := h.checkAuthStatus(nil, machineKey, req, logFn)
+			if err != nil {
+				// Surface the wrapped cause; the client only ever sees
+				// the opaque "auth status check failed" string.
+				log.Error().
+					Err(err).
+					Str("machine_key", machineKey.ShortString()).
+					Str("node_key", req.NodeKey.ShortString()).
+					Str("followup", req.Followup).
+					Msg("auth status check failed")
+				return nil, NewHTTPError(http.StatusInternalServerError, "auth status check failed", err)
+			}
+			if node != nil {
+				return nodeToRegisterResponse(node.View(), h.cfg), nil
+			}
+
+			select {
+			case <-ctx.Done():
+				// Client went away; it will re-send a followup request.
+				return nil, NewHTTPError(http.StatusRequestTimeout, "registration wait canceled", ctx.Err())
+			case <-deadline.C:
+				// Auth still pending after the hold. Do not blindly echo
+				// the client-quoted followup URL: re-validate it with the
+				// manager via NodeHandler.AuthURL, which returns the same
+				// URL while its login session is still valid and mints a
+				// fresh one when it is not (expired or cleaned up). The
+				// machine's registration cache entry is refreshed with the
+				// result so a later fresh register (e.g. after a node key
+				// rotation) re-uses the same session (pre-v0.28 behavior).
+				authURL, err := h.reissueFollowupAuthURL(req, machineKey, logFn)
+				if err != nil {
+					return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate auth URL", err)
+				}
+				return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
+			case <-ticker.C:
+			}
 		}
-		if node != nil {
-			return nodeToRegisterResponse(node.View(), h.cfg), nil
-		}
-		// Auth still pending. Do not blindly echo the client-quoted followup
-		// URL: re-validate it with the manager via NodeHandler.AuthURL, which
-		// returns the same URL while its login session is still valid and
-		// mints a fresh one when it is not (expired or cleaned up). The
-		// machine's registration cache entry is refreshed with the result so
-		// a later fresh register (e.g. after a node key rotation) re-uses the
-		// same session (pre-v0.28 behavior).
-		authURL, err := h.reissueFollowupAuthURL(req, machineKey, logFn)
-		if err != nil {
-			return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate auth URL", err)
-		}
-		return &tailcfg.RegisterResponse{AuthURL: authURL}, nil
 	}
 	// __END_CYLONIX_ADD__
 
@@ -743,33 +780,35 @@ func (h *Headscale) refreshNodeKeyAndExpiry(node *types.Node, newKey key.NodePub
 		Str("old_node_key", oldKey.ShortString()).
 		Msg("node key and expiry refresh")
 
+	// __CYLONIX_ADD__ per-step timings: the whole refresh was measured at
+	// 1.5-2.2 s in production (REG_TO_RUNNING_LATENCY.md item C) and the
+	// suspects are row-lock contention with concurrent full-row persists.
+	start := time.Now()
+	var rotateDur, storeDur, keyDur, expiryDur time.Duration
+
 	if h.cfg.NodeHandler != nil {
 		if err := h.cfg.NodeHandler.RotateNodeKey(node, newKey); err != nil {
 			logNodeError(node, err, "failed to rotate node key")
 			return err
 		}
 	}
+	rotateDur = time.Since(start) // __CYLONIX_ADD__
 
 	// __BEGIN_CYLONIX_MOD__ h.db is gone in v0.28; route through state.DB().
-	err := h.state.DB().Write(func(tx *gorm.DB) error {
-		return db.NodeSetNodeKey(tx, node, newKey)
-	})
-	if err != nil {
-		logNodeError(node, err, "failed to update node key in the database")
-		return err
-	}
-	// Also refresh the in-memory NodeStore so subsequent NoisePollNetMap
-	// lookups by the new node_key succeed. db.NodeSetNodeKey only writes
-	// the headscale `nodes` row; without this update the NodeStore index
-	// nodesByNodeKey still maps the OLD key, and the noise poll endpoint
-	// returns 404 for the rotated client.
 	//
-	// The expiry MUST be updated here too: the netmap (and thus the self
-	// node's KeyExpiry the client renders) is built from the NodeStore
-	// NodeView, not the DB row. Updating only the DB (NodeSetExpiry below)
-	// left the NodeStore — and so the netmap — with the OLD expiry, so after
-	// reauth the client kept warning "key expires in N days" forever even
-	// though the admin UI (which reads the DB) showed the new expiry.
+	// Update the NodeStore BEFORE the database. The NodeStore is the source
+	// of truth for concurrent full-row persists (persistNodeToDB from
+	// Disconnect/UpdateNodeFromMapRequest snapshots the store node and
+	// Updates() every column, node_key included). With the DB written first,
+	// a session teardown racing this rotation persisted its pre-rotation
+	// snapshot AFTER NodeSetNodeKey committed and reverted node_key in the
+	// DB while the store held the new key — fresh logins then failed with
+	// "auth status check failed" (see AUTH_STATUS_CHECK_FAILURE.md).
+	//
+	// The store update must also cover the netmap-visible fields: the self
+	// node's KeyExpiry the client renders is built from the NodeStore
+	// NodeView, not the DB row, and the nodesByNodeKey index must map the
+	// NEW key or the noise poll endpoint 404s the rotated client.
 	if _, ok := h.state.UpdateNode(node.ID, func(n *types.Node) {
 		n.NodeKey = newKey
 		if newExpiry != nil {
@@ -782,13 +821,33 @@ func (h *Headscale) refreshNodeKeyAndExpiry(node *types.Node, newKey key.NodePub
 			Str("new_node_key", newKey.ShortString()).
 			Msg("NodeStore update after key rotation failed: node not in store")
 	}
+	storeDur = time.Since(start) - rotateDur // __CYLONIX_ADD__
+	err := h.state.DB().Write(func(tx *gorm.DB) error {
+		return db.NodeSetNodeKey(tx, node, newKey)
+	})
+	if err != nil {
+		logNodeError(node, err, "failed to update node key in the database")
+		return err
+	}
+	keyDur = time.Since(start) - rotateDur - storeDur // __CYLONIX_ADD__
 	if newExpiry != nil {
-		err = h.state.DB().NodeSetExpiry(node.ID, *newExpiry)
+		err = h.state.DB().NodeSetExpiry(node.ID, newExpiry)
 		if err != nil {
 			logNodeError(node, err, "failed to update expiry in the database")
 			return err
 		}
 	}
+	// __BEGIN_CYLONIX_ADD__
+	expiryDur = time.Since(start) - rotateDur - storeDur - keyDur
+	log.Info().
+		Uint64("node.id", node.ID.Uint64()).
+		Dur("rotate_node_key", rotateDur).
+		Dur("nodestore_update", storeDur).
+		Dur("db_node_key", keyDur).
+		Dur("db_expiry", expiryDur).
+		Dur("total", time.Since(start)).
+		Msg("node key and expiry refresh timing")
+	// __END_CYLONIX_ADD__
 	// __END_CYLONIX_MOD__
 	return nil
 }
@@ -848,10 +907,11 @@ func (h *Headscale) checkAuthStatus(
 		// performs cache cleanup inside state.HandleNodeFromAuthPath, so the explicit
 		// delete-by-machine-key here is no longer reachable. The original behaviour was
 		// "drop the in-flight registration entry once the node finishes auth".
-		logInfo("Node registered after logged in.")
 		if err != nil {
+			logNodeError(node, err, "failed to refresh node key and/or expiry")
 			return nil, fmt.Errorf("failed to refresh node key and/or expiry: %w", err)
 		}
+		logInfo("Node registered after logged in.")
 		h.postRegistrationHandling(node) // __CYLONIX_ADD__ save routes on re-auth
 	} else {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -874,9 +934,26 @@ func (h *Headscale) checkAuthStatus(
 	}
 
 	// __BEGIN_CYLONIX_MOD__
-	node, err = h.state.DB().GetNodeByNodeKey(nodeKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get node after authorization: %w", err)
+	// Read back from the NodeStore, not the database. The store is updated
+	// synchronously by the rotation above and is the source of truth; the DB
+	// row can be transiently stale here when a concurrent full-row persist
+	// (e.g. a stale map session's Disconnect) wrote a pre-rotation snapshot
+	// over NodeSetNodeKey's targeted update. A DB read-by-new-key at that
+	// instant fails record-not-found and the whole login collapses with
+	// "auth status check failed" even though the rotation succeeded — the
+	// next store-derived persist self-heals the row.
+	if nv, ok := h.state.GetNodeByNodeKey(nodeKey); ok {
+		node = nv.AsStruct()
+	} else {
+		node, err = h.state.DB().GetNodeByNodeKey(nodeKey)
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("node_key", nodeKey.ShortString()).
+				Str("machine_key", machineKey.ShortString()).
+				Msg("node not found after authorization in NodeStore or database")
+			return nil, fmt.Errorf("failed to get node after authorization: %w", err)
+		}
 	}
 	logInfo("Node registered after authorization")
 	// __CYLONIX_REMOVED__ h.handleNodeWithValidRegistration(writer, *node, machineKey) — this helper

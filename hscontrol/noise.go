@@ -236,10 +236,16 @@ func rejectUnsupported(
 	version tailcfg.CapabilityVersion,
 	mkey key.MachinePublic,
 	nkey key.NodePublic,
+	namespace string, // __CYLONIX_ADD__
+	hostinfo *tailcfg.Hostinfo, // __CYLONIX_ADD__
 ) bool {
 	// Reject unsupported versions
 	if !isSupportedVersion(version) {
-		log.Error().
+		// __BEGIN_CYLONIX_MOD__
+		// Warn, not Error: the server is working as intended; the client is
+		// simply too old. This also fires on every poll retry from such a
+		// client, so Error would flood error-level alerting.
+		logEvent := log.Warn().
 			Caller().
 			Int("minimum_cap_ver", int(capver.MinSupportedCapabilityVersion)).
 			Int("client_cap_ver", int(version)).
@@ -247,7 +253,17 @@ func rejectUnsupported(
 			Str("client_version", capver.TailscaleVersion(version)).
 			Str("node.key", nkey.ShortString()).
 			Str("machine.key", mkey.ShortString()).
-			Msg("unsupported client connected")
+			Str("namespace", namespace)
+		if hostinfo != nil {
+			logEvent = logEvent.
+				Str("hostname", hostinfo.Hostname).
+				Str("client_ipn_version", hostinfo.IPNVersion).
+				Str("os", hostinfo.OS).
+				Str("os_version", hostinfo.OSVersion).
+				Str("device_model", hostinfo.DeviceModel)
+		}
+		logEvent.Msg("unsupported client connected")
+		// __END_CYLONIX_MOD__
 		http.Error(writer, unsupportedClientError(version).Error(), http.StatusBadRequest)
 
 		return true
@@ -299,7 +315,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	}
 
 	// Reject unsupported versions
-	if rejectUnsupported(writer, mapRequest.Version, ns.machineKey, mapRequest.NodeKey) {
+	if rejectUnsupported(writer, mapRequest.Version, ns.machineKey, mapRequest.NodeKey, namespace, mapRequest.Hostinfo) { // __CYLONIX_MOD__
 		return
 	}
 
@@ -350,6 +366,17 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 
 	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, nv.AsStruct())
 	sess.tracef("a node sending a MapRequest with Noise protocol")
+	// __BEGIN_CYLONIX_ADD__ one debug line per accepted MapRequest with its
+	// dispatch shape. Post-auth MapRequests that "silently fail" to become
+	// streaming sessions (REG_TO_RUNNING_LATENCY.md item B) were previously
+	// indistinguishable from non-streaming endpoint updates.
+	log.Debug().
+		Uint64("node.id", nv.ID().Uint64()).
+		Bool("stream", mapRequest.Stream).
+		Bool("omit_peers", mapRequest.OmitPeers).
+		Str("node_key", mapRequest.NodeKey.ShortString()).
+		Msg("MapRequest accepted")
+	// __END_CYLONIX_ADD__
 	if !sess.isStreaming() {
 		sess.serve()
 	} else {
@@ -625,8 +652,15 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 		return &regReq, resp
 	}()
 
+	// __BEGIN_CYLONIX_ADD__
+	namespace := ns.namespace
+	if namespace == "" {
+		namespace = req.Header.Get("namespace")
+	}
+	// __END_CYLONIX_ADD__
+
 	// Reject unsupported versions
-	if rejectUnsupported(writer, registerRequest.Version, ns.machineKey, registerRequest.NodeKey) {
+	if rejectUnsupported(writer, registerRequest.Version, ns.machineKey, registerRequest.NodeKey, namespace, registerRequest.Hostinfo) { // __CYLONIX_MOD__
 		return
 	}
 

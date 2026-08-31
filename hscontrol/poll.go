@@ -228,11 +228,13 @@ func (m *mapSession) serveLongPoll() {
 	// SubnetRoutes() calculates the intersection of announced and approved routes. If we
 	// call Connect() first, SubnetRoutes() returns empty (no announced routes yet), causing
 	// the node to be incorrectly removed from AvailableRoutes.
+	updStart := time.Now() // __CYLONIX_ADD__
 	mapReqChange, err := m.h.state.UpdateNodeFromMapRequest(m.node.ID, m.req)
 	if err != nil {
 		m.errf(err, "failed to update node from initial MapRequest")
 		return
 	}
+	updDur := time.Since(updStart) // __CYLONIX_ADD__
 
 	// Connect the node after its state has been updated.
 	// We send two separate change notifications because these are distinct operations:
@@ -241,7 +243,18 @@ func (m *mapSession) serveLongPoll() {
 	// While this results in two notifications, it ensures route data is synchronized before
 	// primary route selection occurs, which is critical for proper HA subnet router failover.
 	var connectChanges []change.Change
+	connectStart := time.Now()                                // __CYLONIX_ADD__
 	connectChanges, connectGen = m.h.state.Connect(m.node.ID) // __CYLONIX_MOD__ acquire a poll session; the deferred teardown releases it
+
+	// __BEGIN_CYLONIX_ADD__ pre-session phase timings: the gap between the
+	// poll arriving and "node has connected" was measured at 3-4 s after a
+	// key rotation and was invisible without per-phase durations.
+	log.Debug().
+		Uint64("node.id", m.node.ID.Uint64()).
+		Dur("update_from_map_request", updDur).
+		Dur("connect", time.Since(connectStart)).
+		Msg("serveLongPoll pre-session timing")
+	// __END_CYLONIX_ADD__
 
 	m.infof("node has connected, mapSession: %p, chan: %p", m, m.ch)
 
