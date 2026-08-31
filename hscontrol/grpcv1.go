@@ -801,14 +801,19 @@ func (api headscaleV1APIServer) ExpireNode(
 	}
 	// __END_CYLONIX_ADD__
 
-	expiry := time.Now()
+	now := time.Now()
+	expiry := &now
 	// __BEGIN_CYLONIX_MOD__
-	// Check if expiry time is set in the request. 0 means disable expiry.
+	// Check if expiry time is set in the request. A zero timestamp means
+	// disable expiry (node never expires), persisted as NULL. Upstream
+	// f20bd0cf0 signals this with a dedicated disable_expiry field; the
+	// cylonix console keeps the zero-timestamp sentinel.
 	if request.Expiry != nil {
 		if request.Expiry.AsTime().IsZero() {
-			expiry = time.Time{}
+			expiry = nil
 		} else {
-			expiry = request.Expiry.AsTime()
+			t := request.Expiry.AsTime()
+			expiry = &t
 		}
 	}
 	// __END_CYLONIX_MOD__
@@ -821,11 +826,17 @@ func (api headscaleV1APIServer) ExpireNode(
 	// TODO(kradalby): Ensure that both the selfupdate and peer updates are sent
 	api.h.Change(nodeChange)
 
-	log.Trace().
+	// __BEGIN_CYLONIX_MOD__ expiry may be nil (disabled); do not dereference
+	logEvent := log.Trace().
 		Caller().
-		Str("node", node.Hostname()).
-		Time("expiry", *node.AsStruct().Expiry).
-		Msg("node expired")
+		Str("node", node.Hostname())
+	if expiry != nil {
+		logEvent = logEvent.Time("expiry", *expiry)
+	} else {
+		logEvent = logEvent.Bool("expiry_disabled", true)
+	}
+	logEvent.Msg("node expiry set")
+	// __END_CYLONIX_MOD__
 
 	return &v1.ExpireNodeResponse{Node: node.Proto()}, nil
 }
