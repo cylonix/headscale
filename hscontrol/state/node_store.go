@@ -100,7 +100,29 @@ type NodeStore struct {
 
 	batchSize    int
 	batchTimeout time.Duration
+
+	// __BEGIN_CYLONIX_ADD__
+	// lazyTailnetPeers, when set (before Start), stops node mutations from
+	// triggering the global peersFunc rebuild in applyBatch. In cylonix
+	// multi-tenant mode every node carries a NetworkDomain and ListPeers
+	// reads the per-tailnet cache (lazily rebuilt after invalidation), so
+	// the flattened peersByNode map is only a fallback — recomputing it
+	// across every tenant on each Connect/Disconnect/rotation made every
+	// blocking store write cost seconds on a large deployment
+	// (REG_TO_RUNNING_LATENCY.md). Explicit RebuildPeerMaps calls still
+	// rebuild globally.
+	lazyTailnetPeers bool
+	// __END_CYLONIX_ADD__
 }
+
+// __BEGIN_CYLONIX_ADD__
+// EnableLazyTailnetPeers switches the store to per-tailnet peer
+// maintenance. Must be called before Start.
+func (s *NodeStore) EnableLazyTailnetPeers() {
+	s.lazyTailnetPeers = true
+}
+
+// __END_CYLONIX_ADD__
 
 func NewNodeStore(allNodes types.Nodes, peersFunc PeersFunc, batchSize int, batchTimeout time.Duration) *NodeStore {
 	nodes := make(map[types.NodeID]types.Node, len(allNodes))
@@ -284,40 +306,63 @@ func (s *NodeStore) Stop() {
 	close(s.writeQueue)
 }
 
-// processWrite processes the write queue in batches.
-func (s *NodeStore) processWrite() {
-	c := time.NewTicker(s.batchTimeout)
-	defer c.Stop()
+// __CYLONIX_ADD__ writeCoalesceWindow is how long processWrite waits after
+// the FIRST queued item for stragglers to join the batch. It bounds the
+// idle latency of a blocking store write; racing writers inside the window
+// still coalesce into one batch (a semantic tests rely on: every returned
+// node reflects the whole batch).
+const writeCoalesceWindow = 2 * time.Millisecond
 
+// processWrite processes the write queue in batches.
+//
+// __BEGIN_CYLONIX_MOD__
+// Upstream buffered writes behind a free-running batchTimeout ticker
+// (default 500 ms), which added up to half a second of pure idle latency
+// to EVERY blocking store write — and a login performs several dependent
+// writes in sequence (logout expiry, key rotation, Connect), so the
+// ticker alone contributed seconds to registration→Running
+// (REG_TO_RUNNING_LATENCY.md). Instead, start a short coalesce window
+// when work arrives and apply at its end (or at batchSize). Under load
+// this degrades gracefully to the same batching behavior: while an apply
+// runs, new work queues up and joins the next batch.
+func (s *NodeStore) processWrite() {
 	batch := make([]work, 0, s.batchSize)
 
+	window := s.batchTimeout
+	if window > writeCoalesceWindow {
+		window = writeCoalesceWindow
+	}
+
 	for {
-		select {
-		case w, ok := <-s.writeQueue:
-			if !ok {
-				// Channel closed, apply any remaining batch and exit
-				if len(batch) != 0 {
-					s.applyBatch(batch)
-				}
-				return
-			}
-			batch = append(batch, w)
-			if len(batch) >= s.batchSize {
-				s.applyBatch(batch)
-				batch = batch[:0]
-
-				c.Reset(s.batchTimeout)
-			}
-		case <-c.C:
-			if len(batch) != 0 {
-				s.applyBatch(batch)
-				batch = batch[:0]
-			}
-
-			c.Reset(s.batchTimeout)
+		w, ok := <-s.writeQueue
+		if !ok {
+			return
 		}
+		batch = append(batch, w)
+
+		timer := time.NewTimer(window)
+	collect:
+		for len(batch) < s.batchSize {
+			select {
+			case w, ok := <-s.writeQueue:
+				if !ok {
+					// Channel closed: apply what we have; the next
+					// receive above returns !ok and exits.
+					break collect
+				}
+				batch = append(batch, w)
+			case <-timer.C:
+				break collect
+			}
+		}
+		timer.Stop()
+
+		s.applyBatch(batch)
+		batch = batch[:0]
 	}
 }
+
+// __END_CYLONIX_MOD__
 
 // applyBatch applies a batch of work to the node store.
 // This means that it takes a copy of the current nodes,
@@ -408,12 +453,14 @@ func (s *NodeStore) applyBatch(batch []work) {
 	// (used when there is no NodeHandler / when callers haven't switched
 	// to the per-tailnet API) still rebuilds the full peersByNode map on
 	// any node mutation — that's what the upstream-style deployments and
-	// existing tests rely on. When the only ops in the batch are pure
-	// tailnet cache mutations (invalidate/rebuild), we don't need to
-	// touch peersFunc; we just inherit the previous snapshot's
-	// peersByNode and overlay the per-tailnet cache.
+	// existing tests rely on. In lazyTailnetPeers mode node mutations skip
+	// the global rebuild too: the affected-tailnet invalidation below plus
+	// the lazy per-tailnet rebuild on the next ListPeers keep readers
+	// correct, and peersByNode is inherited unchanged as the fallback
+	// mirror. Only explicit RebuildPeerMaps ops force the global path.
+	rebuiltGlobal := (hadNodeMutation && !s.lazyTailnetPeers) || len(rebuildOps) > 0
 	var newSnap Snapshot
-	if hadNodeMutation || len(rebuildOps) > 0 {
+	if rebuiltGlobal {
 		newSnap = snapshotFromNodes(nodes, s.peersFunc)
 	} else {
 		newSnap = snapshotFromNodesNoPeers(nodes, prevSnap)
@@ -470,11 +517,12 @@ func (s *NodeStore) applyBatch(batch []work) {
 	// new state).
 	for t, peers := range rebuiltTailnets {
 		// Defensive copy: snapshotFromNodes returned a fresh map; if we
-		// inherited the previous snapshot's map (no node mutation case),
-		// peersByNode might still be the old one — clone before mutating.
+		// inherited the previous snapshot's map (NoPeers path, including
+		// lazy-mode node mutations), peersByNode might still be the old
+		// one — clone before mutating.
 		if newSnap.peersByNode == nil {
 			newSnap.peersByNode = make(map[types.NodeID][]types.NodeView)
-		} else if !hadNodeMutation && len(rebuildOps) == 0 {
+		} else if !rebuiltGlobal {
 			// We may be sharing the previous map reference; clone.
 			cloned := make(map[types.NodeID][]types.NodeView, len(newSnap.peersByNode))
 			for k, v := range newSnap.peersByNode {

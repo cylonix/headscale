@@ -174,6 +174,14 @@ func NewState(cfg *types.Config) (*State, error) {
 		batchSize,
 		batchTimeout,
 	)
+	// __BEGIN_CYLONIX_ADD__
+	// Multi-tenant mode: peers are served from the per-tailnet cache, so
+	// node mutations must not pay for a global cross-tenant BuildPeerMap
+	// on every blocking store write.
+	if cfg.NodeHandler != nil {
+		nodeStore.EnableLazyTailnetPeers()
+	}
+	// __END_CYLONIX_ADD__
 	nodeStore.Start()
 
 	return &State{
@@ -2512,18 +2520,19 @@ func (s *State) updatePolicyManagerNodesForTailnet(tailnet string) (change.Chang
 	if changed {
 		// Policy-affecting node changes (tags, user, IPs) affect ACL
 		// visibility. When the caller knows the affected tailnet, only
-		// that tailnet's cascade is invalidated. Otherwise every
-		// tailnet is invalidated. The next per-tailnet ListPeers
-		// triggers a lazy rebuild via rebuildTailnet. The global
-		// RebuildPeerMaps call is retained as a safety net for the
-		// no-NodeHandler case (single-tenant deployments) where
+		// that tailnet's cascade is invalidated — the next per-tailnet
+		// ListPeers triggers a lazy rebuild via rebuildTailnet, and the
+		// global peersByNode rebuild (a cross-tenant BuildPeerMap costing
+		// seconds on a large store) is skipped. The global RebuildPeerMaps
+		// is retained only for the tailnet-less path as a safety net for
+		// the no-NodeHandler case (single-tenant deployments) where
 		// ListPeers reads peersByNode directly.
 		if tailnet != "" {
 			s.invalidateTailnetCascade(tailnet)
 		} else {
 			s.invalidateAllTailnetCaches()
+			s.nodeStore.RebuildPeerMaps()
 		}
-		s.nodeStore.RebuildPeerMaps()
 		return change.PolicyChange(), nil
 	}
 

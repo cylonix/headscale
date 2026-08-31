@@ -1134,7 +1134,12 @@ func BenchmarkNodeStoreAllocations(b *testing.B) {
 	defer store.Stop()
 
 	for i := 0; b.Loop(); i++ {
-		nodeID := types.NodeID(i + 1)
+		// __CYLONIX_MOD__ bound the store at 100 nodes: store writes no
+		// longer wait for a batch ticker, so testing.Benchmark scales b.N
+		// far higher than before — with monotonically growing IDs the
+		// store grew unboundedly and the O(nodes²) snapshot rebuild made
+		// the benchmark effectively hang.
+		nodeID := types.NodeID(i%100 + 1)
 		node := createConcurrentTestNode(nodeID, "bench-node")
 		store.PutNode(node)
 		store.UpdateNode(nodeID, func(n *types.Node) {
