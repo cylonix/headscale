@@ -557,9 +557,11 @@ func (s *State) Connect(id types.NodeID) ([]change.Change, uint64) {
 	// This ensures that when the NodeCameOnline change is distributed and processed by other nodes,
 	// the NodeStore already reflects the correct online status for full map generation.
 	// now := time.Now()
-	var epoch uint64 // __CYLONIX_ADD__
+	var epoch uint64   // __CYLONIX_ADD__
+	var wasOnline bool // __CYLONIX_ADD__
 	node, ok := s.nodeStore.UpdateNode(id, func(n *types.Node) {
 		// __BEGIN_CYLONIX_ADD__
+		wasOnline = n.ActiveSessions > 0 && n.IsOnline != nil && *n.IsOnline
 		n.SessionEpoch++
 		epoch = n.SessionEpoch
 		n.ActiveSessions++
@@ -571,9 +573,22 @@ func (s *State) Connect(id types.NodeID) ([]change.Change, uint64) {
 		return nil, 0
 	}
 
-	c := []change.Change{change.NodeOnlineFor(node)}
+	// __BEGIN_CYLONIX_MOD__ Only announce the offline->online transition. A
+	// replaced or restarted map poll on a node that is already online used to
+	// re-broadcast an Online=true patch to every peer; one client doing this
+	// every ~25s was a measurable share of tailnet-wide netmap churn.
+	var c []change.Change
 
-	log.Info().Uint64("node.id", id.Uint64()).Str("node.name", node.Hostname()).Msg("Node connected")
+	if wasOnline {
+		log.Debug().Uint64("node.id", id.Uint64()).Str("node.name", node.Hostname()).
+			Int("active_sessions", node.ActiveSessions()).
+			Msg("session added, node already online; not re-announcing")
+	} else {
+		c = append(c, change.NodeOnlineFor(node))
+
+		log.Info().Uint64("node.id", id.Uint64()).Str("node.name", node.Hostname()).Msg("Node connected")
+	}
+	// __END_CYLONIX_MOD__
 
 	// Use the node's current routes for primary route update
 	// AllApprovedRoutes() returns only the intersection of announced AND approved routes
@@ -2672,6 +2687,8 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 		autoApprovedRoutes []netip.Prefix
 		endpointChanged    bool
 		derpChanged        bool
+		persistWorthy      bool // __CYLONIX_ADD__ (upstream 08f186f2)
+		peerVisibleChange  bool // __CYLONIX_ADD__ key/disco/expiry/online moved; see buildMapRequestChangeResponse
 	)
 
 	// __BEGIN_CYLONIX_MOD__ Backfill a v6 address for nodes that were assigned
@@ -2726,6 +2743,14 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 
 		// If there is no changes and nothing to save,
 		// return early.
+		// __BEGIN_CYLONIX_ADD__ (upstream 08f186f2, adapted)
+		// peerChange always carries a LastSeen stamp, so the emptiness check
+		// below never fires. Track separately whether anything worth a
+		// database write, or worth telling peers about, actually moved.
+		peerVisibleChange = peerChangePersistWorthy(peerChange)
+		persistWorthy = peerVisibleChange || hostinfoChanged || backfilledIPv6 != nil
+		// __END_CYLONIX_ADD__
+
 		if peerChangeEmpty(peerChange) && !hostinfoChanged {
 			return
 		}
@@ -2828,10 +2853,19 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 	// because SubnetRoutes is the intersection of announced AND approved routes.
 	nodeRouteChange := s.maybeUpdateNodeRoutes(id, updatedNode, hostinfoChanged, needsRouteApproval, routeChange, req.Hostinfo)
 
-	_, policyChange, err := s.persistNodeToDB(updatedNode)
-	if err != nil {
-		return change.Change{}, fmt.Errorf("saving to database: %w", err)
+	// __BEGIN_CYLONIX_MOD__ (upstream 08f186f2) A lone LastSeen bump no longer
+	// triggers a full-row write and policy rescan.
+	policyChange := change.Change{}
+
+	if persistWorthy {
+		var err error
+
+		_, policyChange, err = s.persistNodeToDB(updatedNode)
+		if err != nil {
+			return change.Change{}, fmt.Errorf("saving to database: %w", err)
+		}
 	}
+	// __END_CYLONIX_MOD__
 
 	if policyChange.IsFull() {
 		return policyChange, nil
@@ -2853,7 +2887,7 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 
 	// Determine the most specific change type based on what actually changed.
 	// This allows us to send lightweight patch updates instead of full map responses.
-	return buildMapRequestChangeResponse(id, updatedNode, hostinfoChanged, endpointChanged, derpChanged)
+	return buildMapRequestChangeResponse(id, updatedNode, hostinfoChanged, endpointChanged, derpChanged, peerVisibleChange) // __CYLONIX_MOD__
 }
 
 // buildMapRequestChangeResponse determines the appropriate response type for a MapRequest update.
@@ -2862,6 +2896,7 @@ func buildMapRequestChangeResponse(
 	id types.NodeID,
 	node types.NodeView,
 	hostinfoChanged, endpointChanged, derpChanged bool,
+	peerVisibleChange bool, // __CYLONIX_ADD__
 ) (change.Change, error) {
 	// Hostinfo changes require NodeAdded (full update) as they may affect many fields.
 	if hostinfoChanged {
@@ -2887,7 +2922,21 @@ func buildMapRequestChangeResponse(
 		return change.EndpointOrDERPUpdate(id, patch), nil
 	}
 
-	return change.NodeAdded(id), nil
+	// __BEGIN_CYLONIX_MOD__
+	if peerVisibleChange {
+		// Node key, disco key, key expiry or online flag moved: peers need
+		// the whole node.
+		return change.NodeAdded(id), nil
+	}
+
+	// Nothing a peer can see changed. This is the common case: a keepalive
+	// or endpoint-refresh MapRequest whose only delta is the LastSeen stamp
+	// PeerChangeFromMapRequest always sets, or a map-poll restart with
+	// identical state. Upstream falls through to NodeAdded here and fans an
+	// unchanged node out to every connected peer; with ~85 nodes that was one
+	// byte-identical NetMap every ~2s on every client.
+	return change.Change{}, nil
+	// __END_CYLONIX_MOD__
 }
 
 func hostinfoEqual(oldNode types.NodeView, newHI *tailcfg.Hostinfo) bool {
@@ -2930,6 +2979,21 @@ func peerChangeEmpty(peerChange tailcfg.PeerChange) bool {
 		peerChange.LastSeen == nil &&
 		peerChange.KeyExpiry == nil
 }
+
+// __BEGIN_CYLONIX_ADD__ (upstream 08f186f2)
+// peerChangePersistWorthy reports whether peerChange carries anything beyond
+// the LastSeen stamp that PeerChangeFromMapRequest always sets. Such changes
+// are both worth a database write and visible to peers.
+func peerChangePersistWorthy(peerChange tailcfg.PeerChange) bool {
+	return peerChange.Key != nil ||
+		peerChange.DiscoKey != nil ||
+		peerChange.Online != nil ||
+		peerChange.Endpoints != nil ||
+		peerChange.DERPRegion != 0 ||
+		peerChange.KeyExpiry != nil
+}
+
+// __END_CYLONIX_ADD__
 
 // maybeUpdateNodeRoutes updates node routes if announced routes changed but approved routes didn't.
 // This is needed because SubnetRoutes is the intersection of announced AND approved routes.

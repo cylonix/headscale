@@ -1067,7 +1067,23 @@ func readOrCreatePrivateKey(path string) (*key.MachinePrivate, error) {
 // All change should be enqueued here and empty will be automatically
 // ignored.
 func (h *Headscale) Change(cs ...change.Change) {
-	h.mapBatcher.AddWork(cs...)
+	// __BEGIN_CYLONIX_ADD__ Drop no-op changes here so they never become
+	// per-node batcher work. UpdateNodeFromMapRequest returns an empty change
+	// for MapRequests that moved nothing peer-visible.
+	filtered := make([]change.Change, 0, len(cs))
+
+	for _, c := range cs {
+		if !c.IsEmpty() {
+			filtered = append(filtered, c)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return
+	}
+	// __END_CYLONIX_ADD__
+
+	h.mapBatcher.AddWork(filtered...)
 }
 
 // Provide some middleware that can inspect the ACME/autocert https calls
