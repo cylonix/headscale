@@ -261,7 +261,13 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 	expireTicker := time.NewTicker(updateInterval)
 	defer expireTicker.Stop()
 
-	lastExpiryCheck := time.Unix(0, 0)
+	// __BEGIN_CYLONIX_MOD__ Start the expiry sweep from now, not from the Unix
+	// epoch. With the epoch, the first tick re-announced every node that had
+	// ever expired (395 KeyExpiry patches on one boot), each fanned out to
+	// every connected node, for state every client already has in its initial
+	// full map. Nodes expiring after process start are still caught.
+	lastExpiryCheck := time.Now()
+	// __END_CYLONIX_MOD__
 
 	derpTickerChan := make(<-chan time.Time)
 	if h.cfg.DERP.AutoUpdate && h.cfg.DERP.UpdateFrequency != 0 {

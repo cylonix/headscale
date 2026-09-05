@@ -1766,16 +1766,31 @@ func (api headscaleV1APIServer) UpdateNode(
 		return nil, err
 	}
 
+	updated, gerr := api.h.state.DB().GetNodeByID(types.NodeID(request.NodeId))
+	if gerr != nil {
+		logger.Err(gerr).Msg("Failed to get node after update")
+		return nil, gerr
+	}
+
 	if api.h.cfg.NodeHandler != nil {
-		updated, gerr := api.h.state.DB().GetNodeByID(types.NodeID(request.NodeId))
-		if gerr != nil {
-			logger.Err(gerr).Msg("Failed to get node for NodeHandler Update")
-			return nil, gerr
-		}
 		if _, uerr := api.h.cfg.NodeHandler.Update(updated); uerr != nil {
 			logger.Err(uerr).Msg("NodeHandler.Update failed")
 		}
 	}
+
+	// The manager calls UpdateNode on every WireGuard gateway heartbeat,
+	// usually only to refresh LastSeen. Broadcasting "node added" for that
+	// fanned a byte-identical node out to every visible peer every ~20s per
+	// gateway. Only broadcast when something a peer can observe changed.
+	if nodePeerVisibleEqual(node, updated) {
+		log.Debug().
+			Uint64("node.id", request.NodeId).
+			Str("node.name", updated.Hostname).
+			Msg("UpdateNode changed nothing peer-visible; not broadcasting")
+
+		return &v1.UpdateNodeResponse{}, nil
+	}
+
 	api.h.Change(change.NodeAdded(types.NodeID(request.NodeId)))
 
 	return &v1.UpdateNodeResponse{}, nil
