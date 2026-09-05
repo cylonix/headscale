@@ -301,6 +301,8 @@ func (m *mapper) buildFromChange(
 		builder.WithSSHPolicy()
 	}
 
+	hasPeerContent := false // __CYLONIX_ADD__
+
 	if resp.SendAllPeers {
 		peers := m.state.ListPeers(nodeID)
 		builder.WithUserProfiles(peers)
@@ -308,19 +310,42 @@ func (m *mapper) buildFromChange(
 	} else {
 		if len(resp.PeersChanged) > 0 {
 			peers := m.state.ListPeers(nodeID, resp.PeersChanged...)
-			builder.WithUserProfiles(peers)
-			builder.WithPeerChanges(peers)
+			// __BEGIN_CYLONIX_MOD__ ListPeers is ACL-filtered: a change about a
+			// node this recipient cannot see yields no peers and must not turn
+			// into an empty PeersChanged delta.
+			if peers.Len() > 0 {
+				builder.WithUserProfiles(peers)
+				builder.WithPeerChanges(peers)
+
+				hasPeerContent = true
+			}
+			// __END_CYLONIX_MOD__
 		}
 
 		if len(resp.PeersRemoved) > 0 {
 			builder.WithPeersRemoved(resp.PeersRemoved...)
+
+			hasPeerContent = true // __CYLONIX_ADD__
 		}
 	}
 
 	patches := m.filterVisiblePeerPatches(nodeID, resp.PeerPatches)
 	if len(patches) > 0 {
 		builder.WithPeerChangedPatch(patches)
+
+		hasPeerContent = true // __CYLONIX_ADD__
 	}
+
+	// __BEGIN_CYLONIX_ADD__ An incremental change that carries nothing for
+	// this recipient after visibility filtering must not be sent at all:
+	// clients treat every non-keepalive MapResponse as a netmap update and
+	// re-notify all GUI/NE watchers with an unchanged netmap.
+	if !resp.SendAllPeers && !resp.IncludeSelf && !resp.IncludeDERPMap &&
+		!resp.IncludeDNS && !resp.IncludeDomain && !resp.IncludePolicy &&
+		!hasPeerContent {
+		return nil, nil //nolint:nilnil // nothing to send
+	}
+	// __END_CYLONIX_ADD__
 
 	return builder.Build()
 }
