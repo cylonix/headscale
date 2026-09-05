@@ -1073,9 +1073,23 @@ func (h *Headscale) Change(cs ...change.Change) {
 	filtered := make([]change.Change, 0, len(cs))
 
 	for _, c := range cs {
-		if !c.IsEmpty() {
-			filtered = append(filtered, c)
+		if c.IsEmpty() {
+			continue
 		}
+
+		// One debug line per accepted change so the fan-out mix
+		// (full/policy/peers/patch and why) can be read from the pod log.
+		log.Debug().
+			Str("change.type", c.Type()).
+			Str("change.reason", c.Reason).
+			Uint64("origin.node", c.OriginNode.Uint64()).
+			Uint64("target.node", c.TargetNode.Uint64()).
+			Int("peers.changed", len(c.PeersChanged)).
+			Int("peers.removed", len(c.PeersRemoved)).
+			Int("peer.patches", len(c.PeerPatches)).
+			Msg("change accepted")
+
+		filtered = append(filtered, c)
 	}
 
 	if len(filtered) == 0 {

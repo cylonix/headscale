@@ -409,7 +409,17 @@ func NodeOfflineFor(node types.NodeView) Change {
 		return c
 	}
 
-	return NodeOffline(node.ID())
+	c := NodeOffline(node.ID())
+
+	// __BEGIN_CYLONIX_ADD__ Peers display "last seen" for offline nodes; carry
+	// it in the patch so Disconnect need not re-send the whole node.
+	if node.LastSeen().Valid() {
+		lastSeen := node.LastSeen().Get()
+		c.PeerPatches[0].LastSeen = &lastSeen
+	}
+	// __END_CYLONIX_ADD__
+
+	return c
 }
 
 // KeyExpiryFor returns a Change for when a node's key expiry changes.

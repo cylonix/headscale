@@ -669,13 +669,18 @@ func (s *State) Disconnect(id types.NodeID, epoch uint64) ([]change.Change, erro
 	// announced are served to any nodes.
 	routeChange := s.primaryRoutes.SetRoutes(id)
 
-	cs := []change.Change{change.NodeOfflineFor(node), c}
+	// __BEGIN_CYLONIX_MOD__ persistNodeToDB returns NodeAdded when the policy
+	// did not change; broadcasting that right after the offline patch re-sent
+	// the whole, otherwise unchanged, node to every visible peer on each
+	// disconnect. The offline patch already carries Online and LastSeen.
+	cs := []change.Change{change.NodeOfflineFor(node)}
 
 	// If we have a policy change or route change, return that as it's more comprehensive
 	// Otherwise, return the NodeOffline change to ensure nodes are notified
-	if c.IsFull() || routeChange {
+	if c.RequiresRuntimePeerComputation || c.IsFull() || routeChange {
 		cs = append(cs, change.PolicyChange())
 	}
+	// __END_CYLONIX_MOD__
 
 	return cs, nil
 }
