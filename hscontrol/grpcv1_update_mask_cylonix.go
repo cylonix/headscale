@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -138,6 +139,10 @@ func (api headscaleV1APIServer) applyUpdateNodePresence(
 	if plan.hasPresence() {
 		got, err := api.h.state.SetWireguardOnlyPresence(id, plan.online, plan.endpoints, plan.hasEndpoints)
 		if err != nil {
+			log.Warn().Err(err).
+				Uint64("node.id", id.Uint64()).
+				Msg("UpdateNode: presence update rejected")
+
 			switch {
 			case errors.Is(err, state.ErrPresenceNotWireguardOnly):
 				return nil, status.Error(codes.FailedPrecondition, err.Error())

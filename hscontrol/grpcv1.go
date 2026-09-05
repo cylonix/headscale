@@ -1754,10 +1754,29 @@ func (api headscaleV1APIServer) UpdateNode(
 	// UpdateNodeRequest.update_mask in node.proto.
 	plan, err := parseUpdateNodePlan(request)
 	if err != nil {
+		log.Warn().Err(err).
+			Uint64("node.id", request.NodeId).
+			Strs("mask", request.GetUpdateMask().GetPaths()).
+			Msg("UpdateNode: rejected update_mask")
+
 		return nil, err
 	}
 
 	nodeID := types.NodeID(request.NodeId)
+
+	if !plan.legacy {
+		ev := log.Debug().
+			Uint64("node.id", request.NodeId).
+			Strs("mask", request.GetUpdateMask().GetPaths()).
+			Bool("admin", plan.admin).
+			Bool("has_endpoints", plan.hasEndpoints).
+			Int("endpoints", len(plan.endpoints)).
+			Bool("has_routes", plan.hasRoutes)
+		if plan.online != nil {
+			ev = ev.Bool("online", *plan.online)
+		}
+		ev.Msg("UpdateNode: masked request")
+	}
 
 	var changes []change.Change
 
