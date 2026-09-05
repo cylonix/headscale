@@ -1665,7 +1665,12 @@ func (s *State) applyAuthNodeUpdate(params authNodeUpdateParams) (types.NodeView
 		)
 
 		node.Endpoints = params.RegEntry.Node.Endpoints
-		node.IsOnline = ptr.To(false)
+		// Do NOT reset IsOnline here. Online status is managed exclusively by
+		// Connect()/Disconnect() in the poll session lifecycle. Resetting it
+		// during re-registration causes a false offline blip: the change
+		// notification triggers a map regeneration showing the node as offline
+		// to peers, even though Connect() will immediately set it back to true.
+		// (upstream 1053fbb1)
 		node.LastSeen = ptr.To(time.Now())
 
 		// Set RegisterMethod - for conversion this is the new method,
@@ -1781,6 +1786,7 @@ func (s *State) createAndSaveNewNode(params newNodeParams) (types.NodeView, erro
 		LastSeen:       ptr.To(time.Now()),
 		RegisterMethod: params.RegisterMethod,
 		Expiry:         params.Expiry,
+		IsOnline:       ptr.To(false), // Explicitly offline until Connect() is called (upstream 1053fbb1)
 	}
 
 	// Assign ownership based on PreAuthKey
@@ -2349,7 +2355,10 @@ func (s *State) HandleNodeFromPreAuthKey(
 			// Only update AuthKey reference
 			node.AuthKey = pak
 			node.AuthKeyID = &pak.ID
-			node.IsOnline = ptr.To(false)
+			// Do NOT reset IsOnline here. Online status is managed exclusively by
+			// Connect()/Disconnect() in the poll session lifecycle. Resetting it
+			// during re-registration causes a false offline blip to peers.
+			// (upstream 1053fbb1)
 			node.LastSeen = ptr.To(time.Now())
 
 			// Tagged nodes keep their existing expiry (disabled).
