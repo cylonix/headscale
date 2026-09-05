@@ -1691,9 +1691,20 @@ func (api headscaleV1APIServer) CreateNode(
 	if request.GetNode() == nil {
 		return nil, status.Error(codes.InvalidArgument, "CreateNode: node payload required")
 	}
-	node, err := types.ParseProtoNode(request.GetNode(), false)
+	// ParseProtoNodeForCreate restores the full conversion (keys, IPs,
+	// endpoints, tags, expiry, routes, online) that the v0.28 merge reduced to
+	// the admin subset; see its comment.
+	node, err := types.ParseProtoNodeForCreate(request.GetNode())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if u := request.GetNode().GetUser(); u != nil && u.GetId() != 0 {
+		owner, uerr := api.h.state.GetUserByID(types.UserID(u.GetId()))
+		if uerr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "CreateNode: user %d: %v", u.GetId(), uerr)
+		}
+		node.User = owner
+		node.UserID = &owner.ID
 	}
 	if err := api.h.state.DB().DB.Create(node).Error; err != nil {
 		return nil, err
@@ -1703,7 +1714,14 @@ func (api headscaleV1APIServer) CreateNode(
 			log.Error().Err(err).Uint64("node-id", uint64(node.ID)).Msg("NodeHandler.PostAdd failed")
 		}
 	}
-	api.h.Change(change.NodeAdded(node.ID))
+	// The mapper reads the NodeStore, not the database: without this the new
+	// node was invisible to peers until the next restart.
+	_, c, err := api.h.state.PutCreatedNode(node)
+	if err != nil {
+		log.Error().Err(err).Uint64("node-id", uint64(node.ID)).Msg("PutCreatedNode failed; broadcasting node added anyway")
+		c = change.NodeAdded(node.ID)
+	}
+	api.h.Change(c)
 	return &v1.CreateNodeResponse{NodeId: uint64(node.ID)}, nil
 }
 
@@ -1732,89 +1750,109 @@ func (api headscaleV1APIServer) UpdateNode(
 		return nil, err
 	}
 
-	var (
-		n      = request.Update
-		update = &types.Node{}
-		logger = log.Error().
-			Str("namespace", request.Namespace).
-			Uint64("node-id", request.NodeId)
-	)
-	if n != nil {
-		if n.Capabilities != nil && len(n.Capabilities) == 0 {
-			log.Warn().
-				Caller().
-				Str("namespace", request.Namespace).
-				Uint64("node-id", request.NodeId).
-				Str("node-name", n.Name).
-				Msg("Capabilities field is not-nil but empty. This will remove all existing capabilities.")
-		}
-		update, err = types.ParseProtoNode(n, true)
-		if err != nil {
-			logger.Err(err).Msg("Failed to parse node")
-			return nil, err
-		}
-	}
-
-	if err = api.h.state.DB().UpdateNode(
-		types.NodeID(request.NodeId),
-		request.Namespace,
-		update,
-		request.AddCapabilities,
-		request.DelCapabilities,
-	); err != nil {
-		logger.Err(err).Msg("Failed to update node")
+	// __BEGIN_CYLONIX_ADD__ update_mask routing; the contract is documented on
+	// UpdateNodeRequest.update_mask in node.proto.
+	plan, err := parseUpdateNodePlan(request)
+	if err != nil {
 		return nil, err
 	}
 
-	updated, gerr := api.h.state.DB().GetNodeByID(types.NodeID(request.NodeId))
-	if gerr != nil {
-		logger.Err(gerr).Msg("Failed to get node after update")
-		return nil, gerr
-	}
+	nodeID := types.NodeID(request.NodeId)
 
-	// DB().UpdateNode writes the database only, but the mapper builds peer
-	// views from the in-memory NodeStore. Mirror the fields this RPC can
-	// change (see types.ParseProtoNode) into the store, otherwise a rename or
-	// a capability change stays invisible to peers until the next restart.
-	// In-memory-only state (online flag, poll-session accounting) and fields
-	// owned by the node's own MapRequests (keys, endpoints, hostinfo, routes)
-	// are left untouched.
-	if _, ok := api.h.state.UpdateNode(types.NodeID(request.NodeId), func(n *types.Node) {
-		n.Hostname = updated.Hostname
-		n.GivenName = updated.GivenName
-		n.Namespace = updated.Namespace
-		n.NetworkDomain = updated.NetworkDomain
-		n.IsWireguardOnly = updated.IsWireguardOnly
-		n.StableID = updated.StableID
-		n.CapVersion = updated.CapVersion
-		n.Health = updated.Health
-		n.Capabilities = updated.Capabilities
-	}); !ok {
-		log.Warn().
-			Uint64("node.id", request.NodeId).
-			Msg("UpdateNode: node not in NodeStore; peers will not see this update until it is loaded")
-	}
+	var changes []change.Change
 
-	if api.h.cfg.NodeHandler != nil {
-		if _, uerr := api.h.cfg.NodeHandler.Update(updated); uerr != nil {
-			logger.Err(uerr).Msg("NodeHandler.Update failed")
+	if plan.applyAdmin() {
+		var (
+			n      = request.Update
+			update = &types.Node{}
+			logger = log.Error().
+				Str("namespace", request.Namespace).
+				Uint64("node-id", request.NodeId)
+		)
+		if n != nil {
+			if n.Capabilities != nil && len(n.Capabilities) == 0 {
+				log.Warn().
+					Caller().
+					Str("namespace", request.Namespace).
+					Uint64("node-id", request.NodeId).
+					Str("node-name", n.Name).
+					Msg("Capabilities field is not-nil but empty. This will remove all existing capabilities.")
+			}
+			update, err = types.ParseProtoNode(n, true)
+			if err != nil {
+				logger.Err(err).Msg("Failed to parse node")
+				return nil, err
+			}
+		}
+
+		if err = api.h.state.DB().UpdateNode(
+			nodeID,
+			request.Namespace,
+			update,
+			request.AddCapabilities,
+			request.DelCapabilities,
+		); err != nil {
+			logger.Err(err).Msg("Failed to update node")
+			return nil, err
+		}
+
+		updated, gerr := api.h.state.DB().GetNodeByID(nodeID)
+		if gerr != nil {
+			logger.Err(gerr).Msg("Failed to get node after update")
+			return nil, gerr
+		}
+
+		// DB().UpdateNode writes the database only, but the mapper builds peer
+		// views from the in-memory NodeStore. Mirror the fields this path can
+		// change (see types.ParseProtoNode) into the store, otherwise a rename
+		// or a capability change stays invisible to peers until the next
+		// restart. In-memory-only state (online flag, poll-session accounting)
+		// and fields owned by the node's own MapRequests or by the presence
+		// path (keys, endpoints, hostinfo, routes) are left untouched.
+		if _, ok := api.h.state.UpdateNode(nodeID, func(n *types.Node) {
+			n.Hostname = updated.Hostname
+			n.GivenName = updated.GivenName
+			n.Namespace = updated.Namespace
+			n.NetworkDomain = updated.NetworkDomain
+			n.IsWireguardOnly = updated.IsWireguardOnly
+			n.StableID = updated.StableID
+			n.CapVersion = updated.CapVersion
+			n.Health = updated.Health
+			n.Capabilities = updated.Capabilities
+		}); !ok {
+			log.Warn().
+				Uint64("node.id", request.NodeId).
+				Msg("UpdateNode: node not in NodeStore; peers will not see this update until it is loaded")
+		}
+
+		if api.h.cfg.NodeHandler != nil {
+			if _, uerr := api.h.cfg.NodeHandler.Update(updated); uerr != nil {
+				logger.Err(uerr).Msg("NodeHandler.Update failed")
+			}
+		}
+
+		// Only broadcast when something a peer can observe changed. Without
+		// this every manager heartbeat fanned a byte-identical node out to
+		// every visible peer.
+		if nodePeerVisibleEqual(node, updated) {
+			log.Debug().
+				Uint64("node.id", request.NodeId).
+				Str("node.name", updated.Hostname).
+				Msg("UpdateNode changed nothing peer-visible; not broadcasting")
+		} else {
+			changes = append(changes, change.NodeAdded(nodeID))
 		}
 	}
 
-	// The manager calls UpdateNode on every WireGuard gateway heartbeat,
-	// usually only to refresh LastSeen. Broadcasting "node added" for that
-	// fanned a byte-identical node out to every visible peer every ~20s per
-	// gateway. Only broadcast when something a peer can observe changed.
-	if nodePeerVisibleEqual(node, updated) {
-		log.Debug().
-			Uint64("node.id", request.NodeId).
-			Str("node.name", updated.Hostname).
-			Msg("UpdateNode changed nothing peer-visible; not broadcasting")
-
-		return &v1.UpdateNodeResponse{}, nil
+	presenceChanges, err := api.applyUpdateNodePresence(nodeID, plan)
+	if err != nil {
+		return nil, err
 	}
 
-	api.h.Change(change.NodeAdded(types.NodeID(request.NodeId)))
+	changes = append(changes, presenceChanges...)
+
+	api.h.Change(changes...)
+	// __END_CYLONIX_ADD__
 
 	return &v1.UpdateNodeResponse{}, nil
 }

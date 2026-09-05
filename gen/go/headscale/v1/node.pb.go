@@ -9,6 +9,7 @@ package v1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -1533,8 +1534,31 @@ type UpdateNodeRequest struct {
 	Update          *Node                  `protobuf:"bytes,3,opt,name=update,proto3" json:"update,omitempty"`
 	AddCapabilities []string               `protobuf:"bytes,4,rep,name=add_capabilities,json=addCapabilities,proto3" json:"add_capabilities,omitempty"`
 	DelCapabilities []string               `protobuf:"bytes,5,rep,name=del_capabilities,json=delCapabilities,proto3" json:"del_capabilities,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// __BEGIN_CYLONIX_ADD__
+	// update_mask names the fields of `update` to apply. Without it the RPC
+	// keeps its legacy behavior: only the admin subset (name, given_name,
+	// namespace, network_domain, wireguard_only, stable_id, cap_version,
+	// health, capabilities) is written. Because proto3 scalars and repeated
+	// fields cannot distinguish "unset" from "false"/"empty", the mask is the
+	// only way to express presence for these paths:
+	//
+	//	"online"    - set the WireGuard-only node online/offline. Applied to the
+	//	              in-memory state, announced to peers only on a transition,
+	//	              and last_seen is derived (stamped on offline, cleared on
+	//	              online). Rejected for nodes that are not wireguard_only;
+	//	              their presence is owned by their own map session.
+	//	"endpoints" - replace the node's endpoints (WireGuard-only nodes).
+	//	"routes"    - replace approved routes from `update.routes` (enabled).
+	//	"last_seen" - set, or clear when `update.last_seen` is absent.
+	//	admin paths: "name", "given_name", "namespace", "network_domain",
+	//	             "wireguard_only", "stable_id", "cap_version", "health",
+	//	             "capabilities".
+	//
+	// A request whose mask holds only presence paths performs no database
+	// write and no broadcast when nothing changed.
+	UpdateMask    *fieldmaskpb.FieldMask `protobuf:"bytes,6,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"` // __END_CYLONIX_ADD__
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateNodeRequest) Reset() {
@@ -1598,6 +1622,13 @@ func (x *UpdateNodeRequest) GetAddCapabilities() []string {
 func (x *UpdateNodeRequest) GetDelCapabilities() []string {
 	if x != nil {
 		return x.DelCapabilities
+	}
+	return nil
+}
+
+func (x *UpdateNodeRequest) GetUpdateMask() *fieldmaskpb.FieldMask {
+	if x != nil {
+		return x.UpdateMask
 	}
 	return nil
 }
@@ -1840,7 +1871,7 @@ var File_headscale_v1_node_proto protoreflect.FileDescriptor
 
 const file_headscale_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x17headscale/v1/node.proto\x12\fheadscale.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bheadscale/v1/hostinfo.proto\x1a\x1dheadscale/v1/preauthkey.proto\x1a\x17headscale/v1/user.proto\"\xfc\t\n" +
+	"\x17headscale/v1/node.proto\x12\fheadscale.v1\x1a google/protobuf/field_mask.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bheadscale/v1/hostinfo.proto\x1a\x1dheadscale/v1/preauthkey.proto\x1a\x17headscale/v1/user.proto\"\xfc\t\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1f\n" +
 	"\vmachine_key\x18\x02 \x01(\tR\n" +
@@ -1980,13 +2011,15 @@ const file_headscale_v1_node_proto_rawDesc = "" +
 	"\x11CreateNodeRequest\x12&\n" +
 	"\x04node\x18\x01 \x01(\v2\x12.headscale.v1.NodeR\x04node\"-\n" +
 	"\x12CreateNodeResponse\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\x04R\x06nodeId\"\xcc\x01\n" +
+	"\anode_id\x18\x01 \x01(\x04R\x06nodeId\"\x89\x02\n" +
 	"\x11UpdateNodeRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x04R\x06nodeId\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12*\n" +
 	"\x06update\x18\x03 \x01(\v2\x12.headscale.v1.NodeR\x06update\x12)\n" +
 	"\x10add_capabilities\x18\x04 \x03(\tR\x0faddCapabilities\x12)\n" +
-	"\x10del_capabilities\x18\x05 \x03(\tR\x0fdelCapabilities\"\x14\n" +
+	"\x10del_capabilities\x18\x05 \x03(\tR\x0fdelCapabilities\x12;\n" +
+	"\vupdate_mask\x18\x06 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
+	"updateMask\"\x14\n" +
 	"\x12UpdateNodeResponse\"\x8c\x01\n" +
 	"\tRouteSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x16\n" +
@@ -2063,6 +2096,7 @@ var file_headscale_v1_node_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),         // 30: google.protobuf.Timestamp
 	(*PreAuthKey)(nil),                    // 31: headscale.v1.PreAuthKey
 	(*Hostinfo)(nil),                      // 32: headscale.v1.Hostinfo
+	(*fieldmaskpb.FieldMask)(nil),         // 33: google.protobuf.FieldMask
 }
 var file_headscale_v1_node_proto_depIdxs = []int32{
 	29, // 0: headscale.v1.Node.user:type_name -> headscale.v1.User
@@ -2084,11 +2118,12 @@ var file_headscale_v1_node_proto_depIdxs = []int32{
 	1,  // 16: headscale.v1.DebugCreateNodeResponse.node:type_name -> headscale.v1.Node
 	1,  // 17: headscale.v1.CreateNodeRequest.node:type_name -> headscale.v1.Node
 	1,  // 18: headscale.v1.UpdateNodeRequest.update:type_name -> headscale.v1.Node
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	33, // 19: headscale.v1.UpdateNodeRequest.update_mask:type_name -> google.protobuf.FieldMask
+	20, // [20:20] is the sub-list for method output_type
+	20, // [20:20] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_headscale_v1_node_proto_init() }

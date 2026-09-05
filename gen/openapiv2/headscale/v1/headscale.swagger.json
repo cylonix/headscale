@@ -2381,6 +2381,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "updateMask": {
+          "type": "string",
+          "description": "__BEGIN_CYLONIX_ADD__\nupdate_mask names the fields of `update` to apply. Without it the RPC\nkeeps its legacy behavior: only the admin subset (name, given_name,\nnamespace, network_domain, wireguard_only, stable_id, cap_version,\nhealth, capabilities) is written. Because proto3 scalars and repeated\nfields cannot distinguish \"unset\" from \"false\"/\"empty\", the mask is the\nonly way to express presence for these paths:\n  \"online\"    - set the WireGuard-only node online/offline. Applied to the\n                in-memory state, announced to peers only on a transition,\n                and last_seen is derived (stamped on offline, cleared on\n                online). Rejected for nodes that are not wireguard_only;\n                their presence is owned by their own map session.\n  \"endpoints\" - replace the node's endpoints (WireGuard-only nodes).\n  \"routes\"    - replace approved routes from `update.routes` (enabled).\n  \"last_seen\" - set, or clear when `update.last_seen` is absent.\n  admin paths: \"name\", \"given_name\", \"namespace\", \"network_domain\",\n               \"wireguard_only\", \"stable_id\", \"cap_version\", \"health\",\n               \"capabilities\".\nA request whose mask holds only presence paths performs no database\nwrite and no broadcast when nothing changed.\n\n__END_CYLONIX_ADD__"
         }
       }
     },

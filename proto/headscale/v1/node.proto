@@ -1,6 +1,7 @@
 syntax = "proto3";
 package headscale.v1;
 
+import "google/protobuf/field_mask.proto"; // __CYLONIX_ADD__
 import "google/protobuf/timestamp.proto";
 import "headscale/v1/hostinfo.proto";
 import "headscale/v1/preauthkey.proto";
@@ -181,6 +182,28 @@ message UpdateNodeRequest {
   Node update = 3;
   repeated string add_capabilities = 4;
   repeated string del_capabilities = 5;
+  // __BEGIN_CYLONIX_ADD__
+  // update_mask names the fields of `update` to apply. Without it the RPC
+  // keeps its legacy behavior: only the admin subset (name, given_name,
+  // namespace, network_domain, wireguard_only, stable_id, cap_version,
+  // health, capabilities) is written. Because proto3 scalars and repeated
+  // fields cannot distinguish "unset" from "false"/"empty", the mask is the
+  // only way to express presence for these paths:
+  //   "online"    - set the WireGuard-only node online/offline. Applied to the
+  //                 in-memory state, announced to peers only on a transition,
+  //                 and last_seen is derived (stamped on offline, cleared on
+  //                 online). Rejected for nodes that are not wireguard_only;
+  //                 their presence is owned by their own map session.
+  //   "endpoints" - replace the node's endpoints (WireGuard-only nodes).
+  //   "routes"    - replace approved routes from `update.routes` (enabled).
+  //   "last_seen" - set, or clear when `update.last_seen` is absent.
+  //   admin paths: "name", "given_name", "namespace", "network_domain",
+  //                "wireguard_only", "stable_id", "cap_version", "health",
+  //                "capabilities".
+  // A request whose mask holds only presence paths performs no database
+  // write and no broadcast when nothing changed.
+  google.protobuf.FieldMask update_mask = 6;
+  // __END_CYLONIX_ADD__
 }
 message UpdateNodeResponse {}
 
