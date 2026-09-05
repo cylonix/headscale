@@ -1772,6 +1772,29 @@ func (api headscaleV1APIServer) UpdateNode(
 		return nil, gerr
 	}
 
+	// DB().UpdateNode writes the database only, but the mapper builds peer
+	// views from the in-memory NodeStore. Mirror the fields this RPC can
+	// change (see types.ParseProtoNode) into the store, otherwise a rename or
+	// a capability change stays invisible to peers until the next restart.
+	// In-memory-only state (online flag, poll-session accounting) and fields
+	// owned by the node's own MapRequests (keys, endpoints, hostinfo, routes)
+	// are left untouched.
+	if _, ok := api.h.state.UpdateNode(types.NodeID(request.NodeId), func(n *types.Node) {
+		n.Hostname = updated.Hostname
+		n.GivenName = updated.GivenName
+		n.Namespace = updated.Namespace
+		n.NetworkDomain = updated.NetworkDomain
+		n.IsWireguardOnly = updated.IsWireguardOnly
+		n.StableID = updated.StableID
+		n.CapVersion = updated.CapVersion
+		n.Health = updated.Health
+		n.Capabilities = updated.Capabilities
+	}); !ok {
+		log.Warn().
+			Uint64("node.id", request.NodeId).
+			Msg("UpdateNode: node not in NodeStore; peers will not see this update until it is loaded")
+	}
+
 	if api.h.cfg.NodeHandler != nil {
 		if _, uerr := api.h.cfg.NodeHandler.Update(updated); uerr != nil {
 			logger.Err(uerr).Msg("NodeHandler.Update failed")
